@@ -236,8 +236,8 @@ export const CONFIG = {
   // customer flap rate to avoid swallowing real alerts.
   SYSTEM_HEALTH_GATE_USER_THRESHOLD: 50,                 // Distinct users with DOWN flips before trip
   SYSTEM_HEALTH_GATE_COOLDOWN_MS: 10 * 60 * 1000,       // 10-minute suppression after trip
-  SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS: 5 * 60 * 1000,   // 5-minute grace period after process start
-  SYSTEM_HEALTH_GATE_POST_GRACE_MS: 3 * 60 * 1000,      // 3-minute post-grace confirmation window — status changes are recorded but alerts deferred until next check confirms
+  // (The old STARTUP_GRACE/POST_GRACE constants were removed — restart noise
+  // is handled by the deploy-mode baseline in processOneCheck, not the gate.)
   SYSTEM_HEALTH_GATE_OPERATOR_EMAIL: 'mortenprads@gmail.com', // Operator notification recipient
 
   // Webhook alert throttling (in-memory, per check, per event type)

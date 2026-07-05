@@ -77,6 +77,9 @@ export interface StatusUpdateData {
   // Per-channel SMS retry flags (see Website.pendingDownSms/pendingUpSms).
   pendingDownSms?: boolean;
   pendingUpSms?: boolean;
+  // Webhook re-drive flags (see Website.pendingDownWebhooks/pendingUpWebhooks).
+  pendingDownWebhooks?: boolean;
+  pendingUpWebhooks?: boolean;
   // Multi-region peer confirmation (Phase 2). All five fields are written
   // on every probe — null when peer was not consulted, populated otherwise.
   // peerCheckedAt IS NOT NULL is the canonical "peer was consulted" test.
@@ -169,7 +172,7 @@ const hashStatusData = (data: StatusUpdateData) => {
   // IMPORTANT: Every field in normalizeStatusData must appear here.
   // Omitting a field means changes to it would be treated as no-ops.
   const ssl = n.sslCertificate;
-  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerResponseTime}|${n.peerCheckedAt}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
+  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${n.pendingDownWebhooks}|${n.pendingUpWebhooks}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerResponseTime}|${n.peerCheckedAt}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
 };
 
 // Status update buffer for batching updates

@@ -108,6 +108,12 @@ export type AlertResult = {
   reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | 'check_disabled';
   emailNeedsRetry?: boolean;
   smsNeedsRetry?: boolean;
+  /** Webhooks were never dispatched for this transition (e.g. suppressed by
+   *  the system health gate before dispatch, or a pre-dispatch crash) and the
+   *  caller should re-drive them via pendingDown/UpWebhooks. Once webhooks ARE
+   *  dispatched, their failures are owned by the webhook retry queue — this
+   *  flag stays unset so retries never double-send. */
+  webhooksNeedRetry?: boolean;
 };
 
 export type SSLCertificateData = {

@@ -25,9 +25,18 @@ export type AlertReason =
   | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate'
   | 'check_disabled' | undefined;
 
-/** Reasons that warrant a follow-up retry. `settings`/`missingRecipient`/
- *  `maintenance_mode`/`system_health_gate`/`check_disabled` are deliberate
- *  suppressions and are NOT retried. */
+/** Reasons that warrant a follow-up retry based on the reason ALONE.
+ *  `settings`/`missingRecipient`/`maintenance_mode`/`check_disabled` are
+ *  deliberate suppressions and are NOT retried.
+ *
+ *  `system_health_gate` is deliberately absent here but IS retried — via the
+ *  explicit per-channel flags (emailNeedsRetry/smsNeedsRetry/webhooksNeedRetry)
+ *  that triggerAlert attaches to every gate-suppressed result. The gate can't
+ *  distinguish an exit1-side false-alarm storm from a mass REAL outage (a big
+ *  CDN outage downs 50+ customers at once), so its suppression must defer
+ *  alerts, not drop them. It can't live in this reason-based check because the
+ *  reason axis is email-centric and skip-blind: a gate hit on an SMS-only
+ *  retry must not re-arm the already-delivered email channel. */
 export const shouldRetryAlert = (reason?: AlertReason): boolean =>
   reason === 'flap' || reason === 'error' || reason === 'throttle';
 
@@ -39,6 +48,8 @@ export interface PendingRetryFlags {
   pendingUpSince?: number | null;
   pendingDownSms?: boolean;
   pendingUpSms?: boolean;
+  pendingDownWebhooks?: boolean;
+  pendingUpWebhooks?: boolean;
 }
 
 /** Apply pending email/SMS retry flags based on an alert result.
@@ -65,6 +76,10 @@ export function applyPendingRetryFlags(
   // "delivered && !emailNeedsRetry ⇒ clear" semantics while adding the SMS axis.
   const emailNeedsRetry = Boolean(result.emailNeedsRetry) || shouldRetryAlert(result.reason);
   const smsNeedsRetry = result.smsNeedsRetry === true;
+  // Webhooks are re-driven ONLY when they were never dispatched at all (gate
+  // suppression / pre-dispatch crash — see AlertResult.webhooksNeedRetry).
+  // Dispatched-but-failed webhooks belong to the webhook retry queue.
+  const webhooksNeedRetry = result.webhooksNeedRetry === true;
   if (status === "offline") {
     if (emailNeedsRetry) {
       updateData.pendingDownEmail = true;
@@ -74,6 +89,7 @@ export function applyPendingRetryFlags(
       updateData.pendingDownSince = null;
     }
     updateData.pendingDownSms = smsNeedsRetry;
+    updateData.pendingDownWebhooks = webhooksNeedRetry;
   } else if (status === "online") {
     if (emailNeedsRetry) {
       updateData.pendingUpEmail = true;
@@ -83,5 +99,6 @@ export function applyPendingRetryFlags(
       updateData.pendingUpSince = null;
     }
     updateData.pendingUpSms = smsNeedsRetry;
+    updateData.pendingUpWebhooks = webhooksNeedRetry;
   }
 }

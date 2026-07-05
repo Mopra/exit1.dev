@@ -162,6 +162,12 @@ export interface Website {
   // "deferred alert dropped" bug.
   pendingDownSms?: boolean;
   pendingUpSms?: boolean;
+  // Webhook re-drive flags. Set ONLY when the transition's webhooks were never
+  // dispatched at all (system health gate suppression / pre-dispatch crash).
+  // Dispatched-but-failed webhooks are owned by the webhook retry queue and
+  // never set these.
+  pendingDownWebhooks?: boolean;
+  pendingUpWebhooks?: boolean;
 
   // Maintenance mode
   maintenanceMode?: boolean;

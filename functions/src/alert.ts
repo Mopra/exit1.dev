@@ -359,23 +359,44 @@ export async function triggerAlert(
   newStatus: string,
   counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number },
   context?: helpers.AlertContext,
-  options?: { skipWebhooks?: boolean; skipEmail?: boolean; skipSms?: boolean }
+  options?: { skipWebhooks?: boolean; skipEmail?: boolean; skipSms?: boolean; isRetry?: boolean }
 ): Promise<helpers.AlertResult> {
   // Suppress all alerts during maintenance mode
   if (website.maintenanceMode) {
     return { delivered: false, reason: 'maintenance_mode' };
   }
 
-  // System health gate: only record REAL status transitions, not email/SMS retries.
-  // Retries always set skipWebhooks: true to avoid duplicate webhook delivery —
-  // that flag reliably distinguishes retries from genuine new transitions.
-  if (!options?.skipWebhooks) {
+  // System health gate: only record REAL status transitions into the gate's
+  // flip window — not retries of an already-recorded transition. Retries must
+  // declare themselves via options.isRetry (skipWebhooks alone is not a
+  // reliable signal anymore: a gate-suppressed transition never dispatched its
+  // webhooks, so its retry legitimately runs with webhooks enabled).
+  if (!options?.isRetry) {
     recordStatusTransition(website.id, website.userId, oldStatus, newStatus);
   }
   if (isSystemHealthGateTripped()) {
     maybeNotifyOperator();
-    return { delivered: false, reason: 'system_health_gate' };
+    // The gate exists to mute exit1-side false-alarm storms — but it cannot
+    // tell those apart from a mass REAL outage (e.g. a big CDN going down
+    // takes 50+ customers' sites with it). Suppression must therefore be a
+    // deferral, not a drop: report every channel that was about to fire as
+    // needs-retry so the caller arms pendingDown/Up* and the alert is
+    // re-driven once the gate clears. Channels the caller told us to skip
+    // were already satisfied — never re-arm those.
+    return {
+      delivered: false,
+      reason: 'system_health_gate',
+      emailNeedsRetry: !options?.skipEmail,
+      smsNeedsRetry: !options?.skipSms,
+      webhooksNeedRetry: !options?.skipWebhooks,
+    };
   }
+
+  // Hoisted above the try so the catch can report per-channel state truthfully
+  // instead of collapsing to a blanket 'error' that loses the SMS/webhook axes.
+  let webhookStats = { sent: 0, queued: 0, skipped: 0 };
+  let emailOutcome: string = 'none';
+  let smsOutcome: string = 'none';
 
   try {
     // NOTE: Do NOT enrich website from statusUpdateBuffer here.
@@ -383,11 +404,6 @@ export async function triggerAlert(
     // so the buffer contains STALE data from a previous scheduler cycle. Reading it would overwrite
     // the fresh check result data (detailedStatus, lastStatusCode, lastError) already set by the caller,
     // causing false alerts (e.g. "IS DOWN" email with body showing "Current Status: UP").
-
-    // Summary counters for single end-of-function log
-    let webhookStats = { sent: 0, queued: 0, skipped: 0 };
-    let emailOutcome: string = 'none';
-    let smsOutcome: string = 'none';
 
     // Determine webhook event type using the verified status
     const isOnline = newStatus === 'online' || newStatus === 'UP' || newStatus === 'REDIRECT';
@@ -668,7 +684,23 @@ export async function triggerAlert(
     return { ...emailResult, emailNeedsRetry, smsNeedsRetry };
   } catch (error) {
     logger.error("Error in triggerAlert:", error);
-    return { delivered: false, reason: 'error' };
+    // Report per-channel state from the hoisted outcome vars so a crash
+    // mid-pipeline defers (rather than drops) exactly the channels that had
+    // not delivered yet. A channel that already sent, or that the caller
+    // skipped, must not be re-armed — that would duplicate the alert. When
+    // something DID deliver before the crash, return delivered=true with no
+    // reason (the normal path's contract): applyPendingRetryFlags ORs
+    // shouldRetryAlert(reason) into the email axis, so a blanket 'error'
+    // reason here would re-arm an email that already went out.
+    const deliveredBeforeCrash = webhookStats.sent > 0 || emailOutcome === 'sent' || smsOutcome === 'sent';
+    return {
+      delivered: deliveredBeforeCrash,
+      ...(deliveredBeforeCrash ? {} : { reason: 'error' as const }),
+      emailNeedsRetry: !options?.skipEmail && emailOutcome !== 'sent',
+      smsNeedsRetry: !options?.skipSms && smsOutcome !== 'sent',
+      webhooksNeedRetry: !options?.skipWebhooks &&
+        webhookStats.sent === 0 && webhookStats.queued === 0 && webhookStats.skipped === 0,
+    };
   }
 }
 

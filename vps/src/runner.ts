@@ -1159,6 +1159,8 @@ setStatusUpdateHook((checkId: string, data: {
   pendingUpSince?: number | null;
   pendingDownSms?: boolean;
   pendingUpSms?: boolean;
+  pendingDownWebhooks?: boolean;
+  pendingUpWebhooks?: boolean;
   sslCertificate?: {
     valid: boolean;
     lastChecked?: number;
@@ -1209,6 +1211,9 @@ setStatusUpdateHook((checkId: string, data: {
   // lag and the next probe wouldn't see the pending SMS retry (recovery-SMS bug).
   if ('pendingDownSms' in data) patch.pendingDownSms = data.pendingDownSms;
   if ('pendingUpSms' in data) patch.pendingUpSms = data.pendingUpSms;
+  // Webhook re-drive flags (gate-suppressed dispatch) — same staleness hazard.
+  if ('pendingDownWebhooks' in data) patch.pendingDownWebhooks = data.pendingDownWebhooks;
+  if ('pendingUpWebhooks' in data) patch.pendingUpWebhooks = data.pendingUpWebhooks;
 
   // Propagate sslCertificate so the in-memory check has fresh SSL data.
   // Without this, sslFresh is always false (stale lastChecked), causing

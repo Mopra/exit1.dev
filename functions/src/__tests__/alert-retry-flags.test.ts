@@ -92,13 +92,54 @@ test("non-retryable suppression (settings) clears both channels", () => {
   assert.equal(updateData.pendingUpSms, false);
 });
 
-test("system_health_gate suppression is NOT retried (documents current behavior)", () => {
-  // The gate returns this reason with no *NeedsRetry signals; both flags clear.
-  // (A gate-suppressed recovery being dropped is a separate, documented gap.)
-  const result: AlertResult = { delivered: false, reason: "system_health_gate" };
-  assert.equal(shouldRetryAlert(result.reason), false);
+// ── System health gate: suppression must DEFER, not drop ──────────────────
+//
+// The gate can't tell an exit1-side false-alarm storm from a mass REAL outage
+// (a big CDN failure downs 50+ customers' sites at once — genuine downtime).
+// So triggerAlert attaches explicit per-channel needs-retry flags to every
+// gate-suppressed result; the reason alone stays non-retryable because the
+// reason axis is skip-blind (an SMS-only retry hitting the gate must not
+// re-arm the already-delivered email channel).
+
+test("system_health_gate reason ALONE is not retryable (skip-blind axis)", () => {
+  assert.equal(shouldRetryAlert("system_health_gate"), false);
+});
+
+test("gate-suppressed fresh transition arms all three channel retry flags", () => {
+  // What triggerAlert returns when the gate trips on a fresh down transition
+  // (no skip options): every channel was about to fire, so every channel is owed.
+  const result: AlertResult = {
+    delivered: false, reason: "system_health_gate",
+    emailNeedsRetry: true, smsNeedsRetry: true, webhooksNeedRetry: true,
+  };
+  const updateData: Record<string, unknown> = {};
+  applyPendingRetryFlags(updateData, result, "offline", NOW, {});
+  assert.equal(updateData.pendingDownEmail, true, "gate-suppressed down email must be retried");
+  assert.equal(updateData.pendingDownSince, NOW);
+  assert.equal(updateData.pendingDownSms, true, "gate-suppressed down SMS must be retried");
+  assert.equal(updateData.pendingDownWebhooks, true, "gate-suppressed webhooks were never dispatched and must be re-driven");
+});
+
+test("gate hit on an SMS-only retry re-arms only the SMS channel", () => {
+  // triggerAlert was called with skipEmail+skipWebhooks (already satisfied);
+  // its gate return reflects that — only SMS is still owed.
+  const result: AlertResult = {
+    delivered: false, reason: "system_health_gate",
+    emailNeedsRetry: false, smsNeedsRetry: true, webhooksNeedRetry: false,
+  };
   const updateData: Record<string, unknown> = {};
   applyPendingRetryFlags(updateData, result, "online", NOW, {});
-  assert.equal(updateData.pendingUpEmail, false);
-  assert.equal(updateData.pendingUpSms, false);
+  assert.equal(updateData.pendingUpEmail, false, "delivered email must not be re-armed by the gate");
+  assert.equal(updateData.pendingUpSms, true);
+  assert.equal(updateData.pendingUpWebhooks, false, "dispatched webhooks must not be re-driven");
+});
+
+test("webhook re-drive flag is set only from the explicit result field", () => {
+  // A retryable email reason must NOT drag webhooks along — once dispatched,
+  // webhook failures belong to the webhook retry queue.
+  const result: AlertResult = { delivered: false, reason: "throttle" };
+  const updateData: Record<string, unknown> = {};
+  applyPendingRetryFlags(updateData, result, "offline", NOW, {});
+  assert.equal(updateData.pendingDownEmail, true);
+  assert.equal(updateData.pendingDownWebhooks, false);
 });

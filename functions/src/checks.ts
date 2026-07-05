@@ -1671,7 +1671,8 @@ export async function processOneCheck(
 
       const ncDownEmailPending = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail === true;
       const ncDownSmsPending = (check as Website & { pendingDownSms?: boolean }).pendingDownSms === true;
-      if (status === "offline" && (ncDownEmailPending || ncDownSmsPending)) {
+      const ncDownWebhooksPending = (check as Website & { pendingDownWebhooks?: boolean }).pendingDownWebhooks === true;
+      if (status === "offline" && (ncDownEmailPending || ncDownSmsPending || ncDownWebhooksPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1684,16 +1685,19 @@ export async function processOneCheck(
         };
         // Retry only the channel(s) still pending so a channel that already
         // delivered on the transition is not re-sent (would duplicate the alert).
+        // Webhooks are included ONLY when the original dispatch never happened
+        // (gate suppression) — pendingDownWebhooks tracks exactly that.
         const result = await triggerAlert(retryWebsite, "online", "offline",
           { consecutiveFailures: nextConsecutiveFailures },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true, skipEmail: !ncDownEmailPending, skipSms: !ncDownSmsPending }
+          { skipWebhooks: !ncDownWebhooksPending, skipEmail: !ncDownEmailPending, skipSms: !ncDownSmsPending, isRetry: true }
         );
         applyPendingRetryFlags(noChangeUpdate, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
       const ncUpEmailPending = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail === true;
       const ncUpSmsPending = (check as Website & { pendingUpSms?: boolean }).pendingUpSms === true;
-      if (status === "online" && (ncUpEmailPending || ncUpSmsPending)) {
+      const ncUpWebhooksPending = (check as Website & { pendingUpWebhooks?: boolean }).pendingUpWebhooks === true;
+      if (status === "online" && (ncUpEmailPending || ncUpSmsPending || ncUpWebhooksPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1707,7 +1711,7 @@ export async function processOneCheck(
         const result = await triggerAlert(retryWebsite, "offline", "online",
           { consecutiveSuccesses: nextConsecutiveSuccesses },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true, skipEmail: !ncUpEmailPending, skipSms: !ncUpSmsPending }
+          { skipWebhooks: !ncUpWebhooksPending, skipEmail: !ncUpEmailPending, skipSms: !ncUpSmsPending, isRetry: true }
         );
         applyPendingRetryFlags(noChangeUpdate, result, "online", now, check as Website & { pendingUpSince?: number });
       }
@@ -1937,6 +1941,8 @@ export async function processOneCheck(
       updateData.pendingUpSince = null;
       updateData.pendingDownSms = false;
       updateData.pendingUpSms = false;
+      updateData.pendingDownWebhooks = false;
+      updateData.pendingUpWebhooks = false;
       if (oldStatus !== status) {
         logger.info(`Post-deploy baseline: ${oldStatus}→${status} for check ${check.id} (${check.name || check.url}) — alert suppressed`);
         // Surface the suppression in the audit row so the UI's muted-bell
@@ -1952,38 +1958,53 @@ export async function processOneCheck(
       }
     } else if (oldStatus !== status && oldStatus !== "unknown") {
       const settings = await getUserSettings(check.userId);
+      // Channels whose owed DOWN was swallowed by the system health gate just
+      // now, at recovery. For those channels the user never learned about the
+      // outage — so the matching UP alert must be cancelled too (a "recovered"
+      // notification for a down they never saw is exactly the false-alarm
+      // noise the gate exists to suppress). Populated in the recovery branch,
+      // consumed after applyPendingRetryFlags below.
+      let gateCancelledPair: { email: boolean; sms: boolean; webhooks: boolean } | null = null;
       if (status === "offline") {
         // Going down — abandon any in-flight recovery (UP) retry; it's moot now.
         updateData.pendingUpEmail = false;
         updateData.pendingUpSince = null;
         updateData.pendingUpSms = false;
+        updateData.pendingUpWebhooks = false;
       } else if (status === "online") {
         // Recovering. A confirmed DOWN we couldn't deliver (budget/throttle/
-        // transient send error) leaves pendingDown* set. Don't silently drop it
-        // on recovery — make one best-effort delivery of the still-owed DOWN
-        // (SMS/email only; the webhook already fired on the original transition)
-        // before clearing, so a real outage isn't lost just because the check
-        // bounced back quickly. If it still can't send (e.g. budget exhausted)
-        // we clear anyway — the check is online again and a stale pending flag
-        // would otherwise leak until the next downtime.
+        // transient send error/system health gate) leaves pendingDown* set.
+        // Don't silently drop it on recovery — make one best-effort delivery
+        // of the still-owed DOWN before clearing, so a real outage isn't lost
+        // just because the check bounced back quickly. Webhooks join the
+        // retry only when pendingDownWebhooks says the original dispatch
+        // never happened (gate suppression); otherwise they already fired on
+        // the original transition. If it still can't send (e.g. budget
+        // exhausted) we clear anyway — the check is online again and a stale
+        // pending flag would otherwise leak until the next downtime.
         const owedDownEmail = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail === true;
         const owedDownSms = (check as Website & { pendingDownSms?: boolean }).pendingDownSms === true;
-        if (owedDownEmail || owedDownSms) {
+        const owedDownWebhooks = (check as Website & { pendingDownWebhooks?: boolean }).pendingDownWebhooks === true;
+        if (owedDownEmail || owedDownSms || owedDownWebhooks) {
           const downSnapshot: Website = {
             ...(check as Website),
             status: "offline",
             detailedStatus: "DOWN",
             lastError: (check as Website).lastError ?? null,
           };
-          await triggerAlert(downSnapshot, "online", "offline",
+          const owedResult = await triggerAlert(downSnapshot, "online", "offline",
             undefined,
             { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-            { skipWebhooks: true, skipEmail: !owedDownEmail, skipSms: !owedDownSms }
+            { skipWebhooks: !owedDownWebhooks, skipEmail: !owedDownEmail, skipSms: !owedDownSms, isRetry: true }
           );
+          if (owedResult.reason === 'system_health_gate') {
+            gateCancelledPair = { email: owedDownEmail, sms: owedDownSms, webhooks: owedDownWebhooks };
+          }
         }
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
         updateData.pendingDownSms = false;
+        updateData.pendingDownWebhooks = false;
       }
       const websiteForAlert: Website = {
         ...(check as Website),
@@ -2007,11 +2028,26 @@ export async function processOneCheck(
         pendingAlertSent = result.delivered;
       }
       applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
+      // Pair cancellation: if the gate swallowed this check's DOWN alert on a
+      // channel and is still swallowing it at recovery, drop the matching UP
+      // retry for that channel — the user never saw the down, so a later
+      // "recovered" would be pure noise (the false-alarm storm the gate is
+      // for). Channels whose down WAS delivered keep their pending UP and
+      // get the recovery once the gate clears.
+      if (gateCancelledPair && status === "online") {
+        if (gateCancelledPair.email) {
+          updateData.pendingUpEmail = false;
+          updateData.pendingUpSince = null;
+        }
+        if (gateCancelledPair.sms) updateData.pendingUpSms = false;
+        if (gateCancelledPair.webhooks) updateData.pendingUpWebhooks = false;
+      }
     } else {
       // Status didn't change — only retry previously failed alerts.
       const sdDownEmailPending = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail === true;
       const sdDownSmsPending = (check as Website & { pendingDownSms?: boolean }).pendingDownSms === true;
-      if (status === "offline" && (sdDownEmailPending || sdDownSmsPending)) {
+      const sdDownWebhooksPending = (check as Website & { pendingDownWebhooks?: boolean }).pendingDownWebhooks === true;
+      if (status === "offline" && (sdDownEmailPending || sdDownSmsPending || sdDownWebhooksPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -2027,13 +2063,14 @@ export async function processOneCheck(
         const result = await triggerAlert(retryWebsite, "online", "offline",
           { consecutiveFailures: nextConsecutiveFailures },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true, skipEmail: !sdDownEmailPending, skipSms: !sdDownSmsPending }
+          { skipWebhooks: !sdDownWebhooksPending, skipEmail: !sdDownEmailPending, skipSms: !sdDownSmsPending, isRetry: true }
         );
         applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
       const sdUpEmailPending = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail === true;
       const sdUpSmsPending = (check as Website & { pendingUpSms?: boolean }).pendingUpSms === true;
-      if (status === "online" && (sdUpEmailPending || sdUpSmsPending)) {
+      const sdUpWebhooksPending = (check as Website & { pendingUpWebhooks?: boolean }).pendingUpWebhooks === true;
+      if (status === "online" && (sdUpEmailPending || sdUpSmsPending || sdUpWebhooksPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -2047,7 +2084,7 @@ export async function processOneCheck(
         const result = await triggerAlert(retryWebsite, "offline", "online",
           { consecutiveSuccesses: nextConsecutiveSuccesses },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true, skipEmail: !sdUpEmailPending, skipSms: !sdUpSmsPending }
+          { skipWebhooks: !sdUpWebhooksPending, skipEmail: !sdUpEmailPending, skipSms: !sdUpSmsPending, isRetry: true }
         );
         applyPendingRetryFlags(updateData, result, "online", now, check as Website & { pendingUpSince?: number });
       }
@@ -2161,6 +2198,8 @@ export async function processOneCheck(
       updateData.pendingUpSince = null;
       updateData.pendingDownSms = false;
       updateData.pendingUpSms = false;
+      updateData.pendingDownWebhooks = false;
+      updateData.pendingUpWebhooks = false;
       if (oldStatus !== "offline") {
         logger.info(`Post-deploy baseline (error path): ${oldStatus}→offline for check ${check.id} (${check.name || (check as Website).url}) — alert suppressed`);
         // Mark the audit row so the UI can render "no alert by design".
@@ -2191,6 +2230,7 @@ export async function processOneCheck(
       updateData.pendingUpEmail = false;
       updateData.pendingUpSince = null;
       updateData.pendingUpSms = false;
+      updateData.pendingUpWebhooks = false;
       applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
     }
     await addStatusUpdate(check.id, updateData);
@@ -3923,7 +3963,19 @@ export const manualCheck = onCall({
           tlsMs: checkResult.timings?.tlsMs,
           ttfbMs: checkResult.timings?.ttfbMs,
         };
-        await triggerAlert(websiteForAlert, oldStatus, status, counters, alertContext);
+        const result = await triggerAlert(websiteForAlert, oldStatus, status, counters, alertContext);
+        // Manual checks used to discard the AlertResult, so a deferred alert
+        // (gate suppression, throttle, transient send error) was lost for
+        // good — the scheduled probe then sees no transition and never
+        // re-fires. Persist the per-channel retry flags exactly like the
+        // scheduled path; the next scheduled probe drives the retry. Re-sent
+        // via a second addStatusUpdate because the buffer replaces (not
+        // merges) entries — updateData still carries the full status update.
+        applyPendingRetryFlags(
+          updateData as StatusUpdateData & Record<string, unknown>, result, status, Date.now(),
+          website as Website & { pendingDownSince?: number | null; pendingUpSince?: number | null }
+        );
+        await addStatusUpdate(checkId, updateData);
       }
       return { status, lastChecked: Date.now() };
     } catch (error) {
@@ -4014,7 +4066,15 @@ export const manualCheck = onCall({
           consecutiveFailures: nextConsecutiveFailures,
           consecutiveSuccesses: 0,
         };
-        await triggerAlert(errorWebsite, oldStatus, newStatus, counters, alertContext);
+        const result = await triggerAlert(errorWebsite, oldStatus, newStatus, counters, alertContext);
+        // Same retry-flag bookkeeping as the manual success path — a deferred
+        // DOWN alert from a manual check must survive to the next scheduled
+        // probe instead of being dropped.
+        applyPendingRetryFlags(
+          updateData as StatusUpdateData & Record<string, unknown>, result, newStatus, Date.now(),
+          website as Website & { pendingDownSince?: number | null; pendingUpSince?: number | null }
+        );
+        await addStatusUpdate(checkId, updateData);
       }
       return { status: 'offline', error: errorMessage };
     } finally {
