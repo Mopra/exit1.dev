@@ -69,7 +69,12 @@ export {
   getEmailUsage,
   sendTestEmail,
   bulkUpdateEmailPerCheck,
+  getEmailSuppressions,
+  resumeSuppressedEmail,
 } from './email';
+
+// Resend bounce/complaint webhook (email suppression)
+export { resendWebhook } from './resend-webhook';
 
 // SMS settings functions
 export {

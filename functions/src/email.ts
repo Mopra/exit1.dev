@@ -8,6 +8,7 @@ import { Resend } from 'resend';
 import { CONFIG } from "./config";
 import { normalizeCheckFilter } from "./webhook-events";
 import { notifySettingsEdit } from "./check-helpers";
+import { getActiveSuppressions, clearEmailSuppression } from "./email-suppression";
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
@@ -479,6 +480,83 @@ export const getEmailUsage = onCall({
       },
     },
   };
+});
+
+// ============================================================================
+// BOUNCE SUPPRESSIONS (see resend-webhook.ts / email-suppression.ts)
+// ============================================================================
+
+// Every address the user's settings can deliver to: global + per-check +
+// per-folder recipients.
+function getAllConfiguredRecipients(settings: EmailSettings): string[] {
+  const all: string[] = [...getEmailRecipients(settings)];
+  const perCheck = (settings.perCheck ?? {}) as Record<string, { recipients?: string[] }>;
+  for (const entry of Object.values(perCheck)) {
+    if (Array.isArray(entry?.recipients)) all.push(...entry.recipients);
+  }
+  const perFolder = ((settings as unknown as { perFolder?: Record<string, { recipients?: string[] }> }).perFolder) ?? {};
+  for (const entry of Object.values(perFolder)) {
+    if (Array.isArray(entry?.recipients)) all.push(...entry.recipients);
+  }
+  return all;
+}
+
+// Return the caller's recipients that are currently suppressed (bouncing),
+// so the Emails page can surface a warning banner.
+export const getEmailSuppressions = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const snap = await firestore.collection('emailSettings').doc(uid).get();
+  if (!snap.exists) {
+    return { success: true, data: [] };
+  }
+
+  const recipients = getAllConfiguredRecipients(snap.data() as EmailSettings);
+  const suppressions = await getActiveSuppressions(recipients);
+
+  return {
+    success: true,
+    data: suppressions.map((s) => ({
+      email: s.email,
+      permanent: s.permanent,
+      suppressedUntil: s.suppressedUntil,
+      lastBounceKind: s.lastBounceKind,
+      lastBounceAt: s.lastBounceAt,
+      lastReason: s.lastReason,
+      totalBounces: s.totalBounces,
+    })),
+  };
+});
+
+// Resume delivery to a bouncing address. Only allowed for addresses present
+// in the caller's own settings, so users can't clear suppressions for
+// recipients they don't use.
+export const resumeSuppressedEmail = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+  const { email } = request.data || {};
+  if (!email || typeof email !== 'string') {
+    throw new HttpsError('invalid-argument', 'email is required');
+  }
+
+  const snap = await firestore.collection('emailSettings').doc(uid).get();
+  const settings = snap.exists ? (snap.data() as EmailSettings) : null;
+  const normalized = email.trim().toLowerCase();
+  const owned = settings
+    ? getAllConfiguredRecipients(settings).some((r) => r.trim().toLowerCase() === normalized)
+    : false;
+  if (!owned) {
+    throw new HttpsError('permission-denied', 'Address is not in your email settings');
+  }
+
+  await clearEmailSuppression(normalized);
+  logger.info('Email suppression cleared by user', { uid, email: normalized });
+  return { success: true };
 });
 
 // Helper to get recipients array from settings (supports both old and new format)

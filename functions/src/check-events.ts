@@ -5,6 +5,7 @@ import { insertCheckHistory } from "./bigquery";
 import { firestore } from "./init";
 import { getResendCredentials, RESEND_API_KEY, RESEND_FROM } from "./env";
 import { EmailSettings, Website } from "./types";
+import { isEmailSuppressedCached } from "./email-suppression";
 
 // Re-export secrets for consumers that need them
 export { RESEND_API_KEY, RESEND_FROM };
@@ -69,6 +70,14 @@ const sendDisabledEmail = async (website: Website, disabledReason: string, disab
   const recipient = await resolveDisabledEmailRecipient(website);
   if (!recipient) {
     logger.info("Skipping disabled email: no recipient configured", {
+      checkId: website.id,
+      userId: website.userId,
+    });
+    return;
+  }
+
+  if (await isEmailSuppressedCached(recipient)) {
+    logger.info("Skipping disabled email: recipient is suppressed (bouncing)", {
       checkId: website.id,
       userId: website.userId,
     });

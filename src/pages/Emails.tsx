@@ -24,6 +24,7 @@ import EmailListView from '../components/email/EmailListView';
 import EmailFolderView from '../components/email/EmailFolderView';
 import EmailCheckCard from '../components/email/EmailCheckCard';
 import { EmailEmptyState } from '../components/email/EmailEmptyState';
+import { BouncedRecipientsAlert } from '../components/email/BouncedRecipientsAlert';
 
 // Firebase callable references at module scope
 const functions = getFunctions();
@@ -384,6 +385,7 @@ export default function Emails() {
       />
 
       <div className="p-2 sm:p-4 md:p-6">
+        <BouncedRecipientsAlert />
         <SettingsSummaryStrip
           recipients={n.recipients}
           onRecipientsChange={n.setRecipients}

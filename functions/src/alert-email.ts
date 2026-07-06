@@ -24,6 +24,25 @@ import {
   acquireUserEmailBudget,
   acquireUserEmailMonthlyBudget,
 } from './alert-throttle';
+import { isEmailSuppressedCached } from './email-suppression';
+
+// ============================================================================
+// BOUNCE SUPPRESSION GATE
+// ============================================================================
+
+/**
+ * Skip recipients Resend told us are bouncing (see emailSuppressions /
+ * resend-webhook.ts). Returns true when the send should be skipped.
+ * Fails open — a lookup error never blocks an alert.
+ */
+const skipIfSuppressed = async (toEmail: string, eventType: WebhookEvent | string): Promise<boolean> => {
+  const suppressed = await isEmailSuppressedCached(toEmail);
+  if (suppressed) {
+    logger.info(`Skipping email to suppressed (bouncing) address`, { toEmail, eventType });
+    emitAlertMetric('email_suppressed_bounce', { toEmail, eventType });
+  }
+  return suppressed;
+};
 
 // ============================================================================
 // FAILURE TRACKER
@@ -150,6 +169,8 @@ export async function sendEmailNotification(
   previousStatus: string,
   emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
+  if (await skipIfSuppressed(toEmail, eventType)) return;
+
   const { resend, fromAddress } = getResendClient();
 
   const statusLabel = website.detailedStatus || website.status;
@@ -365,6 +386,8 @@ export async function sendSSLEmailNotification(
   },
   emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
+  if (await skipIfSuppressed(toEmail, eventType)) return;
+
   const { resend, fromAddress } = getResendClient();
 
   const subject =
@@ -439,6 +462,8 @@ export async function sendDnsChangeEmail(
   eventType: WebhookEvent,
   emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
+  if (await skipIfSuppressed(toEmail, eventType)) return;
+
   const { resend, fromAddress } = getResendClient();
 
   const isMissing = eventType === 'dns_record_missing';
