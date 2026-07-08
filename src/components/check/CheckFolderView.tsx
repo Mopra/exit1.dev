@@ -47,6 +47,7 @@ import {
   getFolderTheme,
   getFolderName,
   getParentPath,
+  getFolderPathError,
   buildFolderList,
   getChecksInFolder,
   canCreateSubfolder,
@@ -262,6 +263,8 @@ export default function CheckFolderView({
     const fullPath = newFolderParent ? `${newFolderParent}/${name}` : name;
     const normalized = normalizeFolder(fullPath);
     if (!normalized) { setNewFolderError("Invalid folder name."); return; }
+    const lengthError = getFolderPathError(normalized);
+    if (lengthError) { setNewFolderError(lengthError); return; }
     if (folderOptions.includes(normalized)) {
       setNewFolderError("A folder with this name already exists.");
       return;
@@ -285,6 +288,8 @@ export default function CheckFolderView({
     const newPath = parent ? `${parent}/${newName}` : newName;
     const normalized = normalizeFolder(newPath);
     if (!normalized) { setRenameFolderError("Invalid folder name."); return; }
+    const lengthError = getFolderPathError(normalized);
+    if (lengthError) { setRenameFolderError(lengthError); return; }
     if (normalized === renameFolderPath) { setRenameFolderPath(null); return; }
     if (folderOptions.includes(normalized)) {
       setRenameFolderError("A folder with this name already exists.");

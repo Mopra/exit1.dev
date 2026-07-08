@@ -18,7 +18,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { apiClient } from '../api/client';
 import { checksCache, cacheKeys } from '../utils/cache';
 import type { UpdateWebsiteRequest } from '../api/types';
-import { normalizeFolder, folderHasPrefix, replaceFolderPrefix } from '../lib/folder-utils';
+import { normalizeFolder, folderHasPrefix, replaceFolderPrefix, getFolderPathError } from '../lib/folder-utils';
 
 // Development flag for debug logging
 const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_CHECKS === 'true';
@@ -564,12 +564,9 @@ export function useChecks(
       throw new Error("Check not found");
     }
 
-    const normalizedFolder = (() => {
-      const v = (folder ?? '').trim();
-      if (!v) return null;
-      // keep it compact; UI uses this as a label
-      return v.slice(0, 48);
-    })();
+    const normalizedFolder = normalizeFolder(folder);
+    const folderError = getFolderPathError(normalizedFolder);
+    if (folderError) throw new Error(folderError);
 
     const originalCheck = { ...check };
     const now = Date.now();
@@ -662,11 +659,9 @@ export function useChecks(
       throw new Error("Check not found");
     }
 
-    const normalizedFolder = (() => {
-      const v = (folder ?? '').trim();
-      if (!v) return null;
-      return v.slice(0, 48);
-    })();
+    const normalizedFolder = normalizeFolder(folder);
+    const folderError = getFolderPathError(normalizedFolder);
+    if (folderError) throw new Error(folderError);
 
     // Add to pending updates
     pendingFolderUpdatesRef.current.set(id, normalizedFolder);
@@ -714,21 +709,25 @@ export function useChecks(
     if (to.startsWith(from + '/')) {
       throw new Error('Destination folder cannot be inside the folder being renamed.');
     }
-    if (to.length > 48) throw new Error('Folder name is too long (max 48 characters).');
+    const toError = getFolderPathError(to);
+    if (toError) throw new Error(toError);
 
     const affected = checks.filter((c) => folderHasPrefix(c.folder, from));
     if (affected.length === 0) return;
 
     const now = Date.now();
 
-    // Pre-validate: ensure replacements fit the 48 char limit
+    // Pre-validate the rewritten paths. Segment lengths survive a prefix
+    // rename by construction, but depth can change (renaming "a" to "x/y"
+    // pushes "a/b" to the 3-level "x/y/b").
     const nextFolderById = new Map<string, string | null>();
     for (const c of affected) {
       const current = normalizeFolder(c.folder);
       if (!current) continue;
       const next = replaceFolderPrefix(current, from, to);
-      if (next.length > 48) {
-        throw new Error('Renaming would make some folder paths too long (max 48). Choose a shorter name.');
+      const nextError = getFolderPathError(next);
+      if (nextError) {
+        throw new Error(`Renaming would make some folders invalid: ${nextError}`);
       }
       nextFolderById.set(c.id, next);
     }
@@ -1351,12 +1350,10 @@ export function useChecks(
     if (!userId) throw new Error('Authentication required');
     if (ids.length === 0) return [];
 
-    // Normalize the folder value
-    const normalizedFolder = (() => {
-      const v = (folder ?? '').trim();
-      if (!v) return null;
-      return v.slice(0, 48);
-    })();
+    // Normalize + validate the folder value
+    const normalizedFolder = normalizeFolder(folder);
+    const folderError = getFolderPathError(normalizedFolder);
+    if (folderError) throw new Error(folderError);
 
     // Verify all checks exist
     const checksToUpdate = checks.filter(w => ids.includes(w.id));

@@ -6,6 +6,11 @@
 // Maximum folder nesting depth (1 = flat, 2 = parent/child)
 export const MAX_FOLDER_DEPTH = 2;
 
+// Maximum length of a single folder NAME (path segment). The limit is
+// per-segment, not per-path, so a long parent name doesn't eat the
+// subfolder's budget ("Northern Widgets Ltd/Production Sites" is fine).
+export const MAX_FOLDER_SEGMENT_LENGTH = 48;
+
 // Folder color options. Colors come from --folder-* CSS tokens defined in
 // src/style.css — change a token there and every folder accent updates.
 export const FOLDER_COLORS = [
@@ -166,6 +171,25 @@ export function normalizeFolder(folder?: string | null): string | null {
 
   const trimmedSlashes = cleaned.replace(/^\/+/, "").replace(/\/+$/, "");
   return trimmedSlashes || null;
+}
+
+/**
+ * Validate a (normalized) folder path against the per-segment length limit
+ * and the nesting depth limit. Returns a user-facing error message, or null
+ * when the path is valid. A null/empty path (= no folder) is always valid.
+ */
+export function getFolderPathError(folder: string | null | undefined): string | null {
+  const normalized = normalizeFolder(folder);
+  if (!normalized) return null;
+  const parts = splitFolderPath(normalized);
+  if (parts.length > MAX_FOLDER_DEPTH) {
+    return `Folders can be nested at most ${MAX_FOLDER_DEPTH} levels deep.`;
+  }
+  const tooLong = parts.find((p) => p.length > MAX_FOLDER_SEGMENT_LENGTH);
+  if (tooLong) {
+    return `Folder name "${tooLong.slice(0, 24)}…" is too long (max ${MAX_FOLDER_SEGMENT_LENGTH} characters per folder name).`;
+  }
+  return null;
 }
 
 /**

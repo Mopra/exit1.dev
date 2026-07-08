@@ -66,7 +66,8 @@ import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useLazyRow } from '../../hooks/useLazyRow';
 import { useMobile } from '../../hooks/useMobile';
 import { useStableCallback } from '../../hooks/useStableCallback';
-import { normalizeFolder, getFolderBadgeClasses, buildFolderList } from '../../lib/folder-utils';
+import { toast } from 'sonner';
+import { normalizeFolder, getFolderBadgeClasses, buildFolderList, getFolderPathError } from '../../lib/folder-utils';
 import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration, isDomainOnlyCheck } from '../../lib/check-utils';
 import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
 import { SeverityBadge } from './SeverityBadge';
@@ -1031,8 +1032,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   }, [setCollapsedFolders]);
 
   const normalizeFolderName = useCallback((name: string) => {
-    const v = name.trim().replace(/\s+/g, ' ');
-    return v ? v.slice(0, 48) : '';
+    return name.trim().replace(/\s+/g, ' ');
   }, []);
 
   const openNewFolderDialog = useCallback((check: Website) => {
@@ -1045,6 +1045,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
     if (!newFolderCheck || !onSetFolder) return;
     const normalized = normalizeFolderName(newFolderName);
     if (!normalized) return;
+    const folderError = getFolderPathError(normalized);
+    if (folderError) {
+      toast.error(folderError);
+      return;
+    }
     // Register in the shared custom-folders list so the new folder persists and
     // stays visible in both views even if its only check is later moved out.
     setCustomFolders((prev) => (prev.includes(normalized) ? prev : [...prev, normalized]));
