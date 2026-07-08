@@ -1347,9 +1347,9 @@ export function useChecks(
     }
   }, [userId, checks, log, invalidateCache]);
 
-  const bulkMoveToFolder = useCallback(async (ids: string[], folder: string | null) => {
+  const bulkMoveToFolder = useCallback(async (ids: string[], folder: string | null): Promise<Array<{ id: string; folder: string | null }>> => {
     if (!userId) throw new Error('Authentication required');
-    if (ids.length === 0) return;
+    if (ids.length === 0) return [];
 
     // Normalize the folder value
     const normalizedFolder = (() => {
@@ -1363,6 +1363,10 @@ export function useChecks(
     if (checksToUpdate.length !== ids.length) {
       throw new Error("One or more checks not found");
     }
+
+    // Captured before the write so the caller can offer Undo — folders are
+    // derived from these strings, so a bad mass move erases the folder tree.
+    const previousFolders = checksToUpdate.map(c => ({ id: c.id, folder: c.folder ?? null }));
 
     const now = Date.now();
     const originalChecks = [...checks];
@@ -1392,6 +1396,7 @@ export function useChecks(
       ids.forEach(id => folderUpdatesRef.current.delete(id));
       invalidateCache();
       log(`Bulk moved ${ids.length} check(s) to folder: ${normalizedFolder ?? '(none)'}`);
+      return previousFolders;
     } catch (error: any) {
       // Rollback
       setChecks(originalChecks);
@@ -1401,6 +1406,48 @@ export function useChecks(
       } else {
         log('Error moving checks to folder: ' + error.message);
       }
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
+  // Restores per-check folder values captured by bulkMoveToFolder — the Undo
+  // side of a bulk move. Checks deleted since the move are skipped.
+  const restoreCheckFolders = useCallback(async (entries: Array<{ id: string; folder: string | null }>) => {
+    if (!userId) throw new Error('Authentication required');
+    const existingIds = new Set(checks.map(c => c.id));
+    const toRestore = entries.filter(e => existingIds.has(e.id));
+    if (toRestore.length === 0) return;
+
+    const now = Date.now();
+    const originalChecks = [...checks];
+    const folderById = new Map(toRestore.map(e => [e.id, e.folder]));
+
+    setChecks(prevChecks =>
+      prevChecks.map(c =>
+        folderById.has(c.id)
+          ? { ...c, folder: folderById.get(c.id) ?? null, updatedAt: now }
+          : c
+      )
+    );
+    toRestore.forEach(e => folderUpdatesRef.current.add(e.id));
+
+    const batch = writeBatch(db);
+    toRestore.forEach(e => {
+      batch.update(doc(db, 'checks', e.id), {
+        folder: e.folder,
+        updatedAt: now,
+      });
+    });
+
+    try {
+      await batch.commit();
+      toRestore.forEach(e => folderUpdatesRef.current.delete(e.id));
+      invalidateCache();
+      log(`Restored folders for ${toRestore.length} check(s)`);
+    } catch (error: any) {
+      setChecks(originalChecks);
+      toRestore.forEach(e => folderUpdatesRef.current.delete(e.id));
+      log('Error restoring folders: ' + error.message);
       throw error;
     }
   }, [userId, checks, invalidateCache, log]);
@@ -1697,7 +1744,8 @@ export function useChecks(
     deleteRecurringMaintenance,
     bulkToggleCheckStatus,
     bulkUpdateSettings, // Bulk update settings for multiple checks
-    bulkMoveToFolder, // Bulk move checks to a folder
+    bulkMoveToFolder, // Bulk move checks to a folder (returns previous folders for undo)
+    restoreCheckFolders, // Undo a bulk folder move
     manualCheck, // Expose manual check function
     setCheckFolder, // Expose folder mutation (Nano feature)
     debouncedSetCheckFolder, // Debounced version for drag-drop (batches writes)

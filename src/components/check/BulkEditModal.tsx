@@ -24,17 +24,7 @@ import { Badge } from '../ui/Badge';
 import { Slider } from '../ui/slider';
 import { X, Shield } from 'lucide-react';
 import { useAdmin } from '@/hooks/useAdmin';
-
-// P1–P5 importance scale shown next to the severity slider. Mirrors CheckForm:
-// integrations map this to notification priority (Pushover pages P1 at Emergency,
-// P4–P5 stay quiet). P3 keeps the integration's own default.
-const SEVERITY_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
-  1: 'P1 — Critical',
-  2: 'P2 — High',
-  3: 'P3 — Normal',
-  4: 'P4 — Low',
-  5: 'P5 — Minimal',
-};
+import { SEVERITY_LABELS } from '@/lib/severity';
 
 export interface BulkEditSettings {
   checkFrequency?: number;

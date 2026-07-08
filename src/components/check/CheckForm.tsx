@@ -67,6 +67,7 @@ import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
+import { SEVERITY_LABELS } from '../../lib/severity';
 import { LLM_PRESETS, getLlmPreset } from '../../lib/llm-presets';
 import { usePlan } from '../../hooks/usePlan';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -251,17 +252,6 @@ const parseStatusCodes = (input: string): number[] => {
   }
 
   return codes.sort((a, b) => a - b);
-};
-
-// P1–P5 importance scale shown next to the severity slider. Mirrors the five
-// Pushover priorities: P1 outages page at Emergency until acknowledged,
-// P4/P5 never bypass quiet hours. P3 keeps the integration's own default.
-const SEVERITY_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
-  1: 'P1 — Critical',
-  2: 'P2 — High',
-  3: 'P3 — Normal',
-  4: 'P4 — Low',
-  5: 'P5 — Minimal',
 };
 
 const CHECK_TYPES = [
@@ -1079,15 +1069,20 @@ export default function CheckForm({
                 className="space-y-6"
               >
                 {/* ── Type Selector: Compact icon strip ── */}
-                {/* Hidden in edit mode: type can't be changed (especially in/out of `domain`). */}
-                {mode !== 'edit' && (
+                {/* In edit mode the type CAN be changed (URL/name/alert settings survive),
+                    with one exception: converting into or out of `domain` — the backend
+                    rejects that (no uptime data model overlap), so domain checks hide the
+                    strip and `domain` is not offered as a target. */}
+                {(mode !== 'edit' || (effectiveCheck?.type ?? 'website') !== 'domain') && (
                 <FormField
                   control={form.control}
                   name="type"
                   render={({ field }) => (
                     <FormItem>
                       <div className="flex flex-wrap gap-1.5">
-                        {CHECK_TYPES.filter(({ value }) => value !== 'llm' || isAdmin).map(({ value, label, icon: Icon }) => (
+                        {CHECK_TYPES.filter(({ value }) =>
+                          (value !== 'llm' || isAdmin) && (mode !== 'edit' || value !== 'domain')
+                        ).map(({ value, label, icon: Icon }) => (
                           <Tooltip key={value}>
                             <TooltipTrigger asChild>
                               <button
@@ -1134,6 +1129,15 @@ export default function CheckForm({
                           </Tooltip>
                         ))}
                       </div>
+                      {mode === 'edit' && field.value !== (effectiveCheck?.type ?? 'website') && (
+                        <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 mt-2">
+                          <p className="text-xs text-warning">
+                            Changing the check type keeps the name, folder, alert settings and history,
+                            but past results were recorded with the old type and settings that don't
+                            apply to the new type stop being used. Review the URL and fields below before saving.
+                          </p>
+                        </div>
+                      )}
                     </FormItem>
                   )}
                 />

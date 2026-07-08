@@ -102,6 +102,7 @@ const Checks: React.FC = () => {
     updateCheck,
     bulkUpdateSettings,
     bulkMoveToFolder,
+    restoreCheckFolders,
     manualCheck,
     setCheckFolder: _setCheckFolder, // Available for non-debounced use cases
     debouncedSetCheckFolder,
@@ -244,6 +245,26 @@ const Checks: React.FC = () => {
     setDuplicatingCheck(check);
     setShowForm(true);
   }, []);
+
+  // Bulk folder move with a one-click Undo. Folders are derived from the
+  // per-check folder strings, so a mis-aimed select-all + move erases the
+  // whole folder tree — the undo restores every check's previous folder.
+  const handleBulkMoveToFolder = useCallback(async (ids: string[], folder: string | null) => {
+    const previousFolders = await bulkMoveToFolder(ids, folder);
+    const count = ids.length;
+    toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
+      description: 'Folder updated successfully.',
+      duration: 10000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          restoreCheckFolders(previousFolders)
+            .then(() => toast.success(`Restored previous folders for ${count} check${count !== 1 ? 's' : ''}`))
+            .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Failed to undo folder move'));
+        },
+      },
+    });
+  }, [bulkMoveToFolder, restoreCheckFolders]);
 
   const handleRefreshMetadata = useCallback(async (check: Website) => {
     const toastId = toast.loading(`Fetching geo data for ${check.name || check.url}…`);
@@ -682,13 +703,7 @@ const Checks: React.FC = () => {
                     description: 'Settings applied successfully.',
                   });
                 }}
-                onBulkMoveToFolder={async (ids, folder) => {
-                  await bulkMoveToFolder(ids, folder);
-                  const count = ids.length;
-                  toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
-                    description: 'Folder updated successfully.',
-                  });
-                }}
+                onBulkMoveToFolder={handleBulkMoveToFolder}
                 onCheckNow={manualCheck}
                 onRefreshMetadata={handleRefreshMetadata}
                 onEdit={(check) => {
@@ -724,13 +739,7 @@ const Checks: React.FC = () => {
                   onSetFolder={handleSetFolderDebounced}
                   onRenameFolder={renameFolder}
                   onDeleteFolder={deleteFolder}
-                  onBulkMoveToFolder={async (ids, folder) => {
-                    await bulkMoveToFolder(ids, folder);
-                    const count = ids.length;
-                    toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
-                      description: 'Folder updated successfully.',
-                    });
-                  }}
+                  onBulkMoveToFolder={handleBulkMoveToFolder}
                 />
               </TabsContent>
             )}

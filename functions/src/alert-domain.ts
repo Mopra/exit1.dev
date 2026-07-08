@@ -215,10 +215,13 @@ async function sendDomainWebhook(
     if (!credentials) {
       throw new Error('Pushover webhook URL is missing token or user key');
     }
+    const emoji = payload.event === 'domain_expired' ? '🚨'
+      : payload.event === 'domain_expiring' ? '⏰'
+      : '🎉';
     const statusText = payload.event === 'domain_expired' ? 'EXPIRED'
       : payload.event === 'domain_expiring' ? 'EXPIRING SOON'
       : 'RENEWED';
-    const title = `Domain ${statusText}: ${payload.domain}`;
+    const title = `${emoji} Domain ${statusText}: ${payload.domain}`;
     const lines: string[] = [];
     if ('daysUntilExpiry' in payload) lines.push(`Expires in: ${payload.daysUntilExpiry} days`);
     if ('expiryDate' in payload && payload.expiryDate) lines.push(`Expiry date: ${new Date(payload.expiryDate).toLocaleDateString()}`);

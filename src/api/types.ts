@@ -110,6 +110,8 @@ export interface CheckHistory {
   edgeRayId?: string;
   edgeHeadersJson?: string;
   redirectLocation?: string;
+  // Body snippet persisted when content validation failed ("what the checker saw")
+  responseBodySample?: string;
 
   // Multi-region (Phase 1 + Phase 2)
   region?: string;

@@ -16,6 +16,7 @@ import { cachedLookup } from "./dns-cache";
 import dns from "dns/promises";
 import { DnsRecordType } from "./types";
 import { normalizeDnsValues } from "./dns-normalize";
+import { assertJsonPath, JsonPathOperator } from "./json-path";
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   try {
@@ -181,45 +182,54 @@ const headersFromNode = (rawHeaders: http.IncomingHttpHeaders): Headers => {
   return headers;
 };
 
-const readFirstChunk = (
+// Accumulates chunks until maxBytes or end-of-body, then aborts the download.
+// Reading across chunks (not just the first one) matters for chunked-transfer
+// responses, where containsText/jsonPath targets can arrive split mid-document.
+const readBodySnippet = (
   res: http.IncomingMessage,
   maxBytes: number,
   fallbackFirstByteAt: number
 ): Promise<{ snippet?: string; firstByteAt: number }> =>
   new Promise((resolve) => {
     let resolved = false;
+    let firstByteAt: number | undefined;
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+
     const cleanup = () => {
       res.removeListener("data", onData);
       res.removeListener("end", onEnd);
-      res.removeListener("error", onError);
+      res.removeListener("error", onEnd);
+    };
+
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      if (chunks.length === 0) {
+        resolve({ snippet: undefined, firstByteAt: fallbackFirstByteAt });
+        return;
+      }
+      const body = Buffer.concat(chunks).subarray(0, maxBytes);
+      resolve({ snippet: new TextDecoder().decode(body), firstByteAt: firstByteAt ?? fallbackFirstByteAt });
     };
 
     const onData = (chunk: Buffer) => {
       if (resolved) return;
-      resolved = true;
-      cleanup();
-      const slice = chunk.length > maxBytes ? chunk.subarray(0, maxBytes) : chunk;
-      res.destroy();
-      resolve({ snippet: new TextDecoder().decode(slice), firstByteAt: Date.now() });
+      if (firstByteAt === undefined) firstByteAt = Date.now();
+      chunks.push(chunk);
+      totalBytes += chunk.length;
+      if (totalBytes >= maxBytes) {
+        finish();
+        res.destroy();
+      }
     };
 
-    const onEnd = () => {
-      if (resolved) return;
-      resolved = true;
-      cleanup();
-      resolve({ snippet: undefined, firstByteAt: fallbackFirstByteAt });
-    };
+    const onEnd = () => finish();
 
-    const onError = () => {
-      if (resolved) return;
-      resolved = true;
-      cleanup();
-      resolve({ snippet: undefined, firstByteAt: fallbackFirstByteAt });
-    };
-
-    res.once("data", onData);
+    res.on("data", onData);
     res.once("end", onEnd);
-    res.once("error", onError);
+    res.once("error", onEnd);
   });
 
 export const performHttpRequest = async ({
@@ -294,7 +304,7 @@ export const performHttpRequest = async ({
 
         let bodySnippet: string | undefined;
         if (readBody) {
-          const chunkResult = await readFirstChunk(res, MAX_BODY_SNIPPET_BYTES, responseAt);
+          const chunkResult = await readBodySnippet(res, MAX_BODY_SNIPPET_BYTES, responseAt);
           firstByteAt = chunkResult.firstByteAt;
           bodySnippet = chunkResult.snippet;
         } else {
@@ -488,6 +498,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   edgeRayId?: string;
   edgeHeadersJson?: string;
   redirectLocation?: string;
+  responseBodySample?: string;
 }, maintenance?: boolean, extras?: {
   region?: string;
   peer?: CheckHistoryPeerExtras;
@@ -537,6 +548,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     edge_ray_id: checkResult.edgeRayId,
     edge_headers_json: checkResult.edgeHeadersJson,
     redirect_location: checkResult.redirectLocation,
+    response_body_sample: checkResult.responseBodySample,
     dns_records_json: website.type === 'dns' ? checkResult.targetIpsJson : undefined,
     region: extras?.region,
     // Peer columns: present when this probe consulted the peer. The
@@ -583,6 +595,7 @@ export const storeCheckHistory = async (website: Website, checkResult: {
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
+  responseBodySample?: string;
 }) => {
   try {
     // Use helper to create record (DRY principle)
@@ -760,6 +773,7 @@ export async function checkRestEndpoint(
   securityMetadataLastChecked?: number;
   redirectLocation?: string;
   redirectChain?: string[];
+  responseBodySample?: string;
 }> {
   // Initialize with empty values to ensure safety
   let securityChecks: { 
@@ -1015,6 +1029,34 @@ export async function checkRestEndpoint(
           bodyValidationReason = `Response did not contain expected text: ${JSON.stringify(missing)}`;
         }
       }
+
+      // JSONPath assertion against the parsed response body.
+      if (bodyValidationPassed && validation.jsonPath) {
+        let parsedBody: unknown;
+        let parseFailed = false;
+        try {
+          parsedBody = JSON.parse(responseBody);
+        } catch {
+          parseFailed = true;
+        }
+        if (parseFailed) {
+          bodyValidationPassed = false;
+          bodyValidationReason = responseBody.length >= MAX_BODY_SNIPPET_BYTES
+            ? `JSONPath validation failed: response body is not valid JSON within the first ${MAX_BODY_SNIPPET_BYTES} bytes`
+            : 'JSONPath validation failed: response body is not valid JSON';
+        } else {
+          const assertion = assertJsonPath(
+            parsedBody,
+            validation.jsonPath,
+            (validation.jsonPathOperator as JsonPathOperator | undefined) ?? 'equals',
+            validation.expectedValue
+          );
+          if (!assertion.passed) {
+            bodyValidationPassed = false;
+            bodyValidationReason = assertion.reason ?? `JSONPath validation failed: ${validation.jsonPath}`;
+          }
+        }
+      }
     }
     
     // Log validation results for debugging
@@ -1145,6 +1187,9 @@ export async function checkRestEndpoint(
       edgeHeadersJson: edge.headersJson,
       redirectLocation,
       ...(redirectChain.length > 0 ? { redirectChain } : {}),
+      // Persist what the checker saw, but only when content validation failed —
+      // successful bodies would bloat history for no diagnostic value.
+      ...(!bodyValidationPassed && responseBody ? { responseBodySample: responseBody } : {}),
     };
 
   } catch (error) {

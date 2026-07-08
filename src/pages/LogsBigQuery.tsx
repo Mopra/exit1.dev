@@ -828,6 +828,7 @@ const LogsBigQuery: React.FC = () => {
           edgeRayId: entry.edgeRayId,
           edgeHeadersJson: entry.edgeHeadersJson,
           redirectLocation: entry.redirectLocation,
+          responseBodySample: entry.responseBodySample,
           region: entry.region,
           peerRegion: entry.peerRegion,
           peerStatus: entry.peerStatus,

@@ -785,6 +785,31 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         </div>
                       )}
 
+                      {/* Response body sample: what the checker saw when content
+                          validation (contains-text / JSONPath) failed. */}
+                      {logEntry.responseBodySample && (
+                        <div className="rounded-lg p-3 sm:p-4 bg-neutral-900/30 border border-neutral-800/50 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-sm font-medium text-foreground">Response Body</h3>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleCopy(logEntry.responseBodySample!)}
+                              className="h-8 px-2 cursor-pointer"
+                            >
+                              <Copy className="w-4 h-4 mr-1" />
+                              Copy
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            What the checker saw when response validation failed (first 8 KB).
+                          </p>
+                          <pre className="font-mono text-xs text-foreground bg-neutral-950/60 border border-neutral-800/50 rounded-md p-3 max-h-64 overflow-auto whitespace-pre-wrap break-all">
+                            {logEntry.responseBodySample}
+                          </pre>
+                        </div>
+                      )}
+
                       {/* Alerting audit: explain WHY this row exists and what
                           the alerting layer did with it. Shown whenever we have
                           a confirmation or alert-delivery signal — typically

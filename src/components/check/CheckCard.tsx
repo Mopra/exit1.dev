@@ -51,6 +51,7 @@ import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
 import { getFolderBadgeClasses } from '../../lib/folder-utils';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { CheckCountdown } from './CheckCountdown';
+import { SeverityBadge } from './SeverityBadge';
 
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => {
     return (
@@ -452,8 +453,9 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         → {check.redirectLocation}
                     </div>
                 )}
-                {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
+                {(check.severity || ((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
                     <div className="pt-1 flex flex-wrap items-center gap-2">
+                        <SeverityBadge severity={check.severity} />
                         {(check.folder ?? '').trim() && (
                             <Badge variant="secondary" className={cn(
                                 "font-mono text-[11px]",

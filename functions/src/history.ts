@@ -330,6 +330,7 @@ export const getCheckHistoryBigQuery = onCall({
         edgeRayId: entry.edge_ray_id ?? undefined,
         edgeHeadersJson: entry.edge_headers_json ?? undefined,
         redirectLocation: entry.redirect_location ?? undefined,
+        responseBodySample: entry.response_body_sample ?? undefined,
         region: entry.region ?? undefined,
         peerRegion: entry.peer_region ?? undefined,
         peerStatus: entry.peer_status ?? undefined,

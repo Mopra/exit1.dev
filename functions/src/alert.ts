@@ -347,6 +347,16 @@ async function verifyAlertable(website: Website): Promise<'check_disabled' | 'ma
       return 'check_disabled';
     }
     if (fresh?.maintenanceMode === true) return 'maintenance_mode';
+    // While we have the fresh doc, sync severity onto the in-memory copy —
+    // otherwise a stale copy maps the alert priority (e.g. Pushover) from a
+    // value the user has already changed.
+    if (fresh) {
+      if (typeof fresh.severity === 'number') {
+        website.severity = fresh.severity as Website['severity'];
+      } else {
+        delete website.severity;
+      }
+    }
   } catch (error) {
     logger.warn(`Alertable verification read failed for ${website.id}, failing open:`, error);
   }

@@ -69,6 +69,7 @@ import { useStableCallback } from '../../hooks/useStableCallback';
 import { normalizeFolder, getFolderBadgeClasses, buildFolderList } from '../../lib/folder-utils';
 import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration, isDomainOnlyCheck } from '../../lib/check-utils';
 import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
+import { SeverityBadge } from './SeverityBadge';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 
 // Context to thread sortable drag listeners from the row wrapper to the grip handle
@@ -218,6 +219,9 @@ type CheckTableColumnKey =
   | 'quickActions';
 
 type CheckTableColumnVisibility = Record<CheckTableColumnKey, boolean>;
+
+// Bulk actions touching at least this many checks ask for confirmation first.
+const BULK_CONFIRM_THRESHOLD = 10;
 
 const DEFAULT_CHECKS_TABLE_COLUMN_VISIBILITY: CheckTableColumnVisibility = {
   order: true,
@@ -406,8 +410,9 @@ const CheckTableRow = React.memo(function CheckTableRow({
                     → {check.redirectLocation}
                   </div>
                 )}
-                {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
+                {(check.severity || ((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
                   <div className="pt-1 flex flex-wrap items-center gap-2">
+                    <SeverityBadge severity={check.severity} />
                     {(check.folder ?? '').trim() && (
                       <Badge variant="secondary" className={`font-mono text-[11px] w-fit ${getFolderBadgeClasses(folderColor)}`}>
                         {(check.folder ?? '').trim()}
@@ -725,6 +730,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [selectAll, setSelectAll] = useState(false);
   const lastClickedIndexRef = React.useRef<number | null>(null);
   const [folderMoveOpen, setFolderMoveOpen] = useState(false);
+  // Large bulk actions (move/enable/disable/maintenance) confirm before firing
+  // so one mis-aimed select-all can't silently rewrite the whole fleet.
+  const [bulkConfirm, setBulkConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmText: string;
+    count: number;
+    action: () => void;
+  } | null>(null);
   // @dnd-kit sensors: pointer with 5px activation distance to avoid accidental drags
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1127,6 +1141,26 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setSelectedChecks(new Set());
     setSelectAll(false);
   }, [onBulkToggleStatus, selectedChecks]);
+
+  // Runs a bulk action immediately below the threshold; above it, asks first
+  // with the count and the first few affected names.
+  const runOrConfirmBulk = useCallback((opts: { title: string; verb: string; suffix?: string; confirmText: string; action: () => void }) => {
+    const selected = sortedChecksRef.current.filter(c => selectedChecksRef.current.has(c.id));
+    if (selected.length < BULK_CONFIRM_THRESHOLD) {
+      opts.action();
+      return;
+    }
+    const names = selected.slice(0, 5).map(c => c.name);
+    const rest = selected.length - names.length;
+    const nameList = rest > 0 ? `${names.join(', ')} and ${rest} more` : names.join(', ');
+    setBulkConfirm({
+      title: opts.title,
+      message: `This will ${opts.verb} ${selected.length} checks${opts.suffix ?? ''}: ${nameList}.`,
+      confirmText: opts.confirmText,
+      count: selected.length,
+      action: opts.action,
+    });
+  }, []);
 
 
 
@@ -1649,6 +1683,22 @@ const CheckTable: React.FC<CheckTableProps> = ({
         itemName="check"
       />
 
+      {/* Large bulk-action confirmation (move/enable/disable/maintenance) */}
+      <ConfirmationModal
+        isOpen={bulkConfirm !== null}
+        onClose={() => setBulkConfirm(null)}
+        onConfirm={() => {
+          bulkConfirm?.action();
+          setBulkConfirm(null);
+        }}
+        title={bulkConfirm?.title ?? ''}
+        message={bulkConfirm?.message ?? ''}
+        confirmText={bulkConfirm?.confirmText}
+        variant="warning"
+        itemCount={bulkConfirm?.count}
+        itemName="check"
+      />
+
       {!isMobile && <BulkActionsBar
         selectedCount={selectedChecks.size}
         totalCount={sortedChecks.length}
@@ -1668,31 +1718,51 @@ const CheckTable: React.FC<CheckTableProps> = ({
           {
             label: 'Enable',
             icon: <Power className="w-3 h-3" />,
-            onClick: () => handleBulkToggleStatus(false),
+            onClick: () => runOrConfirmBulk({
+              title: 'Enable checks?',
+              verb: 'enable',
+              confirmText: 'Enable',
+              action: () => handleBulkToggleStatus(false),
+            }),
             variant: 'ghost',
           },
           {
             label: 'Disable',
             icon: <PowerOff className="w-3 h-3" />,
-            onClick: () => handleBulkToggleStatus(true),
+            onClick: () => runOrConfirmBulk({
+              title: 'Disable checks?',
+              verb: 'disable monitoring for',
+              confirmText: 'Disable',
+              action: () => handleBulkToggleStatus(true),
+            }),
             variant: 'ghost',
           },
           ...(onBulkToggleMaintenance ? [{
             label: 'Enter Maintenance',
             icon: isNano ? <Wrench className="w-3 h-3" /> : <><Wrench className="w-3 h-3" /><Sparkles className="w-3 h-3 text-tier-pro/90" /></>,
-            onClick: () => {
-              const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
-              onBulkToggleMaintenance(selected, true);
-            },
+            onClick: () => runOrConfirmBulk({
+              title: 'Enter maintenance?',
+              verb: 'put into maintenance mode',
+              confirmText: 'Enter Maintenance for',
+              action: () => {
+                const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
+                onBulkToggleMaintenance(selected, true);
+              },
+            }),
             variant: 'ghost' as const,
           },
           {
             label: 'Exit Maintenance',
             icon: <CheckCircle className="w-3 h-3" />,
-            onClick: () => {
-              const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
-              onBulkToggleMaintenance(selected, false);
-            },
+            onClick: () => runOrConfirmBulk({
+              title: 'Exit maintenance?',
+              verb: 'take out of maintenance mode',
+              confirmText: 'Exit Maintenance for',
+              action: () => {
+                const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
+                onBulkToggleMaintenance(selected, false);
+              },
+            }),
             variant: 'ghost' as const,
           }] : []),
           ...(onBulkMoveToFolder ? [{
@@ -1723,12 +1793,21 @@ const CheckTable: React.FC<CheckTableProps> = ({
             <div className="space-y-1">
               <button
                 className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground"
-                onClick={async () => {
-                  await onBulkMoveToFolder(Array.from(selectedChecks), null);
-                  setSelectedChecks(new Set());
-                  setSelectAll(false);
-                  lastClickedIndexRef.current = null;
+                onClick={() => {
+                  const ids = Array.from(selectedChecks);
                   setFolderMoveOpen(false);
+                  runOrConfirmBulk({
+                    title: 'Move checks?',
+                    verb: 'move',
+                    suffix: ' out of their folders',
+                    confirmText: 'Move',
+                    action: async () => {
+                      await onBulkMoveToFolder(ids, null);
+                      setSelectedChecks(new Set());
+                      setSelectAll(false);
+                      lastClickedIndexRef.current = null;
+                    },
+                  });
                 }}
               >
                 <Minus className="w-3.5 h-3.5" />
@@ -1741,12 +1820,21 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 <button
                   key={folder}
                   className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors flex items-center gap-2"
-                  onClick={async () => {
-                    await onBulkMoveToFolder(Array.from(selectedChecks), folder);
-                    setSelectedChecks(new Set());
-                    setSelectAll(false);
-                    lastClickedIndexRef.current = null;
+                  onClick={() => {
+                    const ids = Array.from(selectedChecks);
                     setFolderMoveOpen(false);
+                    runOrConfirmBulk({
+                      title: 'Move checks?',
+                      verb: 'move',
+                      suffix: ` to "${folder}"`,
+                      confirmText: 'Move',
+                      action: async () => {
+                        await onBulkMoveToFolder(ids, folder);
+                        setSelectedChecks(new Set());
+                        setSelectAll(false);
+                        lastClickedIndexRef.current = null;
+                      },
+                    });
                   }}
                 >
                   <Folder className="w-3.5 h-3.5" />

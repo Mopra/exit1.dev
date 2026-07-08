@@ -75,6 +75,9 @@ export interface BigQueryCheckHistory {
   edge_headers_json?: string;
   // Redirect location
   redirect_location?: string;
+  // First ~8 KB of the response body, persisted ONLY when content validation
+  // (containsText / JSONPath) failed — lets the user see what the checker saw.
+  response_body_sample?: string;
   // DNS record monitoring
   dns_records_json?: string;     // JSON of { [recordType]: { values, responseTimeMs } }
   // Maintenance mode flag
@@ -149,6 +152,7 @@ interface BigQueryInsertRow {
   edge_ray_id?: string | null | undefined;
   edge_headers_json?: string | null | undefined;
   redirect_location?: string | null | undefined;
+  response_body_sample?: string | null | undefined;
   // Multi-region (Phase 2)
   region?: string | null | undefined;
   peer_region?: string | null | undefined;
@@ -372,6 +376,7 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   edge_ray_id: data.edge_ray_id ?? null,
   edge_headers_json: data.edge_headers_json ?? null,
   redirect_location: data.redirect_location ?? null,
+  response_body_sample: data.response_body_sample ?? null,
   region: data.region ?? null,
   peer_region: data.peer_region ?? null,
   peer_status: data.peer_status ?? null,
@@ -422,6 +427,8 @@ const DESIRED_SCHEMA: SchemaField[] = [
   { name: "edge_headers_json", type: "STRING", mode: "NULLABLE" },
   // Redirect checker
   { name: "redirect_location", type: "STRING", mode: "NULLABLE" },
+  // Body snippet captured on content-validation failure ("what the checker saw")
+  { name: "response_body_sample", type: "STRING", mode: "NULLABLE" },
   // Multi-region (Phase 1 reporting + Phase 2 peer confirmation).
   // The schema-evolution path below auto-adds these columns on next deploy.
   // Backfill plan for `region`: one-time `UPDATE check_history_new SET
@@ -865,6 +872,7 @@ export interface BigQueryCheckHistoryRow {
   edge_ray_id?: string;
   edge_headers_json?: string;
   redirect_location?: string;
+  response_body_sample?: string;
   maintenance?: boolean;
   // Multi-region (Phase 1 + Phase 2)
   region?: string;
@@ -942,6 +950,7 @@ const FULL_HISTORY_COLUMNS = `
   edge_ray_id,
   edge_headers_json,
   redirect_location,
+  response_body_sample,
   region,
   peer_region,
   peer_status,
@@ -965,6 +974,12 @@ export const getCheckHistory = async (
   includeFullDetails: boolean = false
 ): Promise<BigQueryCheckHistoryRow[]> => {
   try {
+    // Full-detail queries select newly added columns (e.g. response_body_sample);
+    // ensure schema evolution ran before referencing them, or the SELECT 500s
+    // with "Unrecognized name" until the first post-deploy insert adds them.
+    if (includeFullDetails) {
+      await ensureCheckHistoryTableSchema();
+    }
     const columns = includeFullDetails ? FULL_HISTORY_COLUMNS : MINIMAL_HISTORY_COLUMNS;
     let query = `
       SELECT ${columns}

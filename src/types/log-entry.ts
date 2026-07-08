@@ -35,6 +35,9 @@ export interface LogEntry {
   edgeRayId?: string;
   edgeHeadersJson?: string;
   redirectLocation?: string;
+  // First ~8 KB of the response body, present only when content validation
+  // (containsText / JSONPath) failed — "what the checker saw".
+  responseBodySample?: string;
   isManual?: boolean;
   manualMessage?: string;
   maintenanceType?: 'maintenance_start' | 'maintenance_end';
