@@ -1374,10 +1374,13 @@ const heartbeatDeferUnsub = firestore
 // the dominant Firestore write path, and the frontend reads live fields over
 // WS (Phase 5), so Firestore freshness only matters for WS-fallback mode,
 // restart hydration, and the public API's lastChecked/responseTime. State
-// transitions still write immediately. At this interval the WS-fallback UI
-// must present timing fields as stale (Tier 2b) — don't lengthen further
-// without revisiting that copy. Env-overridable so ops can tune without a
-// redeploy.
+// transitions still write immediately. Since the steady-state skip landed in
+// status-buffer.ts (material-hash dedup + CHECKS_DOC_REFRESH_MAX_AGE_MS
+// floor, default 24h), this interval only sets how often the buffer is
+// *evaluated* — a check whose material state hasn't changed writes at most
+// once per floor interval, not once per flush. The WS-fallback UI presents
+// timing fields as stale accordingly (Tier 2b, copy says "up to a day").
+// Env-overridable so ops can tune without a redeploy.
 const HEARTBEAT_DEFER_FLUSH_INTERVAL_MS =
   Number(process.env.HEARTBEAT_DEFER_FLUSH_INTERVAL_MS) || 60 * 60 * 1000;
 const heartbeatDeferFlushTimer = setInterval(() => {

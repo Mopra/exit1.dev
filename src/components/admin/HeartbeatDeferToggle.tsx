@@ -41,7 +41,7 @@ export const HeartbeatDeferToggle: React.FC = () => {
 
   const status =
     loading ? 'Loading…'
-    : enabled ? 'Enabled — heartbeats batched every 5 min'
+    : enabled ? 'Enabled — heartbeats batched hourly, steady-state writes skipped'
     : 'Disabled — heartbeats write through the normal flush path';
 
   return (
@@ -67,13 +67,14 @@ export const HeartbeatDeferToggle: React.FC = () => {
             disabled, maintenanceMode, lastError, or
             <code className="px-1"> consecutiveFailures</code> crossing zero)
             write to Firestore immediately. Heartbeats — same state, just
-            <code className="px-1">lastChecked</code> moving — batch into a
-            single write every 5 min per check.
+            <code className="px-1">lastChecked</code> moving — defer to an
+            hourly flush, and even that write is skipped while material state
+            is unchanged (a daily refresh floor keeps doc timestamps bounded).
           </p>
           <p>
             <strong className="text-foreground">Trade-off:</strong> in WS-fallback
-            mode the dashboard's <code className="px-1">lastChecked</code> ages
-            up to ~5 min stale instead of ~2s. Transitions still arrive
+            mode the dashboard's <code className="px-1">lastChecked</code> can
+            age up to a day (marked as stale). Transitions still arrive
             immediately. The WS primary path is unaffected. Disabling drains
             the deferred buffer instantly — rollback has no lag.
           </p>

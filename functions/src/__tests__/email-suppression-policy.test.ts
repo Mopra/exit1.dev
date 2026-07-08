@@ -32,11 +32,14 @@ test("complaint suppresses like a permanent bounce", () => {
   assert.equal(state.permanent, true);
 });
 
-test("single transient bounce does not suppress", () => {
+test("first transient bounce suppresses immediately and notifies", () => {
   const { state, becameSuppressed } = applyBounceEvent(null, EMAIL, "transient", NOW, "greylisted");
-  assert.equal(becameSuppressed, false);
-  assert.equal(isSuppressed(state, NOW), false);
-  assert.equal(state.transientCount, 1);
+  assert.equal(becameSuppressed, true);
+  assert.equal(isSuppressed(state, NOW), true);
+  assert.equal(state.permanent, false);
+  assert.equal(state.suppressedUntil, NOW + BASE_SUPPRESSION_MS);
+  // Timed pause expires on its own
+  assert.equal(isSuppressed(state, NOW + BASE_SUPPRESSION_MS + 1), false);
 });
 
 test("threshold transient bounces inside the window trigger a timed pause", () => {
@@ -57,14 +60,17 @@ test("threshold transient bounces inside the window trigger a timed pause", () =
   assert.equal(isSuppressed(state!, at + BASE_SUPPRESSION_MS + 1), false);
 });
 
-test("transient bounces spread beyond the window never suppress", () => {
+test("bounces after each pause expires start new, longer episodes", () => {
   let state: EmailSuppressionState | null = null;
-  for (let i = 0; i < 10; i++) {
-    const t = applyBounceEvent(state, EMAIL, "transient", NOW + i * (TRANSIENT_WINDOW_MS + 1));
-    state = t.state;
-    assert.equal(t.becameSuppressed, false);
+  let t = NOW;
+  for (let episode = 0; episode < 3; episode++) {
+    const transition = applyBounceEvent(state, EMAIL, "transient", t);
+    state = transition.state;
+    assert.equal(transition.becameSuppressed, true);
+    assert.equal(state.suppressedUntil, t + suppressionDurationForEscalation(episode));
+    assert.equal(state.escalations, episode + 1);
+    t = state.suppressedUntil! + TRANSIENT_WINDOW_MS + 1;
   }
-  assert.equal(state!.suppressedUntil, null);
 });
 
 test("repeat episodes back off exponentially and cap", () => {
@@ -115,4 +121,20 @@ test("permanent bounce on an already transient-paused address does not re-flag b
 
 test("normalizeEmail trims and lowercases", () => {
   assert.equal(normalizeEmail("  Ops@Example.COM "), "ops@example.com");
+});
+
+test("normalizeEmail extracts the bare address from a display-name form", () => {
+  assert.equal(
+    normalizeEmail("Jaron Heskamp <JH@Heskamp-Medien.de>"),
+    "jh@heskamp-medien.de"
+  );
+  assert.equal(normalizeEmail("  Ops <ops@example.com>  "), "ops@example.com");
+  assert.equal(normalizeEmail("<ops@example.com>"), "ops@example.com");
+  // Bare addresses pass through untouched
+  assert.equal(normalizeEmail("ops@example.com"), "ops@example.com");
+});
+
+test("display-name and bare forms normalize to the same suppression key", () => {
+  const fromWebhook = applyBounceEvent(null, "Some Name <Ops@Example.com>", "permanent", NOW);
+  assert.equal(fromWebhook.state.email, normalizeEmail("ops@example.com"));
 });

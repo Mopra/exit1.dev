@@ -25,9 +25,9 @@ const pauseLabel = (s: Suppression): string => {
       : 'Hard-bounced (address may not exist) — paused until you resume it.';
   }
   if (s.suppressedUntil) {
-    return `Bouncing repeatedly — paused until ${new Date(s.suppressedUntil).toLocaleString()}.`;
+    return `Bounced (address may be mistyped) — paused until ${new Date(s.suppressedUntil).toLocaleString()}.`;
   }
-  return 'Bouncing repeatedly — temporarily paused.';
+  return 'Bounced (address may be mistyped) — temporarily paused.';
 };
 
 /**

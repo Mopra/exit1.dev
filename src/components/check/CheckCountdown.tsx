@@ -43,8 +43,9 @@ interface CheckCountdownProps {
   /**
    * Tier 2b (firestore-write-reduction.md): the check's live fields are
    * rendering from Firestore (WS fallback / not yet connected), where
-   * heartbeat snapshots land hourly. lastChecked/nextCheckAt may be up to
-   * ~an hour old, so the countdown math is meaningless — suppress the
+   * heartbeat snapshots only land on status changes or a daily refresh.
+   * lastChecked/nextCheckAt may be up to a day old, so the countdown math
+   * is meaningless — suppress the
    * "Next in" line, progress bar, and the due/"In Queue" pulse, and mark
    * the elapsed text as stale instead.
    */
@@ -90,7 +91,7 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
         <TooltipContent>
           <span className="text-xs">
             Live stream unavailable — times come from the last backend sync
-            and may lag up to an hour. Up/down status still updates promptly.
+            and may lag up to a day. Up/down status still updates promptly.
           </span>
         </TooltipContent>
       </Tooltip>

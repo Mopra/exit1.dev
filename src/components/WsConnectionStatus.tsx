@@ -66,7 +66,7 @@ const STATE_DETAIL: Record<RegionWsState, string> = {
   authing: 'Authenticating the WebSocket session.',
   live: 'Streaming probe results in real time.',
   reconnecting: 'Lost the stream — retrying. Showing the last streamed values until it returns.',
-  fallback: 'Stream unavailable for this region. Up/down status still updates promptly, but timing data (last checked, response time) comes from periodic backend syncs and can be up to an hour old.',
+  fallback: 'Stream unavailable for this region. Up/down status still updates promptly, but timing data (last checked, response time) only syncs on status changes or a daily refresh and can be up to a day old.',
 };
 
 export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState, regions }) => {
@@ -118,7 +118,7 @@ export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState
               the instant our runners post them. Otherwise the page falls back
               to periodic backend syncs: up/down status changes still arrive
               promptly, but timing values (last checked, response time) can
-              lag up to an hour and are marked as stale.
+              lag up to a day and are marked as stale.
             </DialogDescription>
           </DialogHeader>
 
@@ -188,8 +188,8 @@ export const WsFallbackBanner: React.FC<BannerProps> = ({ fallbackRegion }) => {
         <div className="font-medium">Live data unavailable for {fallbackRegion.region}</div>
         <div className="text-xs text-rose-300/80">
           Reconnecting for {seconds}s — up/down status stays current, but
-          last-checked times and response times come from periodic backend
-          syncs and can be up to an hour old.
+          last-checked times and response times only sync on status changes
+          or a daily refresh and can be up to a day old.
         </div>
       </div>
     </div>

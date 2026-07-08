@@ -110,7 +110,35 @@ const LOG_SAMPLE_RATE = 0.05;
 const LAST_CHECKED_BUCKET_MS = 2 * 60 * 1000;
 const NEXT_CHECK_BUCKET_MS = 60 * 1000;
 const RESPONSE_TIME_BUCKET_MS = 50;
+// Bounded-staleness floor for the steady-state flush skip: a check whose
+// material state hasn't changed skips its periodic flush write entirely,
+// but never for longer than this — so doc timing fields (lastChecked,
+// nextCheckAt, responseTime) stay bounded for the public API, restart
+// hydration, and the WS-fallback UI instead of freezing at the last
+// transition. Env-overridable like HEARTBEAT_DEFER_FLUSH_INTERVAL_MS
+// (PM2 env edit + restart, no redeploy). Setting it to 0 (or negative)
+// DISABLES the skip entirely — every flush writes through — giving ops a
+// no-deploy kill knob alongside the heartbeat-defer admin toggle.
+// NOTE: the true doc-staleness bound is this floor PLUS the deferred-flush
+// interval (the floor only takes effect when the next flush evaluates the
+// check) — ~25h with defaults. The UI copy and API docs say "up to a day";
+// revisit both if either knob is raised.
+const parsedDocRefreshMaxAgeMs = Number(process.env.CHECKS_DOC_REFRESH_MAX_AGE_MS);
+const CHECKS_DOC_REFRESH_MAX_AGE_MS = Number.isFinite(parsedDocRefreshMaxAgeMs)
+  ? parsedDocRefreshMaxAgeMs
+  : 24 * 60 * 60 * 1000;
+if (process.env.CHECKS_DOC_REFRESH_MAX_AGE_MS !== undefined) {
+  logger.info(
+    `[steady-skip] CHECKS_DOC_REFRESH_MAX_AGE_MS override: ${CHECKS_DOC_REFRESH_MAX_AGE_MS}ms` +
+    (CHECKS_DOC_REFRESH_MAX_AGE_MS <= 0 ? ' (steady-state skip DISABLED)' : '')
+  );
+}
 const lastWrittenHashes = new Map<string, string>();
+// Material hash + commit time of the last write per check. Drives the
+// steady-state skip: timing-only churn (which always changes the full hash)
+// must not force a write while material state is unchanged and the doc is
+// younger than CHECKS_DOC_REFRESH_MAX_AGE_MS.
+const lastWrittenMaterial = new Map<string, { hash: string; writtenAt: number }>();
 const logSampledDebug = (message: string, meta?: Record<string, unknown>) => {
   if (Math.random() < LOG_SAMPLE_RATE) {
     if (meta) {
@@ -134,6 +162,7 @@ interface FlushStats {
   missing: number;
   failures: number;
   noops: number;
+  steadySkips: number;
 }
 
 const normalizeStatusData = (data: StatusUpdateData) => {
@@ -166,14 +195,68 @@ const normalizeStatusData = (data: StatusUpdateData) => {
   return { ...stable, lastCheckedBucket, nextCheckBucket, responseTimeBucket };
 };
 
-const hashStatusData = (data: StatusUpdateData) => {
-  const n = normalizeStatusData(data);
-  // String concat is ~5-10x faster than JSON.stringify for flat objects.
-  // IMPORTANT: Every field in normalizeStatusData must appear here.
-  // Omitting a field means changes to it would be treated as no-ops.
+type NormalizedStatusData = ReturnType<typeof normalizeStatusData>;
+
+// Material fields: everything that represents check STATE rather than probe
+// recency. String concat is ~5-10x faster than JSON.stringify for flat
+// objects. IMPORTANT: every field in normalizeStatusData must appear in
+// exactly one of materialHashOf/timingHashOf — omitting a field means
+// changes to it would be treated as no-ops.
+//
+// Deliberately in the timing hash instead (their churn must not force a
+// flush write): the lastChecked/nextCheckAt/responseTime buckets;
+// lastHistoryAt (BigQuery history-sampling cursor — runtime reads it from
+// the in-memory schedule, the doc copy only seeds restart hydration where
+// an early re-sample is harmless); peerCheckedAt/peerResponseTime
+// (per-consultation timing jitter — the peer verdict fields stay material);
+// the dnsMs/connectMs/tlsMs/ttfbMs phase timings and
+// sslCertificate.lastChecked (per-probe measurements, same staleness class
+// as responseTime). A steady check whose probes only move timing fields
+// produces an unchanged material hash and skips its flush write (see
+// processBatchEntries).
+const materialHashOf = (n: NormalizedStatusData) => {
   const ssl = n.sslCertificate;
-  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${n.pendingDownWebhooks}|${n.pendingUpWebhooks}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerResponseTime}|${n.peerCheckedAt}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
+  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${n.pendingDownWebhooks}|${n.pendingUpWebhooks}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
 };
+
+const timingHashOf = (n: NormalizedStatusData) =>
+  `${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastHistoryAt}|${n.peerCheckedAt}|${n.peerResponseTime}|${n.dnsMs}|${n.connectMs}|${n.tlsMs}|${n.ttfbMs}|${n.sslCertificate?.lastChecked}`;
+
+// Compile-time coverage guard: every key of the normalized payload must be
+// consumed by materialHashOf or timingHashOf. Adding a field to
+// StatusUpdateData without classifying it in one of the hash template
+// strings AND this union fails the build, instead of silently freezing the
+// new field for up to the refresh floor. (sslCertificate counts as covered
+// at the top level; its subfields are split inline — lastChecked is timing,
+// the rest are material.)
+type HashCoveredField =
+  | 'status' | 'lastStatusCode' | 'statusCode' | 'consecutiveFailures'
+  | 'consecutiveSuccesses' | 'detailedStatus' | 'lastError' | 'checkRegion'
+  | 'targetCountry' | 'targetRegion' | 'targetCity' | 'targetLatitude'
+  | 'targetLongitude' | 'targetHostname' | 'targetIp' | 'targetIpsJson'
+  | 'targetIpFamily' | 'targetAsn' | 'targetOrg' | 'targetIsp'
+  | 'targetMetadataLastChecked' | 'downtimeCount' | 'lastDowntime'
+  | 'lastFailureTime' | 'disabled' | 'disabledAt' | 'disabledReason'
+  | 'pendingDownEmail' | 'pendingDownSince' | 'pendingUpEmail'
+  | 'pendingUpSince' | 'pendingDownSms' | 'pendingUpSms'
+  | 'pendingDownWebhooks' | 'pendingUpWebhooks' | 'sslCertificate'
+  | 'sslAlertedState' | 'maintenanceMode' | 'maintenanceStartedAt'
+  | 'maintenanceExpiresAt' | 'maintenanceDuration' | 'maintenanceReason'
+  | 'maintenanceScheduledStart' | 'maintenanceScheduledDuration'
+  | 'maintenanceScheduledReason' | 'maintenanceRecurringActiveUntil'
+  | 'redirectLocation' | 'peerRegion' | 'peerStatus' | 'peerReachable'
+  | 'peerDisagreementStreakStartedAt' | 'peerDisagreementNotifiedAt'
+  | 'lastHistoryAt' | 'peerCheckedAt' | 'peerResponseTime'
+  | 'dnsMs' | 'connectMs' | 'tlsMs' | 'ttfbMs'
+  | 'lastCheckedBucket' | 'nextCheckBucket' | 'responseTimeBucket';
+type AssertNever<T extends never> = T;
+// Exported only so noUnusedLocals doesn't strip the assertion; never import
+// it. First element errors on a payload field missing from HashCoveredField;
+// second errors on a HashCoveredField name that isn't in the payload.
+export type HashCoverageChecks = [
+  AssertNever<Exclude<keyof NormalizedStatusData, HashCoveredField>>,
+  AssertNever<Exclude<HashCoveredField, keyof NormalizedStatusData>>,
+];
 
 // Status update buffer for batching updates
 // Exported for flushStatusUpdates, but prefer using addStatusUpdate
@@ -204,6 +287,11 @@ export const setStatusUpdateHook = (hook: typeof onStatusUpdateHook) => { onStat
 // operators can flip the switch without redeploying. Disabling drains
 // the deferred buffer immediately so subsequent writes flow through the
 // existing path with no gap.
+// INVARIANT: every field consulted by isTransition below MUST also be part
+// of materialHashOf. A transition-classified update whose deciding field
+// weren't material would be routed to the immediate flush path and then
+// steady-skipped there (unchanged material hash + fresh writtenAt) —
+// silently dropping a write the classifier promised was immediate.
 interface LastWrittenState {
   status?: StatusUpdateData['status'];
   detailedStatus?: StatusUpdateData['detailedStatus'];
@@ -219,6 +307,7 @@ let heartbeatDeferEnabled = false;
 let writesDeferred = 0;
 let writesImmediate = 0;
 let writesPromotedFromDeferred = 0;
+let writesSkippedSteadyState = 0;
 let lastDeferredFlushAt = 0;
 
 /**
@@ -321,6 +410,7 @@ export interface HeartbeatDeferStats {
   writesDeferred: number;
   writesImmediate: number;
   writesPromotedFromDeferred: number;
+  writesSkippedSteadyState: number;
   lastFlushedAt: number;
 }
 
@@ -331,6 +421,7 @@ export const getHeartbeatDeferStats = (): HeartbeatDeferStats => ({
   writesDeferred,
   writesImmediate,
   writesPromotedFromDeferred,
+  writesSkippedSteadyState,
   lastFlushedAt: lastDeferredFlushAt,
 });
 
@@ -497,6 +588,7 @@ export const flushStatusUpdates = async (): Promise<void> => {
       missing: 0,
       failures: 0,
       noops: 0,
+      steadySkips: 0,
     };
 
     for (let i = 0; i < readyEntries.length; i += FIRESTORE_BATCH_SIZE) {
@@ -504,8 +596,8 @@ export const flushStatusUpdates = async (): Promise<void> => {
       await processBatchEntries(batchEntries, stats);
     }
 
-    if (stats.successes || stats.failures || stats.missing || stats.noops) {
-      const flushMsg = `Status flush: ${stats.successes} writes, ${stats.noops} no-op skips, ${stats.missing} missing, ${stats.failures} deferred, ${skipped} waiting, ${dropped} dropped`;
+    if (stats.successes || stats.failures || stats.missing || stats.noops || stats.steadySkips) {
+      const flushMsg = `Status flush: ${stats.successes} writes, ${stats.steadySkips} steady-state skips, ${stats.noops} no-op skips, ${stats.missing} missing, ${stats.failures} deferred, ${skipped} waiting, ${dropped} dropped`;
       if (stats.successes >= 50 || stats.failures > 0 || stats.missing > 0) {
         logger.info(flushMsg);
       } else {
@@ -693,17 +785,44 @@ const processBatchEntries = async (
   // Track hashes so we only write when state meaningfully changed
   const entriesToWrite: Array<[string, StatusUpdateData]> = [];
   const pendingHashes = new Map<string, string>();
+  const pendingMaterial = new Map<string, string>();
 
   for (const [checkId, data] of batchEntries) {
-    const nextHash = hashStatusData(data);
+    const n = normalizeStatusData(data);
+    const materialHash = materialHashOf(n);
+    const nextHash = `${materialHash}|${timingHashOf(n)}`;
     const lastHash = lastWrittenHashes.get(checkId);
     if (lastHash && lastHash === nextHash) {
       markEntrySuccess(checkId, data);
       stats.noops += 1;
       continue;
     }
+    // Steady-state skip: only timing fields moved since the last committed
+    // write and the doc is still within the freshness floor — drop the write
+    // entirely. The next material change (or the floor lapsing) writes the
+    // full payload with fresh timing fields. Gated on the heartbeat-defer
+    // flag so the existing admin kill switch also restores full
+    // write-through here, and Cloud Functions contexts (flag never enabled
+    // there) keep per-flush timing freshness. Bypassed during shutdown so
+    // the final drain persists the freshest timing state — restart
+    // hydration then starts from shutdown-time docs, not the floor bound.
+    const prevMaterial = lastWrittenMaterial.get(checkId);
+    if (
+      heartbeatDeferEnabled &&
+      !isShuttingDown &&
+      CHECKS_DOC_REFRESH_MAX_AGE_MS > 0 &&
+      prevMaterial &&
+      prevMaterial.hash === materialHash &&
+      Date.now() - prevMaterial.writtenAt < CHECKS_DOC_REFRESH_MAX_AGE_MS
+    ) {
+      markEntrySuccess(checkId, data);
+      writesSkippedSteadyState++;
+      stats.steadySkips += 1;
+      continue;
+    }
     entriesToWrite.push([checkId, data]);
     pendingHashes.set(checkId, nextHash);
+    pendingMaterial.set(checkId, materialHash);
   }
 
   if (entriesToWrite.length === 0) {
@@ -723,6 +842,10 @@ const processBatchEntries = async (
       const hash = pendingHashes.get(checkId);
       if (hash) {
         lastWrittenHashes.set(checkId, hash);
+      }
+      const material = pendingMaterial.get(checkId);
+      if (material) {
+        lastWrittenMaterial.set(checkId, { hash: material, writtenAt: Date.now() });
       }
       stats.successes += 1;
     }
@@ -750,11 +873,29 @@ const processSingleEntry = async (
   data: StatusUpdateData,
   stats: FlushStats
 ) => {
-  const nextHash = hashStatusData(data);
+  const n = normalizeStatusData(data);
+  const materialHash = materialHashOf(n);
+  const nextHash = `${materialHash}|${timingHashOf(n)}`;
   const lastHash = lastWrittenHashes.get(checkId);
   if (lastHash && lastHash === nextHash) {
     markEntrySuccess(checkId, data);
     stats.noops += 1;
+    return;
+  }
+  // Steady-state skip — same rule (defer-flag gate, shutdown bypass, zero
+  // disables) as processBatchEntries.
+  const prevMaterial = lastWrittenMaterial.get(checkId);
+  if (
+    heartbeatDeferEnabled &&
+    !isShuttingDown &&
+    CHECKS_DOC_REFRESH_MAX_AGE_MS > 0 &&
+    prevMaterial &&
+    prevMaterial.hash === materialHash &&
+    Date.now() - prevMaterial.writtenAt < CHECKS_DOC_REFRESH_MAX_AGE_MS
+  ) {
+    markEntrySuccess(checkId, data);
+    writesSkippedSteadyState++;
+    stats.steadySkips += 1;
     return;
   }
 
@@ -764,6 +905,7 @@ const processSingleEntry = async (
     await docRef.update(data as any);
     markEntrySuccess(checkId, data);
     lastWrittenHashes.set(checkId, nextHash);
+    lastWrittenMaterial.set(checkId, { hash: materialHash, writtenAt: Date.now() });
     stats.successes += 1;
   } catch (error) {
     if (isNotFoundError(error)) {

@@ -64,12 +64,14 @@ const getRecipients = (payload: ResendWebhookPayload): string[] => {
 
 /**
  * Find users whose global email-alert recipient list contains this address.
+ * Recipients may be stored either bare or as "Display Name <addr>", so match
+ * both the raw webhook string and the normalized bare address.
  * Per-check/per-folder-only recipients live inside map fields and cannot be
  * queried; those owners are not notified (the suppression itself still
  * applies) — we log so admins can follow up if it ever matters.
  */
 const findOwnersOfRecipient = async (email: string): Promise<string[]> => {
-  const candidates = new Set<string>([email, normalizeEmail(email)]);
+  const candidates = new Set<string>([email.trim(), normalizeEmail(email)]);
   const owners = new Set<string>();
 
   for (const candidate of candidates) {
@@ -93,14 +95,15 @@ const formatPauseDescription = (state: EmailSuppressionState): string => {
   const hours = state.suppressedUntil
     ? Math.max(1, Math.round((state.suppressedUntil - Date.now()) / (60 * 60 * 1000)))
     : 0;
-  return `The address has repeatedly bounced, so alerts to it are paused for about ${hours} hour${hours === 1 ? "" : "s"}. They resume automatically.`;
+  return `The address bounced — it may be mistyped, so please fix or remove it. Alerts to it are paused for about ${hours} hour${hours === 1 ? "" : "s"}; if it keeps bouncing, each pause gets longer.`;
 };
 
 const notifyOwnersOfSuppression = async (
-  suppressedEmail: string,
+  rawRecipient: string,
   state: EmailSuppressionState
 ): Promise<void> => {
-  const owners = await findOwnersOfRecipient(suppressedEmail);
+  const suppressedEmail = normalizeEmail(rawRecipient);
+  const owners = await findOwnersOfRecipient(rawRecipient);
   if (owners.length === 0) {
     logger.info("Suppressed address has no queryable owner (per-check/per-folder recipient?)", {
       email: suppressedEmail,
@@ -251,7 +254,7 @@ export const resendWebhook = onRequest({
       });
 
       if (becameSuppressed) {
-        await notifyOwnersOfSuppression(normalizeEmail(recipient), state);
+        await notifyOwnersOfSuppression(recipient, state);
       }
     } catch (error) {
       // Log and continue — never 500 back to Resend for a single bad recipient,

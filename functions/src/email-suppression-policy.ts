@@ -9,11 +9,12 @@
 // Policy:
 // - Permanent bounce or spam complaint → suppress indefinitely until the
 //   user explicitly resumes the address from the Emails settings page.
-// - Transient bounces (greylisting, full mailbox) → tolerate a few, then
-//   suppress with escalating backoff: TRANSIENT_THRESHOLD bounces inside
-//   TRANSIENT_WINDOW_MS triggers a pause of BASE_SUPPRESSION_MS doubling per
-//   episode, capped at MAX_SUPPRESSION_MS. Transient mailboxes often recover,
-//   so suppression expires on its own.
+// - Transient bounces → suppress on the FIRST bounce (a bounce usually means
+//   a mistyped address, so we block and notify the owner right away) with
+//   escalating backoff: each episode pauses for BASE_SUPPRESSION_MS doubling
+//   per episode, capped at MAX_SUPPRESSION_MS. Transient mailboxes sometimes
+//   recover (greylisting, full inbox), so the pause expires on its own; if
+//   the address keeps bouncing the next pause is longer.
 // ============================================================================
 
 export type BounceKind = 'permanent' | 'transient' | 'complaint';
@@ -45,11 +46,21 @@ export interface BounceTransition {
 }
 
 export const TRANSIENT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
-export const TRANSIENT_THRESHOLD = 3; // bounces within the window
+export const TRANSIENT_THRESHOLD = 1; // first bounce blocks + notifies
 export const BASE_SUPPRESSION_MS = 6 * 60 * 60 * 1000; // 6h first episode
 export const MAX_SUPPRESSION_MS = 7 * 24 * 60 * 60 * 1000; // 7d cap
 
-export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
+/**
+ * Canonical form used as the suppression key: the bare addr-spec, trimmed and
+ * lowercased. Accepts RFC 5322 "Display Name <addr>" strings — recipients can
+ * be stored that way in settings, and Resend echoes the same form back in
+ * webhook payloads — so both sides of the pipeline key on the same doc.
+ */
+export const normalizeEmail = (email: string): string => {
+  const trimmed = email.trim();
+  const angled = trimmed.match(/<([^<>]*)>\s*$/);
+  return (angled ? angled[1] : trimmed).trim().toLowerCase();
+};
 
 export const isSuppressed = (
   state: Pick<EmailSuppressionState, 'permanent' | 'suppressedUntil'> | null | undefined,
