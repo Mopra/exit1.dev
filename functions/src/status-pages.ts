@@ -57,9 +57,13 @@ type HeartbeatEntry = {
  * Cache docs live at: status_page_cache/{statusPageId}
  */
 type FirestoreCacheDoc = {
-  uptime?: { data: UptimeEntry[]; expiresAt: number };
-  heartbeat?: { data: HeartbeatEntry[]; expiresAt: number };
+  uptime?: { data: UptimeEntry[]; expiresAt: number; checkIdsKey?: string };
+  heartbeat?: { data: HeartbeatEntry[]; expiresAt: number; checkIdsKey?: string };
 };
+
+// Cache entries are only valid for the exact check set they were computed for —
+// otherwise checks added to a page stay invisible until the TTL expires.
+const buildCheckIdsKey = (checkIds: string[]): string => [...checkIds].sort().join('|');
 
 async function getFirestoreCache(statusPageId: string): Promise<FirestoreCacheDoc | null> {
   try {
@@ -86,8 +90,9 @@ async function setFirestoreCache(statusPageId: string, field: keyof FirestoreCac
  * Returns Map<checkId, uptimePercentage>.
  */
 async function getCachedUptimeMap(statusPageId: string, checkIds: string[], userId: string): Promise<Map<string, number>> {
+  const checkIdsKey = buildCheckIdsKey(checkIds);
   const cached = await getFirestoreCache(statusPageId);
-  if (cached?.uptime && cached.uptime.expiresAt > Date.now()) {
+  if (cached?.uptime && cached.uptime.expiresAt > Date.now() && cached.uptime.checkIdsKey === checkIdsKey) {
     const map = new Map<string, number>();
     for (const entry of cached.uptime.data) {
       map.set(entry.checkId, entry.uptimePercentage);
@@ -112,7 +117,7 @@ async function getCachedUptimeMap(statusPageId: string, checkIds: string[], user
   }
 
   // Write to Firestore cache (fire-and-forget)
-  setFirestoreCache(statusPageId, 'uptime', { data: uptimeEntries, expiresAt: Date.now() + UPTIME_CACHE_TTL_MS });
+  setFirestoreCache(statusPageId, 'uptime', { data: uptimeEntries, expiresAt: Date.now() + UPTIME_CACHE_TTL_MS, checkIdsKey });
 
   return map;
 }
@@ -124,9 +129,10 @@ async function getCachedUptimeMap(statusPageId: string, checkIds: string[], user
 async function getCachedHeartbeat(statusPageId: string, checkIds: string[], userId: string): Promise<{ entries: HeartbeatEntry[]; startDate: number; endDate: number }> {
   const endDate = Date.now();
   const startDate = getDayStart(endDate - ((HEARTBEAT_DAYS - 1) * DAY_MS));
+  const checkIdsKey = buildCheckIdsKey(checkIds);
 
   const cached = await getFirestoreCache(statusPageId);
-  if (cached?.heartbeat && cached.heartbeat.expiresAt > Date.now()) {
+  if (cached?.heartbeat && cached.heartbeat.expiresAt > Date.now() && cached.heartbeat.checkIdsKey === checkIdsKey) {
     // Invalidate cache entries written before the onlineChecks/offlineChecks fields existed
     const hasNewFields = cached.heartbeat.data.every((entry) =>
       entry.days.every((day) => typeof (day as Partial<HeartbeatDay>).onlineChecks === 'number')
@@ -137,8 +143,25 @@ async function getCachedHeartbeat(statusPageId: string, checkIds: string[], user
   }
 
   // Cache miss — use pre-aggregated daily summaries (12 MB scan vs 800 MB)
-  const { getPreAggregatedDailySummaryBatch } = await import('./bigquery.js');
+  const { getPreAggregatedDailySummaryBatch, getCheckHistoryDailySummaryBatch } = await import('./bigquery.js');
   const batchSummaries = await getPreAggregatedDailySummaryBatch(checkIds, userId, startDate, endDate);
+
+  // Daily summaries aggregate only twice a day (02:00/14:00 UTC), so a brand-new
+  // check has zero rows until the next run and would render a fully blank strip.
+  // Backfill just those checks from the raw history table over a 2-day window —
+  // a new check can't have more history than that gap anyway.
+  const missingIds = checkIds.filter((id) => !batchSummaries.has(id));
+  if (missingIds.length > 0) {
+    try {
+      const rawStart = Math.max(startDate, getDayStart(endDate - DAY_MS));
+      const rawSummaries = await getCheckHistoryDailySummaryBatch(missingIds, userId, rawStart, endDate);
+      for (const [checkId, summaries] of rawSummaries) {
+        if (summaries.length > 0) batchSummaries.set(checkId, summaries);
+      }
+    } catch (e) {
+      logger.warn(`[getCachedHeartbeat] Raw fallback for ${missingIds.length} new checks failed:`, e);
+    }
+  }
 
   const entries: HeartbeatEntry[] = checkIds.map((checkId) => {
     const summaries = batchSummaries.get(checkId) || [];
@@ -154,7 +177,7 @@ async function getCachedHeartbeat(statusPageId: string, checkIds: string[], user
   });
 
   // Write to Firestore cache (fire-and-forget)
-  setFirestoreCache(statusPageId, 'heartbeat', { data: entries, expiresAt: Date.now() + HEARTBEAT_CACHE_TTL_MS });
+  setFirestoreCache(statusPageId, 'heartbeat', { data: entries, expiresAt: Date.now() + HEARTBEAT_CACHE_TTL_MS, checkIdsKey });
 
   return { entries, startDate, endDate };
 }
@@ -352,8 +375,10 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
     checkMeta.set(snap.id, { name, url, disabled, folder, status, lastChecked, responseTime });
   });
 
-  // Uptime % requires BigQuery — use Firestore-cached result with 5-min TTL
-  const uptimeMap = await getCachedUptimeMap(statusPageId, checkIds, statusPage.userId);
+  // Uptime % requires BigQuery — use Firestore-cached result with 5-min TTL.
+  // Pass the filtered ids so the cache key matches getStatusPageUptime's
+  // (deleted/domain checks would otherwise make the two callers thrash the cache).
+  const uptimeMap = await getCachedUptimeMap(statusPageId, Array.from(checkMeta.keys()), statusPage.userId);
 
   // Filter out deleted/orphaned checks - only include checks that still exist in Firestore
   const checks = checkIds

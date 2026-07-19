@@ -937,6 +937,23 @@ const Status: React.FC = () => {
                           className="pl-10 h-8 text-xs"
                         />
                       </div>
+                      {(formCheckIds.size > 0 || formFolderPaths.size > 0) && (
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[11px] text-muted-foreground">
+                            {totalSelectedCount} {totalSelectedCount === 1 ? 'check' : 'checks'} selected
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormCheckIds(new Set());
+                              setFormFolderPaths(new Set());
+                            }}
+                            className="text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                          >
+                            Uncheck all
+                          </button>
+                        </div>
+                      )}
                       <ScrollArea className="h-64 rounded-lg border border-border/30">
                         <div className="p-2 space-y-1">
                           {checksLoading ? (
