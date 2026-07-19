@@ -5,7 +5,7 @@ import { createClerkClient } from '@clerk/backend';
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 
 const DEPLOY_MODE_DOC = "system_settings/deploy_mode";
-const DEFAULT_DURATION_MINUTES = 30;
+const DEFAULT_DURATION_MINUTES = 5;
 const MAX_DURATION_MINUTES = 120;
 
 // Interface for deploy mode state

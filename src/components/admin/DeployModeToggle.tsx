@@ -28,7 +28,7 @@ export const DeployModeToggle: React.FC = () => {
   const { isDeployMode, timeRemaining } = useDeployMode();
   const [open, setOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [duration, setDuration] = useState('30');
+  const [duration, setDuration] = useState('5');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -102,6 +102,7 @@ export const DeployModeToggle: React.FC = () => {
                 <Select value={duration} onValueChange={setDuration}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="5">5 minutes</SelectItem>
                     <SelectItem value="15">15 minutes</SelectItem>
                     <SelectItem value="30">30 minutes</SelectItem>
                     <SelectItem value="60">1 hour</SelectItem>

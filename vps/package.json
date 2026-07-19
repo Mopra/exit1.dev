@@ -9,7 +9,10 @@
     "prebuild": "node scripts/check-ws-protocol.mjs",
     "build": "tsc",
     "start": "node lib/runner.js",
-    "dev": "tsx src/runner.ts"
+    "dev": "tsx src/runner.ts",
+    "deploy:mode:on": "node scripts/deploy-mode.mjs enable",
+    "deploy:mode:off": "node scripts/deploy-mode.mjs disable",
+    "deploy:mode:status": "node scripts/deploy-mode.mjs status"
   },
   "dependencies": {
     "dotenv": "^16.3.1",
