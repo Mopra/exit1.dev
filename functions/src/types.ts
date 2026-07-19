@@ -54,9 +54,11 @@ export interface Website {
   folder?: string | null;
 
   // User-assigned importance, P1 (critical) … P5 (minimal). Alert integrations
-  // map it to notification priority (see mapEventToPushoverPriority). Unset or
-  // 3 = default behavior: the integration's own priority setting applies.
-  severity?: CheckSeverity;
+  // map it to notification priority (see mapEventToPushoverPriority). When set
+  // (including an explicit P3) it is a hard cap on every alert the check
+  // emits. Unset/null = "use default priority": the integration's own
+  // priority setting applies, with criticals floored at High.
+  severity?: CheckSeverity | null;
 
   // Public landing pages (marketing site). When `public` is true this check is
   // surfaced at exit1.dev/status/<publicSlug> via the unauthenticated

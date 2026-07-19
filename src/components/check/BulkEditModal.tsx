@@ -34,8 +34,9 @@ export interface BulkEditSettings {
   checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
   timezone?: string | null;
   domainAlertThresholds?: number[];
-  // P1–P5 alert importance — integrations map it to notification priority.
-  severity?: 1 | 2 | 3 | 4 | 5;
+  // P1–P5 alert importance — integrations map it to notification priority and
+  // cap every alert the check sends. null = clear back to default priority.
+  severity?: 1 | 2 | 3 | 4 | 5 | null;
   // Admin-only: surface these checks as public uptime landing pages (exit1.dev/status).
   public?: boolean;
 }
@@ -77,6 +78,7 @@ export function BulkEditModal({
   const [domainThresholds, setDomainThresholds] = useState<number[]>([30, 14, 7, 1]);
   const [newThresholdInput, setNewThresholdInput] = useState('');
   const [severity, setSeverity] = useState<1 | 2 | 3 | 4 | 5>(3);
+  const [severityUseDefault, setSeverityUseDefault] = useState(false);
 
   const [loading, setLoading] = useState(false);
 
@@ -113,7 +115,7 @@ export function BulkEditModal({
       settings.domainAlertThresholds = domainThresholds;
     }
     if (updateSeverity) {
-      settings.severity = severity;
+      settings.severity = severityUseDefault ? null : severity;
     }
     if (updatePublic && isAdmin) {
       settings.public = publicEnabled;
@@ -422,26 +424,39 @@ export function BulkEditModal({
             </div>
             {updateSeverity && (
               <div className="ml-6 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Alert importance</span>
-                  <span className="text-sm font-medium">{SEVERITY_LABELS[severity]}</span>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="bulk-severity-default"
+                    checked={severityUseDefault}
+                    onCheckedChange={(checked) => setSeverityUseDefault(checked === true)}
+                  />
+                  <Label htmlFor="bulk-severity-default" className="cursor-pointer text-sm text-muted-foreground">
+                    Use default priority (clear severity)
+                  </Label>
                 </div>
-                <Slider
-                  min={1}
-                  max={5}
-                  step={1}
-                  value={[severity]}
-                  onValueChange={(values) => setSeverity(values[0] as 1 | 2 | 3 | 4 | 5)}
-                />
-                <div className="flex justify-between px-0.5 text-[10px] text-muted-foreground/70">
-                  <span>P1</span>
-                  <span>P2</span>
-                  <span>P3</span>
-                  <span>P4</span>
-                  <span>P5</span>
+                <div className={severityUseDefault ? 'space-y-2 opacity-40 pointer-events-none select-none' : 'space-y-2'}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Alert importance</span>
+                    <span className="text-sm font-medium">{severityUseDefault ? 'Default' : SEVERITY_LABELS[severity]}</span>
+                  </div>
+                  <Slider
+                    min={1}
+                    max={5}
+                    step={1}
+                    disabled={severityUseDefault}
+                    value={[severity]}
+                    onValueChange={(values) => setSeverity(values[0] as 1 | 2 | 3 | 4 | 5)}
+                  />
+                  <div className="flex justify-between px-0.5 text-[10px] text-muted-foreground/70">
+                    <span>P1</span>
+                    <span>P2</span>
+                    <span>P3</span>
+                    <span>P4</span>
+                    <span>P5</span>
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Integrations map this to notification priority. P3 keeps each integration's default. Pushover only for now.
+                  Severity caps every alert these checks send. Default keeps each integration's own priority. Pushover only for now.
                 </p>
               </div>
             )}

@@ -377,7 +377,7 @@ const Checks: React.FC = () => {
     checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
-    severity?: 1 | 2 | 3 | 4 | 5;
+    severity?: 1 | 2 | 3 | 4 | 5 | null;
     public?: boolean;
     publicSlug?: string | null;
   }) => {

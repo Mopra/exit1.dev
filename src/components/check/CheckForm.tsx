@@ -155,8 +155,11 @@ const formSchema = z.object({
   pingPackets: z.union([z.number().min(1).max(5), z.literal('')]).optional(),
   checkRegionOverride: z.enum(['vps-eu-1', 'vps-us-1']).optional(),
   timezone: z.string().optional(),
-  // P1 (critical) … P5 (minimal) — drives integration alert priority. P3 = default.
+  // P1 (critical) … P5 (minimal) — drives integration alert priority and hard-caps
+  // every alert the check sends. Only submitted when useDefaultPriority is off.
   severity: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
+  // On (default) = no explicit severity stored; integrations use their own priority.
+  useDefaultPriority: z.boolean().optional(),
   dnsRecordTypes: z.array(z.enum(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA'])).optional(),
   // Admin-only: surface this check as a public uptime landing page (exit1.dev/status).
   public: z.boolean().optional(),
@@ -300,7 +303,7 @@ interface CheckFormProps {
     checkRegionOverride?: 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
-    severity?: 1 | 2 | 3 | 4 | 5;
+    severity?: 1 | 2 | 3 | 4 | 5 | null;
     public?: boolean;
     publicSlug?: string | null;
   }) => Promise<void>;
@@ -361,7 +364,8 @@ export default function CheckForm({
       maxRedirects: 0,
       checkRegionOverride: 'vps-eu-1',
       timezone: '_utc',
-      severity: 2, // New checks default to P2 (always High) — predictable alerting; bulk-adjust criticals to P1.
+      severity: 3, // Slider position once "use default priority" is switched off.
+      useDefaultPriority: true, // New checks follow the integration's own priority.
       dnsRecordTypes: ['A'],
       public: false,
       publicSlug: '',
@@ -516,6 +520,7 @@ export default function CheckForm({
       checkRegionOverride: source.checkRegionOverride === 'vps-us-1' ? 'vps-us-1' : 'vps-eu-1',
       timezone: source.timezone || '_utc',
       severity: source.severity ?? 3,
+      useDefaultPriority: source.severity == null,
       dnsRecordTypes: source.dnsMonitoring?.recordTypes ?? ['A'],
       public: source.public === true,
       publicSlug: source.publicSlug ?? '',
@@ -914,7 +919,8 @@ export default function CheckForm({
       ...(isDnsCheck && data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
       checkRegionOverride: data.checkRegionOverride ?? 'vps-eu-1',
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
-      severity: data.severity ?? 3,
+      // null = "use default priority" (clears any stored severity on edit).
+      severity: data.useDefaultPriority !== false ? null : (data.severity ?? 3),
       // Admin-only public exposure. Only send these fields when the caller is an
       // admin; the backend re-checks admin status before persisting them.
       ...(isAdmin
@@ -1573,11 +1579,40 @@ export default function CheckForm({
 
                       <FormField
                         control={form.control}
+                        name="useDefaultPriority"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between">
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                                Use default priority
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[260px]">
+                                    <p className="text-xs">Alerts use each integration's own priority setting, with outages always sent at least at High. Switch off to pick a P1–P5 severity for this check instead.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </FormLabel>
+                              <FormControl>
+                                <Switch
+                                  checked={field.value !== false}
+                                  onCheckedChange={(checked) => field.onChange(checked)}
+                                />
+                              </FormControl>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
                         name="severity"
                         render={({ field }) => {
                           const severityValue = (typeof field.value === 'number' ? field.value : 3) as 1 | 2 | 3 | 4 | 5;
+                          const usesDefault = form.watch('useDefaultPriority') !== false;
                           return (
-                            <FormItem>
+                            <FormItem className={usesDefault ? 'opacity-40 pointer-events-none select-none' : undefined}>
                               <div className="flex items-center justify-between gap-4">
                                 <FormLabel className="text-xs font-medium flex items-center gap-1.5">
                                   Severity
@@ -1586,17 +1621,18 @@ export default function CheckForm({
                                       <Info className="h-3 w-3 text-muted-foreground cursor-help" />
                                     </TooltipTrigger>
                                     <TooltipContent side="top" className="max-w-[260px]">
-                                      <p className="text-xs">How important this check is. Integrations map it to notification priority — Pushover pages P1 outages at Emergency until acknowledged, P2 always alerts, and P4–P5 stay quiet without waking you. P3 keeps your integration's default priority.</p>
+                                      <p className="text-xs">How important this check is. Severity caps every alert this check sends — Pushover pages P1 outages at Emergency until acknowledged, P2 always alerts, P3 never goes above Normal, and P4–P5 stay quiet without waking you.</p>
                                     </TooltipContent>
                                   </Tooltip>
                                 </FormLabel>
-                                <span className="text-xs text-muted-foreground">{SEVERITY_LABELS[severityValue]}</span>
+                                <span className="text-xs text-muted-foreground">{usesDefault ? 'Default' : SEVERITY_LABELS[severityValue]}</span>
                               </div>
                               <FormControl>
                                 <Slider
                                   min={1}
                                   max={5}
                                   step={1}
+                                  disabled={usesDefault}
                                   value={[severityValue]}
                                   onValueChange={(values) => field.onChange(values[0])}
                                 />

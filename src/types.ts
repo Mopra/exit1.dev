@@ -43,8 +43,9 @@ export interface Website {
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
   // User-assigned importance, P1 (critical) … P5 (minimal). Alert integrations
-  // map it to notification priority (Pushover). Unset or 3 = default behavior.
-  severity?: 1 | 2 | 3 | 4 | 5;
+  // map it to notification priority (Pushover) and cap every alert the check
+  // sends. Unset/null = "use default priority" (integration's own setting).
+  severity?: 1 | 2 | 3 | 4 | 5 | null;
   // Admin-only: surface this check as a public uptime landing page (exit1.dev/status).
   public?: boolean;
   publicSlug?: string;

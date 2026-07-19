@@ -15,7 +15,7 @@ const SEVERITY_BADGE_CLASSES: Record<1 | 2 | 3 | 4 | 5, string> = {
  * Compact P1–P5 badge for check lists. Renders nothing when severity is unset
  * (legacy checks without an explicit choice).
  */
-export function SeverityBadge({ severity }: { severity?: number }) {
+export function SeverityBadge({ severity }: { severity?: number | null }) {
   if (!isSeverity(severity)) return null;
   return (
     <Tooltip>
