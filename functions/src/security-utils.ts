@@ -11,6 +11,10 @@ export async function checkSSLCertificate(url: string): Promise<{
   validTo?: number;
   daysUntilExpiry?: number;
   error?: string;
+  // True when the probe never observed a certificate at all (connection
+  // refused/timeout/DNS). A transport failure says nothing about the cert
+  // itself, so callers must NOT persist these over known-good cert state.
+  observationFailed?: boolean;
 }> {
   try {
     const urlObj = new URL(url);
@@ -41,6 +45,7 @@ export async function checkSSLCertificate(url: string): Promise<{
           resolve({
             valid: false,
             error: "No certificate received",
+            observationFailed: true,
           });
           return;
         }
@@ -83,6 +88,7 @@ export async function checkSSLCertificate(url: string): Promise<{
         resolve({
           valid: false,
           error: `SSL connection failed: ${error.message}`,
+          observationFailed: true,
         });
       });
 
@@ -91,6 +97,7 @@ export async function checkSSLCertificate(url: string): Promise<{
         resolve({
           valid: false,
           error: "SSL connection timeout",
+          observationFailed: true,
         });
       });
     });
@@ -98,6 +105,7 @@ export async function checkSSLCertificate(url: string): Promise<{
     return {
       valid: false,
       error: `SSL check failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      observationFailed: true,
     };
   }
 }
@@ -111,6 +119,7 @@ export async function checkSecurityAndExpiry(url: string): Promise<{
     validTo?: number;
     daysUntilExpiry?: number;
     error?: string;
+    observationFailed?: boolean;
   };
 }> {
   if (!CONFIG.ENABLE_SECURITY_LOOKUPS) {

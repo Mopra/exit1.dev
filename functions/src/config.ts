@@ -443,7 +443,14 @@ export const CONFIG = {
   // Adaptive SSL refresh interval. Refresh more aggressively as a cert nears
   // expiry so renewals are picked up quickly (and stop firing "expires soon"
   // alerts within hours of renewal, not days).
-  getSslRefreshIntervalMs(daysUntilExpiry: number | undefined): number {
+  getSslRefreshIntervalMs(cert: { daysUntilExpiry?: number; valid?: boolean; error?: string } | undefined): number {
+    if (!cert) return this.SSL_REFRESH_INTERVAL_DEFAULT_MS;
+    // An invalid/errored stored observation must never sit on the 7-day
+    // default cadence: a probe that happened to hit a host mid-reboot would
+    // otherwise show "SSL broken" for a week with no user-facing way to
+    // force a re-check. Retry on the urgent cadence until it resolves.
+    if (cert.valid === false || cert.error) return this.SSL_REFRESH_INTERVAL_URGENT_MS;
+    const daysUntilExpiry = cert.daysUntilExpiry;
     if (daysUntilExpiry === undefined) return this.SSL_REFRESH_INTERVAL_DEFAULT_MS;
     if (daysUntilExpiry <= 7) return this.SSL_REFRESH_INTERVAL_URGENT_MS;
     // Refresh daily from a few days ABOVE the 30-day warning threshold so the

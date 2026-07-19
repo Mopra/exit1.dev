@@ -776,7 +776,7 @@ export async function checkRestEndpoint(
   responseBodySample?: string;
 }> {
   // Initialize with empty values to ensure safety
-  let securityChecks: { 
+  let securityChecks: {
     sslCertificate?: {
       valid: boolean;
       issuer?: string;
@@ -785,6 +785,7 @@ export async function checkRestEndpoint(
       validTo?: number;
       daysUntilExpiry?: number;
       error?: string;
+      observationFailed?: boolean;
     };
   } = {};
 
@@ -796,7 +797,7 @@ export async function checkRestEndpoint(
   // This eliminates one full TLS handshake (DNS + TCP + TLS) per SSL refresh cycle.
   // For non-HTTPS URLs, we still run the separate check (it returns immediately for HTTP).
   const isHttpsUrl = website.url.toLowerCase().startsWith('https://');
-  const securityTtlMs = CONFIG.getSslRefreshIntervalMs(website.sslCertificate?.daysUntilExpiry);
+  const securityTtlMs = CONFIG.getSslRefreshIntervalMs(website.sslCertificate);
   const sslFresh = Boolean(website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < securityTtlMs));
 
   try {
@@ -814,7 +815,13 @@ export async function checkRestEndpoint(
             setTimeout(() => reject(new Error('Security check timeout')), SECURITY_CHECK_TIMEOUT_MS)
           )
         ]);
-        securityMetadataLastChecked = now;
+        if (securityChecks.sslCertificate?.observationFailed) {
+          // The probe never saw a certificate (transport failure) — drop the
+          // result so it can't overwrite stored cert state downstream.
+          securityChecks = {};
+        } else {
+          securityMetadataLastChecked = now;
+        }
       } catch (timeoutError) {
         if (timeoutError instanceof Error && timeoutError.message === 'Security check timeout') {
           logger.warn(`Security check timed out after ${SECURITY_CHECK_TIMEOUT_MS}ms for ${website.url}`, {

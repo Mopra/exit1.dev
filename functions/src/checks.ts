@@ -3842,7 +3842,13 @@ export const manualCheck = onCall({
     // Perform immediate check — proxy through VPS for static IP, fallback to local
     try {
       const checkType = normalizeCheckType(website.type);
-      const checkResult = await executeCheckViaVps(website, checkType);
+      // Manual check-now is the user's escape hatch for stale/stuck SSL state:
+      // strip the cached cert so the executor's freshness gate sees it as due
+      // and re-reads the certificate this run (both the VPS proxy and the
+      // local fallback receive this object). The stored cert is only
+      // overwritten when the fresh observation succeeds, so a failed re-read
+      // can't wipe known-good data.
+      const checkResult = await executeCheckViaVps({ ...website, sslCertificate: undefined }, checkType);
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
       const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);

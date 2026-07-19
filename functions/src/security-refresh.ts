@@ -177,7 +177,7 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
   // through (interval comparison against undefined lastChecked is false).
   const lastChecked = website.sslCertificate?.lastChecked;
   if (lastChecked) {
-    const intervalMs = CONFIG.getSslRefreshIntervalMs(website.sslCertificate?.daysUntilExpiry);
+    const intervalMs = CONFIG.getSslRefreshIntervalMs(website.sslCertificate);
     if (Date.now() - lastChecked < intervalMs) {
       skippedNotDueCount++;
       return;
@@ -191,8 +191,24 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
     let hasUpdates = false;
 
     if (securityChecks.sslCertificate) {
+      const { observationFailed, ...observedCert } = securityChecks.sslCertificate;
+      if (observationFailed) {
+        // Transport-level failure (refused / timeout / DNS): the probe never
+        // saw a certificate, so this says nothing about the cert itself — the
+        // uptime check already covers the outage. Do NOT overwrite the stored
+        // cert state or run the alert state machine (a reboot-window probe
+        // would otherwise fire a false ssl_error). lastChecked stays stale,
+        // so the check remains due and the next run retries automatically.
+        checkFailureCount++;
+        logger.warn(`SSL observation failed for ${website.url} (${docId}); keeping previous cert state`, {
+          websiteId: docId,
+          url: website.url,
+          error: observedCert.error,
+        });
+        return;
+      }
       const sslCertificate = {
-        ...securityChecks.sslCertificate,
+        ...observedCert,
         lastChecked: Date.now()
       };
       updateData.sslCertificate = sslCertificate;
