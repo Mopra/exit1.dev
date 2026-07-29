@@ -56,15 +56,37 @@ const PATH_CODE = `${INLINE_CODE} break-all`;
 /** The prompt from the marketing hero. Kept identical so both surfaces teach the same flow. */
 const SETUP_PROMPT = `Set up uptime monitoring for this project with Exit1.
 
-1. Add the MCP server:
+1. Add the MCP server, then keep going:
    claude mcp add --transport http exit1 ${REMOTE_URL}
-2. Call get_account to see my plan limits.
-3. Read this repo to find what should be monitored — deployed URLs in
-   vercel.json / next.config / wrangler.toml / .env.production / README,
-   and any /health or /api/status route handlers.
-4. Show me the checks you plan to create before creating them.
-5. Configure email alerts, then send a test alert so I can confirm
-   delivery works.`;
+   (If that command doesn't apply to your tool, add the same HTTP MCP server
+   however your tool does it. Sign-in happens in the browser.)
+
+2. Call get_account to see my plan limits, and list_checks to see what's
+   already monitored.
+
+3. Work out what's worth monitoring by reading this project — don't ask me for
+   URLs you can find yourself. Depending on the stack, look at deploy and
+   infra config, environment files and examples, the README, DNS or domain
+   config, container healthchecks, CI/CD workflows, and route or endpoint
+   definitions. You're looking for:
+     - the production site or app, and staging if there is one
+     - health/status endpoints (these are the most valuable — assert on the
+       response body, not just a 200, since a 200 with a dead database is
+       still a 200)
+     - public APIs and webhook receivers other systems depend on
+     - scheduled jobs and workers (monitor these as heartbeats)
+     - the apex domain, for SSL and registration expiry
+   If this project has no deployed URL you can find, ask me for it.
+
+4. Ask me two things in one go: which email address should receive alerts,
+   and whether to add a Slack/Discord webhook. Then show me the checks you
+   intend to create as one short list and create them when I confirm.
+
+5. Send a test alert to every channel you set up and tell me to check it
+   arrived. Don't leave a channel configured but untested.
+
+Be fast and autonomous. Never put API keys, tokens or passwords into a check.
+Prefer a few meaningful checks over many shallow ones.`;
 
 function CodeBlock({
   code,

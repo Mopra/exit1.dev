@@ -463,61 +463,51 @@ export const TOOLS_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
 
 export const SETUP_MONITORING_PROMPT = `You are setting up uptime monitoring for this project with Exit1.
 
-Work in this order. Do not skip step 1 or step 5.
+Be fast and autonomous. Do not ask the user for URLs you can find yourself.
 
 1. CHECK THE PLAN
-   Call get_account. Note maxChecks, minCheckIntervalMinutes and how many checks
-   already exist. Everything below has to fit inside those numbers.
+   Call get_account for the limits (maxChecks, minCheckIntervalMinutes) and
+   list_checks to see what already exists. Everything below has to fit inside
+   those numbers, and you should not recreate something already monitored.
 
-2. FIND WHAT TO MONITOR — read the repo, do not ask the user to list URLs
-   Look for deployed URLs and health endpoints in, roughly in order of value:
-     - vercel.json, netlify.toml, wrangler.toml, fly.toml, render.yaml, app.yaml
-     - next.config.*, vite.config.*, astro.config.* (site / base URL)
-     - .env.production, .env.example — NEXT_PUBLIC_*_URL, VITE_*_URL, SITE_URL,
-       API_URL (read the variable NAMES and any non-secret values; never send
-       secrets anywhere)
-     - README.md — deployed/demo links
-     - Dockerfile / docker-compose.yml HEALTHCHECK targets
-     - API route handlers: a /health, /healthz, /api/status or /api/health route
-       is the single most valuable thing to monitor
-     - package.json homepage field
-     - CNAME files, public/CNAME, DNS config committed to the repo
-   Then call list_checks so you do not recreate something already monitored.
+2. FIND WHAT IS WORTH MONITORING — read the project, whatever the stack is
+   Look wherever this particular project would keep it: deploy and infra
+   config, environment files and examples, the README, DNS or domain config,
+   container healthchecks, CI/CD workflows, and route or endpoint definitions.
+   You are looking for:
+     - the production site or app, and staging if there is one
+     - health/status endpoints — the highest-value target by far. Assert on the
+       response body, not just the status code: a 200 with a dead database is
+       still a 200. Use response_validation with a JSONPath assertion.
+     - public APIs and webhook receivers that other systems depend on
+     - scheduled jobs, cron and workers — monitor these as type 'heartbeat'
+     - the apex domain — SSL expiry is tracked automatically on https checks,
+       and type 'domain' tracks registration expiry
+   If the project has no deployed URL you can find, ask for it.
 
-3. PROPOSE, THEN CREATE
-   Show the user the list you intend to create — URL, type, interval, and what
-   makes each one "healthy" — and let them correct it before you create anything.
-   Good defaults:
-     - Marketing site / app root  -> type 'website'
-     - /api/health                -> type 'rest_endpoint' with a response_validation
-                                     JSONPath assertion (e.g. jsonPath '$.status',
-                                     jsonPathOperator 'equals', expectedValue 'ok').
-                                     A 200 with a broken database still returns 200;
-                                     the assertion is what makes the check real.
-     - Apex domain                -> SSL expiry is tracked automatically on https checks
-     - Nightly cron / worker      -> type 'heartbeat'
-   Use the fastest interval the plan allows for anything user-facing, and a
-   slower one for background jobs.
+3. ASK ONCE, THEN CREATE
+   In a single message, ask which email address should receive alerts and
+   whether to add a Slack or Discord webhook. In the same message, show the
+   checks you intend to create as one short list — URL, type, interval, and
+   what makes each one healthy. Create them once the user confirms.
+   Intervals: the fastest the plan allows for anything user-facing, something
+   slower for background jobs.
 
 4. CONFIGURE ALERTS
-   Call get_alert_settings first. If no email recipient is configured, ask the
-   user which address should receive alerts and call set_email_alerts. If they
-   mention Slack or Discord, ask for the incoming-webhook URL and call
-   add_webhook_alert.
+   Call get_alert_settings first so you do not duplicate a channel the user
+   already has, then set_email_alerts and add_webhook_alert as needed.
 
 5. PROVE IT WORKS
-   Call send_test_alert for every channel you configured, and tell the user to
-   confirm it arrived. If it did not arrive, fix it now — do not leave a
-   configured-but-dead channel behind.
+   Call send_test_alert for every channel you configured and tell the user to
+   confirm it arrived. If it did not, fix it now — never leave a channel
+   configured but untested.
 
 6. HAND OFF
-   Summarise what is now monitored, what will trigger an alert, and link
-   https://app.exit1.dev/checks so they know where to look.
+   Summarise what is monitored and what will trigger an alert, and link
+   https://app.exit1.dev/checks.
 
-Rules:
-- Never invent a URL. If you cannot find a deployed URL in the repo, ask.
-- Never put API keys, tokens or passwords into check headers or bodies.
-- Prefer fewer, meaningful checks over many shallow ones.`;
+Never put API keys, tokens or passwords into a check. Prefer a few meaningful
+checks over many shallow ones.`;
 
 export const PROMPTS = [
   {
