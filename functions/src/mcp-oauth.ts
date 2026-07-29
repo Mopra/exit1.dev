@@ -20,15 +20,24 @@
 
 import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { firestore } from "./init";
 import { FixedWindowRateLimiter, getClientIp } from "./rate-limit";
-import { API_SCOPES, type ApiScope, ALL_SCOPES } from "./api-scopes";
+import { type ApiScope, ALL_SCOPES } from "./api-scopes";
+import {
+  DEFAULT_MCP_SCOPES,
+  appendQuery,
+  isAllowedRedirectUri,
+  parseScopes,
+  verifyPkce,
+} from "./mcp-oauth-policy";
 
 // ── Constants ──
 
 export const ISSUER = "https://app.exit1.dev";
-export const MCP_RESOURCE_URL = `${ISSUER}/mcp`;
+// The endpoint is versioned rather than living at bare /mcp: that path is already
+// the dashboard's MCP settings page, and a Hosting rewrite there would shadow it.
+export const MCP_RESOURCE_URL = `${ISSUER}/mcp/v1`;
 const CONSENT_PAGE = `${ISSUER}/authorize`;
 
 const CLIENTS_COLLECTION = "mcp_oauth_clients";
@@ -37,24 +46,16 @@ const CODES_COLLECTION = "mcp_oauth_codes";
 export const MCP_TOKENS_COLLECTION = "mcp_oauth_tokens";
 const TOKENS_COLLECTION = MCP_TOKENS_COLLECTION;
 
-const AUTH_REQUEST_TTL_MS = 15 * 60 * 1000;
+// Generous because a first-time user goes signup → onboarding → consent, and
+// onboarding includes picking a plan. The request is single-use, grants nothing
+// on its own, and still needs the user's own authenticated session to approve.
+const AUTH_REQUEST_TTL_MS = 60 * 60 * 1000;
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
 const ACCESS_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
 const MAX_REDIRECT_URIS = 10;
 const MAX_CLIENTS_PER_IP_PER_HOUR = 20;
-
-/**
- * Scopes an MCP client may request. `checks:delete` is deliberately excluded
- * from the default grant — an agent should have to ask for destruction.
- */
-const DEFAULT_MCP_SCOPES: ApiScope[] = [
-  API_SCOPES.CHECKS_READ,
-  API_SCOPES.CHECKS_WRITE,
-  API_SCOPES.ALERTS_READ,
-  API_SCOPES.ALERTS_WRITE,
-];
 
 const registrationLimiter = new FixedWindowRateLimiter({ windowMs: 60 * 60 * 1000, maxKeys: 10_000 });
 const tokenLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
@@ -117,48 +118,6 @@ function hashToken(token: string): string {
   return createHash("sha256").update(pepper + token).digest("hex");
 }
 
-function base64UrlSha256(input: string): string {
-  return createHash("sha256").update(input).digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function constantTimeEquals(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, "utf8");
-  const bufB = Buffer.from(b, "utf8");
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}
-
-/**
- * Redirect URI policy. Loopback (any port — CLI clients pick one at runtime) and
- * https only. This is the control that stops a client registering `https://evil`
- * and then racing a legitimate client's authorization code onto its own callback.
- */
-function isAllowedRedirectUri(value: unknown): value is string {
-  if (typeof value !== "string" || value.length > 2000) return false;
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return false;
-  }
-  if (parsed.hash) return false;
-  if (parsed.protocol === "https:") return true;
-  if (parsed.protocol === "http:") {
-    return parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
-  }
-  return false;
-}
-
-function parseScopes(raw: unknown): ApiScope[] {
-  if (typeof raw !== "string" || !raw.trim()) return DEFAULT_MCP_SCOPES;
-  const requested = raw.split(/[\s+]+/).filter(Boolean);
-  const allowed = requested.filter((s): s is ApiScope => (ALL_SCOPES as string[]).includes(s));
-  return allowed.length > 0 ? Array.from(new Set(allowed)) : DEFAULT_MCP_SCOPES;
-}
-
 /**
  * Strip the function-name prefix that direct cloudfunctions.net invocations add,
  * so the same handler works behind a Hosting rewrite and when called directly.
@@ -168,16 +127,6 @@ function normalizePath(req: { path?: string; url?: string }): string {
   const stripped = raw.replace(/^\/mcpOauth/, "");
   const trimmed = stripped.replace(/\/+$/, "");
   return trimmed || "/";
-}
-
-function appendQuery(base: string, params: Record<string, string | null | undefined>): string {
-  const url = new URL(base);
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== null && value !== undefined && value !== "") {
-      url.searchParams.set(key, value);
-    }
-  }
-  return url.toString();
 }
 
 function sendJson(res: { status: (n: number) => { json: (b: unknown) => void } }, status: number, body: unknown): void {
@@ -253,6 +202,24 @@ export interface ResolvedBearer {
   tokenDocId: string;
 }
 
+// Every MCP tool call validates the token twice — once at the MCP endpoint, once
+// again when that endpoint calls the public API — so an uncached lookup doubles
+// the Firestore reads for the whole flow. The TTL is short enough that a
+// revocation takes effect within a minute, which is the property that matters:
+// "revoke" has to actually mean revoked, not "revoked in five minutes".
+const BEARER_CACHE_TTL_MS = 60 * 1000;
+const BEARER_CACHE_MAX = 5000;
+const bearerCache = new Map<string, { resolved: ResolvedBearer; expiresAt: number }>();
+
+/** Drop cached entries for a user so a revoke takes effect immediately. */
+function invalidateBearerCacheForUser(userId: string): void {
+  for (const [key, entry] of bearerCache) {
+    if (entry.resolved.userId === userId) {
+      bearerCache.delete(key);
+    }
+  }
+}
+
 /**
  * Validate a Bearer access token. Returns null for anything not currently valid —
  * unknown, revoked, expired, or a refresh token presented as an access token.
@@ -260,9 +227,19 @@ export interface ResolvedBearer {
 export async function resolveBearerToken(token: string): Promise<ResolvedBearer | null> {
   if (!token.startsWith("ek_at_")) return null;
 
+  const hash = hashToken(token);
+
+  const cached = bearerCache.get(hash);
+  if (cached) {
+    if (cached.expiresAt > Date.now()) {
+      return cached.resolved;
+    }
+    bearerCache.delete(hash);
+  }
+
   const snap = await firestore
     .collection(TOKENS_COLLECTION)
-    .where("tokenHash", "==", hashToken(token))
+    .where("tokenHash", "==", hash)
     .limit(1)
     .get();
 
@@ -275,12 +252,23 @@ export async function resolveBearerToken(token: string): Promise<ResolvedBearer 
     return null;
   }
 
-  return {
+  const resolved: ResolvedBearer = {
     userId: data.userId,
     scopes: (data.scopes || []) as ApiScope[],
     clientId: data.clientId,
     tokenDocId: doc.id,
   };
+
+  // Never cache past the token's own expiry.
+  const expiresAt = Math.min(Date.now() + BEARER_CACHE_TTL_MS, data.expiresAt);
+  if (expiresAt > Date.now()) {
+    bearerCache.set(hash, { resolved, expiresAt });
+    if (bearerCache.size > BEARER_CACHE_MAX) {
+      bearerCache.clear();
+    }
+  }
+
+  return resolved;
 }
 
 /** Header value that tells an MCP client where to find our authorization server. */
@@ -368,13 +356,10 @@ async function handleRegister(
   });
 }
 
-async function handleAuthorize(
-  req: { query: Record<string, unknown> },
-  res: {
-    status: (n: number) => { json: (b: unknown) => void; send: (b: string) => void };
-    redirect: (url: string) => void;
-  }
-): Promise<void> {
+type OAuthRequest = Parameters<Parameters<typeof onRequest>[0]>[0];
+type OAuthResponse = Parameters<Parameters<typeof onRequest>[0]>[1];
+
+async function handleAuthorize(req: OAuthRequest, res: OAuthResponse): Promise<void> {
   const q = req.query || {};
   const clientId = typeof q.client_id === "string" ? q.client_id : "";
   const redirectUri = typeof q.redirect_uri === "string" ? q.redirect_uri : "";
@@ -437,7 +422,12 @@ async function handleAuthorize(
   // Hand off to the SPA. Passing an opaque request id (rather than the raw
   // params) means the consent page can't be used to smuggle altered scopes or a
   // swapped redirect_uri past the validation we just did.
-  res.redirect(appendQuery(CONSENT_PAGE, { request: requestRef.id }));
+  //
+  // The id goes in the PATH, not a query string: when the visitor isn't signed
+  // in yet, AuthGuard stashes `location` and the login flow replays only
+  // `pathname`. A query param would be dropped and the consent page would load
+  // with nothing to approve.
+  res.redirect(`${CONSENT_PAGE}/${requestRef.id}`);
 }
 
 async function handleToken(
@@ -514,7 +504,7 @@ async function handleAuthorizationCodeGrant(
     oauthError(res, 400, "invalid_grant", "Authorization code was issued to a different client or redirect_uri");
     return;
   }
-  if (!constantTimeEquals(base64UrlSha256(codeVerifier), codeData.codeChallenge)) {
+  if (!verifyPkce(codeVerifier, codeData.codeChallenge)) {
     oauthError(res, 400, "invalid_grant", "PKCE verification failed");
     return;
   }
@@ -638,6 +628,7 @@ async function revokeTokensForFamily(familyId: string | undefined, userId: strin
   const batch = firestore.batch();
   snap.docs.forEach((d) => batch.update(d.ref, { revoked: true }));
   await batch.commit();
+  invalidateBearerCacheForUser(userId);
 }
 
 async function revokeTokensForClientAndUser(clientId: string, userId: string): Promise<void> {
@@ -650,6 +641,7 @@ async function revokeTokensForClientAndUser(clientId: string, userId: string): P
   const batch = firestore.batch();
   snap.docs.forEach((d) => batch.update(d.ref, { revoked: true }));
   await batch.commit();
+  invalidateBearerCacheForUser(userId);
 }
 
 // ── Metadata documents ──
@@ -711,7 +703,7 @@ export const mcpOauth = onRequest({ maxInstances: 10 }, async (req, res) => {
       return;
     }
     if (req.method === "GET" && path === "/oauth/authorize") {
-      await handleAuthorize(req as never, res as never);
+      await handleAuthorize(req, res);
       return;
     }
     if (req.method === "POST" && path === "/oauth/token") {

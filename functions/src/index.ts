@@ -137,6 +137,17 @@ export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } fr
 // Public API
 export { publicApi } from './public-api';
 
+// Remote MCP server + its OAuth 2.1 authorization server.
+// Agent-native onboarding: see Docs/agent-onboarding.md
+export { mcpServer } from './mcp-server';
+export {
+  mcpOauth,
+  getMcpAuthorizationRequest,
+  approveMcpAuthorization,
+  listMcpConnections,
+  revokeMcpConnection,
+} from './mcp-oauth';
+
 // Badge endpoint (public, no auth)
 export { badge } from './badge';
 

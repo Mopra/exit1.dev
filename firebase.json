@@ -18,6 +18,30 @@
     ],
     "rewrites": [
       {
+        "source": "/.well-known/oauth-authorization-server",
+        "function": "mcpOauth"
+      },
+      {
+        "source": "/.well-known/oauth-authorization-server/**",
+        "function": "mcpOauth"
+      },
+      {
+        "source": "/.well-known/oauth-protected-resource",
+        "function": "mcpOauth"
+      },
+      {
+        "source": "/.well-known/oauth-protected-resource/**",
+        "function": "mcpOauth"
+      },
+      {
+        "source": "/oauth/**",
+        "function": "mcpOauth"
+      },
+      {
+        "source": "/mcp/v1",
+        "function": "mcpServer"
+      },
+      {
         "source": "/v1/badge/**",
         "function": "badge"
       },

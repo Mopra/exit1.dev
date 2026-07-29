@@ -17,7 +17,9 @@ import type {
   ManualLogEntry,
   ApiKey,
   CreateApiKeyResponse,
-  OrganizationBillingProfile
+  OrganizationBillingProfile,
+  McpAuthorizationRequest,
+  McpConnection
 } from './types';
 import type { DomainExpiry, DomainIntelligenceItem } from '../types';
 
@@ -496,6 +498,33 @@ export class Exit1ApiClient {
 
   deleteApiKey(id: string) {
     return this.callVoid("deleteApiKey", { id }, 'Failed to delete API key');
+  }
+
+  // ---- MCP / agent connections ----
+
+  getMcpAuthorizationRequest(requestId: string) {
+    return this.callUnwrap<McpAuthorizationRequest>(
+      "getMcpAuthorizationRequest",
+      { requestId },
+      'Failed to load the authorization request',
+    );
+  }
+
+  /** Approve or deny a pending MCP authorization. Returns where to send the browser next. */
+  decideMcpAuthorization(requestId: string, approved: boolean) {
+    return this.call<{ success: boolean; redirectTo: string }>(
+      "approveMcpAuthorization",
+      { requestId, approved },
+      approved ? 'Failed to approve the connection' : 'Failed to cancel the connection',
+    );
+  }
+
+  listMcpConnections() {
+    return this.callUnwrap<McpConnection[]>("listMcpConnections", {}, 'Failed to list agent connections');
+  }
+
+  revokeMcpConnection(clientId: string) {
+    return this.callVoid("revokeMcpConnection", { clientId }, 'Failed to revoke the connection');
   }
 
   // ---- Domain Intelligence ----

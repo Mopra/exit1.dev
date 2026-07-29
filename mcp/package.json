@@ -1,8 +1,8 @@
 {
   "name": "exit1-mcp",
-  "version": "0.1.0",
-  "description": "MCP server for Exit1 uptime monitoring — query checks, history, and stats from AI assistants",
-  "keywords": ["mcp", "exit1", "uptime", "monitoring", "model-context-protocol"],
+  "version": "0.2.0",
+  "description": "MCP server for Exit1 uptime monitoring — set up monitors, configure alerts, and query uptime from AI assistants",
+  "keywords": ["mcp", "exit1", "uptime", "monitoring", "model-context-protocol", "observability", "alerting"],
   "license": "MIT",
   "author": "Exit1",
   "repository": {

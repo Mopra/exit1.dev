@@ -56,6 +56,7 @@ const DomainIntelligence = lazy(() => import('./pages/DomainIntelligence'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
+const Authorize = lazy(() => import('./pages/Authorize'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -279,6 +280,18 @@ function App() {
                 element={
                   <AuthGuard>
                     <Onboarding />
+                  </AuthGuard>
+                }
+              />
+              {/* OAuth consent for MCP clients. Standalone (no Layout) — the
+                  visitor arrives from an external AI tool mid-flow and is sent
+                  straight back out again. AuthGuard here is what turns an
+                  unauthenticated agent connection into a Clerk sign-up. */}
+              <Route
+                path="/authorize/:requestId"
+                element={
+                  <AuthGuard>
+                    <Authorize />
                   </AuthGuard>
                 }
               />

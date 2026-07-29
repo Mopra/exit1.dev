@@ -69,6 +69,12 @@ const SCOPE_OPTIONS = [
   { value: "checks:read", label: "Read", description: "List and view checks, history, and stats" },
   { value: "checks:write", label: "Write", description: "Create, update, and toggle checks" },
   { value: "checks:delete", label: "Delete", description: "Delete checks" },
+  { value: "alerts:read", label: "Read alerts", description: "See which email addresses and webhooks receive alerts" },
+  {
+    value: "alerts:write",
+    label: "Manage alerts",
+    description: "Set alert recipients, connect webhooks, and send test alerts",
+  },
 ] as const;
 
 export default function ApiKeys() {
@@ -423,10 +429,15 @@ export default function ApiKeys() {
                           <TableCell className="px-4 py-3">
                             <div className="flex flex-wrap gap-1.5">
                               {(k.scopes && k.scopes.length > 0 ? k.scopes : ["checks:read"]).map((s) => {
-                                const label = s.replace("checks:", "");
+                                // Scopes are "<group>:<action>". Checks are the
+                                // common case so they show bare ("write"); other
+                                // groups keep their prefix ("alerts write") so
+                                // two different writes can't be confused.
+                                const [group, action = ""] = s.split(":");
+                                const label = group === "checks" ? action : `${group} ${action}`;
                                 const variant: "outline" | "default" | "destructive" =
-                                  label === "delete" ? "destructive"
-                                  : label === "write" ? "default"
+                                  action === "delete" ? "destructive"
+                                  : action === "write" ? "default"
                                   : "outline";
                                 return (
                                   <Badge key={s} variant={variant} className="capitalize">

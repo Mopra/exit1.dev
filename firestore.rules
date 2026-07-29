@@ -310,6 +310,23 @@ service cloud.firestore {
         request.resource.data.updatedAt is number;
     }
 
+    // MCP OAuth state — registered clients, pending authorization requests,
+    // authorization codes and access/refresh token hashes. Read access would
+    // leak bearer credentials, so these are backend-only with no exceptions.
+    // The consent screen reaches them through callables, never directly.
+    match /mcp_oauth_clients/{clientId} {
+      allow read, write: if false;
+    }
+    match /mcp_oauth_requests/{requestId} {
+      allow read, write: if false;
+    }
+    match /mcp_oauth_codes/{codeId} {
+      allow read, write: if false;
+    }
+    match /mcp_oauth_tokens/{tokenId} {
+      allow read, write: if false;
+    }
+
     // Deny all other access
     match /{document=**} {
       allow read, write: if false;

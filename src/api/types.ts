@@ -592,4 +592,25 @@ export interface CreateApiKeyResponse {
   prefix: string;
   last4: string;
   createdAt: number;
-} 
+}
+
+// MCP / agent connection types
+
+/** A pending OAuth authorization from an MCP client, as shown on the consent screen. */
+export interface McpAuthorizationRequest {
+  clientName: string;
+  scopes: string[];
+  /** Host of the callback URL, e.g. "localhost:33418" — shown so the user can sanity-check it. */
+  redirectHost: string;
+  expiresAt: number;
+}
+
+/** An AI tool the user has connected and granted access to. */
+export interface McpConnection {
+  clientId: string;
+  clientName: string;
+  scopes: string[];
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+

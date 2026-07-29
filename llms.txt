@@ -6,6 +6,8 @@ Exit1 monitors websites and APIs from 3 global regions (US, Europe, Asia) every 
 
 Key capabilities: HTTP/HTTPS/TCP/UDP monitoring, SSL certificate expiration alerts, domain registration expiry tracking (RDAP), response validation (status codes, JSONPath, text matching), public status pages, BigQuery-powered analytics, and a REST API for programmatic access.
 
+Agent-native onboarding: a hosted MCP server at https://app.exit1.dev/mcp/v1 lets a developer set up monitoring entirely from Claude Code, Cursor or any MCP client. The AI reads their repo to find what should be monitored, creates the checks, configures alerts, and sends a real test alert — no dashboard visit required. Auth is OAuth 2.1 with dynamic client registration; sign-up happens inline in the browser during the flow. See Docs/agent-onboarding.md.
+
 Tier-based pricing: Free (5 checks, 5-min intervals, 60-day retention), Indie ($4, 10 checks, 15-sec intervals, API + MCP), Nano ($9, 100 checks, 2-min intervals, domain intelligence) and Pro ($24, 1,000 checks, 15-sec intervals, 3-year retention, SMS, CSV export, all alert channels). See PRICING.md for the canonical matrix.
 
 ## Source Code
@@ -40,8 +42,11 @@ Tier-based pricing: Free (5 checks, 5-min intervals, 60-day retention), Indie ($
 - [functions/src/domain-intelligence.ts](functions/src/domain-intelligence.ts): Domain expiry monitoring using RDAP protocol (6-hour check cycle)
 - [functions/src/bigquery.ts](functions/src/bigquery.ts): Check history storage — partitioned tables, pre-aggregated daily summaries, buffered inserts
 - [functions/src/history.ts](functions/src/history.ts): History querying, uptime calculations, incident detection
-- [functions/src/public-api.ts](functions/src/public-api.ts): REST API — list checks, query history, API key auth, rate limiting
+- [functions/src/public-api.ts](functions/src/public-api.ts): REST API — check CRUD, history, alert channels, API key + OAuth bearer auth, rate limiting
 - [functions/src/api-keys.ts](functions/src/api-keys.ts): API key generation, validation, revocation, and usage tracking
+- [functions/src/mcp-server.ts](functions/src/mcp-server.ts): Remote MCP server (Streamable HTTP, stateless) at /mcp/v1 — lets AI assistants set up monitoring
+- [functions/src/mcp-oauth.ts](functions/src/mcp-oauth.ts): OAuth 2.1 authorization server for MCP clients — dynamic registration, PKCE, token rotation
+- [functions/src/mcp-tools.ts](functions/src/mcp-tools.ts): MCP tool catalog and the setup_monitoring prompt
 - [functions/src/status-pages.ts](functions/src/status-pages.ts): Public status page APIs
 - [functions/src/status-buffer.ts](functions/src/status-buffer.ts): Batched Firestore writes to reduce operations cost
 - [functions/src/config.ts](functions/src/config.ts): All tuning parameters — memory, timeouts, batch sizes, budgets, retention
