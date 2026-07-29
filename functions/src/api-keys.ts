@@ -52,7 +52,7 @@ export const createApiKey = onCall({
   const maxKeys = CONFIG.getMaxApiKeysForTier(userTier);
 
   if (maxKeys === 0) {
-    throw new HttpsError("permission-denied", "API keys require a Nano subscription. Upgrade to create API keys.");
+    throw new HttpsError("permission-denied", "API keys require an Indie subscription or higher. Upgrade to create API keys.");
   }
 
   const existing = await firestore

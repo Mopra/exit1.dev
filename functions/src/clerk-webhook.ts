@@ -10,16 +10,14 @@ import {
   CLERK_WEBHOOK_SECRET,
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
-  ANDERRO_SECRET_KEY,
 } from "./env";
-import { firePaymentEvent } from "./anderro";
-import { firestore, getUserTierLive, tierFromPlanKey } from "./init";
+import { firestore, getUserTierLive, tierFromPlanKey, TIER_RANK } from "./init";
 import type { UserTier as InitUserTier } from "./init";
 import {
   handlePlanDowngrade,
-  handleProToNanoDowngrade,
   handleProToFreeDowngrade,
-  handleAgencyDowngrade,
+  enforceTierCeiling,
+  ceilingTightens,
   backfillCheckUserTier,
 } from "./plan-enforcement";
 import {
@@ -221,7 +219,7 @@ async function pushTierPropertyToResend(userId: string, tier: UserTier): Promise
  *   - subscription.* → syncs tier from Clerk billing to Firestore + Resend plan_tier property
  */
 export const clerkWebhook = onRequest({
-  secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, ANDERRO_SECRET_KEY],
+  secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
   cors: false,
 }, async (req, res) => {
   // Only accept POST requests
@@ -289,16 +287,16 @@ export const clerkWebhook = onRequest({
     try {
       // Read the cached tier directly from Firestore — do NOT call getUserTier()
       // which may refresh from Clerk and return the new tier before we can compare.
-      // Any legacy values ('scale', 'premium') are migrated to the new 4-tier shape.
+      // Any legacy values ('scale', 'agency', 'premium') are migrated to the current shape.
       let previousTier: InitUserTier = 'free';
       try {
         const userSnap = await firestore.collection('users').doc(userId).get();
         if (userSnap.exists) {
           const cached = userSnap.data()?.tier;
-          if (cached === 'scale') previousTier = 'agency';
+          if (cached === 'scale' || cached === 'agency') previousTier = 'pro';
           else if (cached === 'premium') previousTier = 'nano';
           else if (
-            cached === 'free' || cached === 'nano' || cached === 'pro' || cached === 'agency'
+            cached === 'free' || cached === 'indie' || cached === 'nano' || cached === 'pro'
           ) {
             previousTier = cached;
           }
@@ -329,70 +327,40 @@ export const clerkWebhook = onRequest({
         }
       }
 
-      // Tier rank for direction detection (downgrade vs upgrade vs lateral).
-      const rank: Record<InitUserTier, number> = { free: 0, nano: 1, pro: 2, agency: 3 };
-      const isDowngrade = rank[newTier] < rank[previousTier];
+      // Enforcement is driven by whether the target tier's limits are tighter in
+      // ANY dimension — not by rank. The ladder is non-monotonic on check
+      // interval (Indie probes at 15s, Nano at 2min), so the rank-upgrade
+      // Indie→Nano still has to clamp intervals. See ceilingTightens().
+      const needsEnforcement = newTier !== previousTier && ceilingTightens(previousTier, newTier);
 
-      const runEnforcement = async (): Promise<void> => {
-        if (previousTier === 'agency') {
-          // Agency → anything lower
-          if (newTier === 'pro' || newTier === 'nano' || newTier === 'free') {
-            await handleAgencyDowngrade(userId, newTier);
-          }
-          return;
-        }
-        if (previousTier === 'pro') {
-          if (newTier === 'nano') {
-            await handleProToNanoDowngrade(userId);
-          } else if (newTier === 'free') {
-            await handleProToFreeDowngrade(userId);
-          }
-          return;
-        }
-        if (previousTier === 'nano' && newTier === 'free') {
-          await handlePlanDowngrade(userId);
-          return;
-        }
-      };
-
-      if (isDowngrade) {
-        logger.info(`[plan-enforcement] Detected downgrade for ${userId}: ${previousTier} → ${newTier}`);
+      if (needsEnforcement) {
+        logger.info(`[plan-enforcement] Tightening ceiling for ${userId}: ${previousTier} → ${newTier}`);
         try {
-          await runEnforcement();
-          logger.info(`[plan-enforcement] Downgrade enforcement completed for ${userId}`);
+          if (newTier === 'free') {
+            // Free is special-cased: all checks are disabled outright rather
+            // than pruned down to the Free cap.
+            if (previousTier === 'pro') {
+              await handleProToFreeDowngrade(userId);
+            } else {
+              await handlePlanDowngrade(userId);
+            }
+          } else {
+            await enforceTierCeiling(userId, newTier);
+          }
+          logger.info(`[plan-enforcement] Enforcement completed for ${userId}`);
         } catch (enforcementError) {
           const msg = enforcementError instanceof Error ? enforcementError.message : 'Unknown error';
-          logger.error(`[plan-enforcement] Downgrade enforcement failed for ${userId}`, { error: msg });
+          logger.error(`[plan-enforcement] Enforcement failed for ${userId}`, { error: msg });
           res.status(500).json({ received: true, processed: false, error: `Downgrade enforcement failed: ${msg}` });
           return;
         }
       } else if (newTier !== previousTier) {
-        // Upgrade or lateral move — no enforcement, but re-denormalise userTier on all checks
-        // so check-doc caches stay in sync.
+        // Pure upgrade — nothing exceeds the new ceiling, but re-denormalise
+        // userTier on all checks so check-doc caches stay in sync.
         try {
           await backfillCheckUserTier(userId, newTier);
         } catch (e) {
           logger.warn(`[plan-enforcement] Failed to backfill userTier on checks for ${userId}`, e);
-        }
-      }
-
-      // Anderro affiliate-tracking payment event (2-week trial). Fire on tier
-      // upgrades into a paid plan — covers initial paid subscription and
-      // upgrades between paid tiers. Renewals are not yet covered (would
-      // require a separate Clerk billing-event hook). Best-effort.
-      const isUpgrade = rank[newTier] > rank[previousTier];
-      if (isUpgrade && newTier !== 'free') {
-        try {
-          const userSnap = await firestore.collection('users').doc(userId).get();
-          const planKey = typeof userSnap.data()?.subscribedPlanKey === 'string'
-            ? (userSnap.data()!.subscribedPlanKey as string)
-            : null;
-          await firePaymentEvent({ uid: userId, planKey });
-        } catch (e) {
-          logger.warn('[anderro] Failed to fire payment event', {
-            userId,
-            error: e instanceof Error ? e.message : String(e),
-          });
         }
       }
 
@@ -711,13 +679,13 @@ export const syncClerkUsersToResend = onCall({
 });
 
 // Resend segment IDs for tier-based segmentation.
-// Pro + Agency share the old Nano segment for now — Resend only has two
+// All paid tiers share the old Nano segment for now — Resend only has two
 // segments. When marketing splits them, map each tier to its own segment ID.
 const RESEND_SEGMENTS = {
   free: 'd447bbcb-254e-4891-91da-beb0b0bcd144',
+  indie: '71260845-a8ec-4663-8a11-90713ce376df',
   nano: '71260845-a8ec-4663-8a11-90713ce376df',
   pro: '71260845-a8ec-4663-8a11-90713ce376df',
-  agency: '71260845-a8ec-4663-8a11-90713ce376df',
 } as const;
 
 /**
@@ -745,7 +713,7 @@ async function getTierFromClerkUser(
       return s === 'active' || s === 'upcoming' || s === 'past_due';
     });
 
-    const rank: Record<InitUserTier, number> = { free: 0, nano: 1, pro: 2, agency: 3 };
+    const rank = TIER_RANK;
     let best: InitUserTier = 'free';
     for (const item of activeLike) {
       const slug = typeof item?.plan?.slug === 'string' ? item.plan.slug.trim() : '';
@@ -826,9 +794,9 @@ export const syncSegmentsToResend = onCall({
   const stats = {
     total: 0,
     free: 0,
+    indie: 0,
     nano: 0,
     pro: 0,
-    agency: 0,
     skipped: 0,
     errors: 0,
     dryRun,
@@ -910,12 +878,12 @@ export const syncSegmentsToResend = onCall({
 
         details.push({ email, tier });
 
-        if (tier === 'agency') {
-          stats.agency++;
-        } else if (tier === 'pro') {
+        if (tier === 'pro') {
           stats.pro++;
         } else if (tier === 'nano') {
           stats.nano++;
+        } else if (tier === 'indie') {
+          stats.indie++;
         } else {
           stats.free++;
         }
@@ -975,12 +943,12 @@ export const RESEND_SYNC_FRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 function normalizeUserDoc(data: FirebaseFirestore.DocumentData | undefined): CachedUserInfo {
   let tier: UserTier = 'free';
   const cached = data?.tier;
-  // Migrate legacy values to the new 4-tier shape.
-  if (cached === 'scale') tier = 'agency';
+  // Migrate legacy values ('scale'/'agency' → pro, 'premium' → nano).
+  if (cached === 'scale' || cached === 'agency') tier = 'pro';
   else if (cached === 'premium') tier = 'nano';
-  else if (cached === 'agency') tier = 'agency';
   else if (cached === 'pro') tier = 'pro';
   else if (cached === 'nano') tier = 'nano';
+  else if (cached === 'indie') tier = 'indie';
 
   const syncedRaw = data?.resendPropertiesSyncedAt;
   const resendPropertiesSyncedAt =

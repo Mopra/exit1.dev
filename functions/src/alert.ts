@@ -574,11 +574,12 @@ export async function triggerAlert(
       const smsSettings = options?.skipSms ? null : (settings.sms || null);
       const smsTier = await helpers.resolveSmsTier(website);
 
-      // SMS is enabled for tiers whose TIER_LIMITS.smsAlerts flag is true (Pro, Agency).
-      // 'nano' and 'free' resolve to no SMS; legacy 'scale' was migrated to 'agency' in resolveSmsTier.
+      // SMS is enabled for tiers whose TIER_LIMITS.smsAlerts flag is true (Pro).
+      // 'indie'/'nano'/'free' resolve to no SMS; legacy 'scale'/'agency' were
+      // migrated to 'pro' in resolveSmsTier.
       if (options?.skipSms) {
         smsOutcome = 'skipped';
-      } else if (smsTier !== 'pro' && smsTier !== 'agency') {
+      } else if (smsTier !== 'pro') {
         smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = helpers.getSmsRecipients(smsSettings);
@@ -883,9 +884,10 @@ export async function triggerSSLAlert(
       const smsSettings = settings.sms || null;
       const smsTier = await helpers.resolveSmsTier(website);
 
-      // SMS is enabled for tiers whose TIER_LIMITS.smsAlerts flag is true (Pro, Agency).
-      // 'nano' and 'free' resolve to no SMS; legacy 'scale' was migrated to 'agency' in resolveSmsTier.
-      if (smsTier !== 'pro' && smsTier !== 'agency') {
+      // SMS is enabled for tiers whose TIER_LIMITS.smsAlerts flag is true (Pro).
+      // 'indie'/'nano'/'free' resolve to no SMS; legacy 'scale'/'agency' were
+      // migrated to 'pro' in resolveSmsTier.
+      if (smsTier !== 'pro') {
         smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = helpers.getSmsRecipients(smsSettings);

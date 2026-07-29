@@ -120,12 +120,12 @@ const ensureSmsTierOrAdmin = async (uid: string) => {
     return;
   }
 
-  // Gate on the canonical SMS feature flag. Currently true for Pro and Agency.
+  // Gate on the canonical SMS feature flag. Currently true for Pro only.
   const tier = await getUserTierLive(uid);
   if (!TIER_LIMITS[tier].smsAlerts) {
     throw new HttpsError(
       'permission-denied',
-      'SMS alerts require the Pro or Agency plan. Please upgrade to enable SMS notifications.'
+      'SMS alerts require the Pro plan. Please upgrade to enable SMS notifications.'
     );
   }
 };
@@ -440,24 +440,23 @@ export const getSmsUsage = onCall({
   }
 
   const admin = await isAdminUser(uid);
-  // SMS is enabled on tiers whose TIER_LIMITS.smsAlerts = true (Pro, Agency).
-  // Admins are treated as Agency for gating purposes.
-  let resolvedTier: 'free' | 'nano' | 'pro' | 'agency' = 'free';
+  // SMS is enabled on tiers whose TIER_LIMITS.smsAlerts = true (Pro).
+  // Admins are treated as Pro for gating purposes.
+  let resolvedTier: 'free' | 'indie' | 'nano' | 'pro' = 'free';
 
   if (admin) {
-    resolvedTier = 'agency';
+    resolvedTier = 'pro';
   } else {
     const liveTier = await getUserTierLive(uid);
-    if ((liveTier as unknown) === 'scale') resolvedTier = 'agency';
+    if ((liveTier as unknown) === 'scale' || (liveTier as unknown) === 'agency') resolvedTier = 'pro';
     else if ((liveTier as unknown) === 'premium') resolvedTier = 'nano';
     else resolvedTier = liveTier;
   }
 
-  const smsEnabled = resolvedTier === 'pro' || resolvedTier === 'agency';
-  if (!smsEnabled) {
+  if (!TIER_LIMITS[resolvedTier].smsAlerts) {
     throw new HttpsError(
       'permission-denied',
-      'SMS alerts require the Pro or Agency plan. Please upgrade to enable SMS notifications.'
+      'SMS alerts require the Pro plan. Please upgrade to enable SMS notifications.'
     );
   }
 

@@ -91,7 +91,7 @@ export const updateEmailPerCheck = onCall({
   // Founders map to 'pro' via tierFromPlanKey, so they keep access.
   if (recipients !== undefined && recipients !== null && Array.isArray(recipients) && recipients.length > 0) {
     const tier = await getUserTier(uid);
-    if (tier !== 'pro' && tier !== 'agency') {
+    if (tier !== 'pro') {
       const docSnap = await firestore.collection('emailSettings').doc(uid).get();
       const existing: string[] = docSnap.data()?.perCheck?.[checkId]?.recipients ?? [];
       if (recipients.length > existing.length) {
@@ -195,7 +195,7 @@ export const bulkUpdateEmailPerCheck = onCall({
   );
   if (hasRecipientAdditions) {
     const tier = await getUserTier(uid);
-    if (tier !== 'pro' && tier !== 'agency') {
+    if (tier !== 'pro') {
       const docSnap = await firestore.collection('emailSettings').doc(uid).get();
       const existingPerCheck = docSnap.data()?.perCheck ?? {};
       const isAdding = limitedUpdates.some((u: { checkId?: string; recipients?: string[] | null }) => {
@@ -318,7 +318,7 @@ export const updateEmailPerFolder = onCall(async (request) => {
   // Gate folder-level extra recipients behind Pro tier (Founders map to 'pro').
   if (recipients !== undefined && recipients !== null && Array.isArray(recipients) && recipients.length > 0) {
     const tier = await getUserTier(uid);
-    if (tier !== 'pro' && tier !== 'agency') {
+    if (tier !== 'pro') {
       const docSnap = await firestore.collection('emailSettings').doc(uid).get();
       const existing: string[] = docSnap.data()?.perFolder?.[normalizedFolder]?.recipients ?? [];
       if (recipients.length > existing.length) {

@@ -411,11 +411,11 @@ export const getCheckStatsBigQuery = onCall({
     // SECURITY: Stats view is gated to Nano-or-better paid tiers.
     const { getUserTier } = await import('./init.js');
     const userTier = await getUserTier(uid);
-    if (userTier !== 'nano' && userTier !== 'pro' && userTier !== 'agency') {
+    if (userTier !== 'nano' && userTier !== 'pro') {
       logger.warn(`User ${uid} attempted to access Stats view without a paid subscription (tier: ${userTier})`);
       throw new HttpsError(
         "permission-denied",
-        "Statistics view requires a Nano, Pro, or Agency subscription. Please upgrade to access this feature."
+        "Statistics view requires a Nano or Pro subscription. Please upgrade to access this feature."
       );
     }
 
@@ -587,9 +587,9 @@ export const getCheckHistoryDailySummary = onCall({
     // SECURITY: Timeline view is gated to Nano-or-better paid tiers.
     const { getUserTier } = await import('./init.js');
     const userTier = await getUserTier(uid);
-    if (userTier !== 'nano' && userTier !== 'pro' && userTier !== 'agency') {
+    if (userTier !== 'nano' && userTier !== 'pro') {
       logger.warn(`[getCheckHistoryDailySummary] User ${uid} attempted to access Timeline view without a paid subscription (tier: ${userTier})`);
-      throw new HttpsError("permission-denied", "Timeline view requires a Nano, Pro, or Agency subscription. Please upgrade to access this feature.");
+      throw new HttpsError("permission-denied", "Timeline view requires a Nano or Pro subscription. Please upgrade to access this feature.");
     }
 
     logger.debug(`[getCheckHistoryDailySummary] Calling BigQuery for website ${websiteId}`);
@@ -831,13 +831,15 @@ export const purgeBigQueryHistory = onSchedule({
 }, async () => {
   try {
     // Collect users whose tier entitles them to longer-than-free retention.
-    // Post-tier-restructure: Free = 60d, Nano = 60d, Pro = 365d, Agency = 1095d.
-    // Only Pro and Agency users need their rows kept past the Free cutoff.
+    // Current lineup: Free = 60d, Indie = 60d, Nano = 60d, Pro = 1095d.
+    // Only Pro users need their rows kept past the Free cutoff. 'agency' is
+    // queried too so rows written before the tier was retired are not purged
+    // early if a user doc hasn't been recomputed yet.
     const paidRetentionUserIds: string[] = [];
-    const proSnap = await firestore.collection('users').where('tier', '==', 'pro').get();
-    proSnap.forEach((doc) => paidRetentionUserIds.push(doc.id));
-    const agencySnap = await firestore.collection('users').where('tier', '==', 'agency').get();
-    agencySnap.forEach((doc) => paidRetentionUserIds.push(doc.id));
+    for (const legacyTier of ['pro', 'agency'] as const) {
+      const snap = await firestore.collection('users').where('tier', '==', legacyTier).get();
+      snap.forEach((doc) => paidRetentionUserIds.push(doc.id));
+    }
 
     await purgeOldCheckHistory(paidRetentionUserIds);
   } catch (error) {

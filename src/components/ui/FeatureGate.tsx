@@ -5,20 +5,20 @@ import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./Button";
 
-type Tier = "free" | "nano" | "pro" | "agency";
-type RequiredTier = "nano" | "pro" | "agency";
+type Tier = "free" | "indie" | "nano" | "pro";
+type RequiredTier = "indie" | "nano" | "pro";
 
 const TIER_RANK: Record<Tier, number> = {
   free: 0,
-  nano: 1,
-  pro: 2,
-  agency: 3,
+  indie: 1,
+  nano: 2,
+  pro: 3,
 };
 
 const TIER_LABEL: Record<RequiredTier, string> = {
+  indie: "Indie",
   nano: "Nano",
   pro: "Pro",
-  agency: "Agency",
 };
 
 type FeatureGateProps = {

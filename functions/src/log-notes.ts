@@ -5,10 +5,10 @@ import { Website } from "./types";
 
 async function assertCommentsEntitled(uid: string): Promise<void> {
   const tier = await getUserTier(uid);
-  if (tier !== "pro" && tier !== "agency") {
+  if (tier !== "pro") {
     throw new HttpsError(
       "permission-denied",
-      "Log comments are available on Pro and Agency plans. Please upgrade to access this feature."
+      "Log comments are available on the Pro plan. Please upgrade to access this feature."
     );
   }
 }

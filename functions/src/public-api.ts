@@ -2,7 +2,8 @@ import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldPath, FieldValue } from "firebase-admin/firestore";
 import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
-import { Website, ApiKeyDoc } from "./types";
+import { Website, ApiKeyDoc, EmailSettings, WebhookSettings } from "./types";
+import { normalizeEventList } from "./webhook-events";
 import { BigQueryCheckHistoryRow, CheckStatsResult } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 import { CONFIG, TIER_LIMITS } from "./config";
@@ -10,6 +11,7 @@ import { getUserTier } from "./init";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { CheckRegion } from "./check-region";
 import { hasScope, API_SCOPES, type ApiScope } from "./api-scopes";
+import { resolveBearerToken, buildWwwAuthenticate, MCP_TOKENS_COLLECTION } from "./mcp-oauth";
 import {
   normalizeCheckType,
   getCanonicalUrlKeySafe,
@@ -19,6 +21,7 @@ import {
   getUserCheckStats,
   initializeUserCheckStats,
   refreshRateLimitWindows,
+  notifySettingsEdit,
 } from "./check-helpers";
 import { notifyCheckEdit } from "./checks";
 import { extractDomain, validateDomainForRdap } from "./rdap-client";
@@ -29,6 +32,7 @@ import {
   CLERK_SECRET_KEY_DEV,
   RESEND_API_KEY,
   RESEND_FROM,
+  getResendCredentials,
 } from "./env";
 
 const firestore = getFirestore();
@@ -160,6 +164,28 @@ const WRITE_RATE_LIMITS = {
 const writeRateLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 const dailyWriteQuotaLimiter = new FixedWindowRateLimiter({ windowMs: 24 * 60 * 60 * 1000, maxKeys: 20_000 });
 
+// OAuth (agent) sessions get their own profile. The API-key numbers above are
+// tuned for scripted polling — 1 request/minute per endpoint means an agent
+// creating five checks during onboarding would sit through a five-minute
+// cooldown mid-flow. Agent sessions are interactive, backed by a consented
+// browser grant, and revocable per-connection, so the burst is worth allowing.
+// Tier caps and per-user check-creation limits still apply underneath.
+const AGENT_RATE_LIMITS = {
+  ipPerMinute: 20,
+  perKeyTotalPerMinute: 30,
+  perEndpointPerMinute: 10,
+  perKeyDaily: 1500,
+  perUserDaily: 3000,
+} as const;
+const AGENT_WRITE_RATE_LIMITS = {
+  perKeyWritePerMinute: 15,
+  perKeyWriteDaily: 200,
+  perUserWriteDaily: 400,
+} as const;
+
+type RateLimitProfile = typeof RATE_LIMITS | typeof AGENT_RATE_LIMITS;
+type WriteRateLimitProfile = typeof WRITE_RATE_LIMITS | typeof AGENT_WRITE_RATE_LIMITS;
+
 // --- Idempotency ---
 const IDEMPOTENCY_COLLECTION = 'api_idempotency_keys';
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -275,6 +301,25 @@ async function saveIdempotency(
 // --- Route helpers ---
 
 function getRouteName(segments: string[], method: string): string {
+  // /v1/public/alerts/...
+  if (segments[2] === 'alerts') {
+    // /v1/public/alerts/email[/test]
+    if (segments[3] === 'email') {
+      if (segments.length === 5 && segments[4] === 'test') return 'alerts_email_test';
+      if (segments.length === 4) return method === 'PATCH' ? 'alerts_email_update' : 'alerts_email_get';
+    }
+    // /v1/public/alerts/webhooks[/:id[/test]]
+    if (segments[3] === 'webhooks') {
+      if (segments.length === 6 && segments[5] === 'test') return 'alerts_webhook_test';
+      if (segments.length === 5) return 'alerts_webhook_delete';
+      if (segments.length === 4) return method === 'POST' ? 'alerts_webhook_create' : 'alerts_webhooks_list';
+    }
+    return 'alerts_default';
+  }
+  // /v1/public/account
+  if (segments.length === 3 && segments[2] === 'account') {
+    return 'account_get';
+  }
   // /v1/public/checks/:id/history
   if (segments.length === 5 && segments[2] === 'checks' && segments[4] === 'history') {
     return 'checks_history';
@@ -302,6 +347,11 @@ function getRouteName(segments: string[], method: string): string {
 }
 
 function getRequiredScope(method: string, routeName: string): ApiScope {
+  if (routeName.startsWith('alerts_')) {
+    // Reads are GET-only; everything else touches a delivery channel.
+    return method === 'GET' ? API_SCOPES.ALERTS_READ : API_SCOPES.ALERTS_WRITE;
+  }
+  if (routeName === 'account_get') return API_SCOPES.CHECKS_READ;
   if (routeName === 'checks_delete') return API_SCOPES.CHECKS_DELETE;
   if (method === 'POST' || method === 'PATCH') return API_SCOPES.CHECKS_WRITE;
   return API_SCOPES.CHECKS_READ;
@@ -496,26 +546,27 @@ function validateExpectedStatusCodes(codes: unknown): { valid: boolean; error?: 
 function enforceWriteRateLimit(
   res: Parameters<Parameters<typeof onRequest>[0]>[1],
   keyDocId: string,
-  userId: string
+  userId: string,
+  limits: WriteRateLimitProfile
 ): boolean {
-  const perMinute = writeRateLimiter.consume(`write:key:${keyDocId}`, WRITE_RATE_LIMITS.perKeyWritePerMinute);
+  const perMinute = writeRateLimiter.consume(`write:key:${keyDocId}`, limits.perKeyWritePerMinute);
   if (!perMinute.allowed) {
     applyRateLimitHeaders(res, perMinute);
-    res.status(429).json({ error: 'Write rate limit exceeded. Maximum 2 write operations per minute.' });
+    res.status(429).json({ error: `Write rate limit exceeded. Maximum ${limits.perKeyWritePerMinute} write operations per minute.` });
     return false;
   }
 
-  const dailyKey = dailyWriteQuotaLimiter.consume(`write:daily:key:${keyDocId}`, WRITE_RATE_LIMITS.perKeyWriteDaily);
+  const dailyKey = dailyWriteQuotaLimiter.consume(`write:daily:key:${keyDocId}`, limits.perKeyWriteDaily);
   if (!dailyKey.allowed) {
     applyRateLimitHeaders(res, dailyKey);
-    res.status(429).json({ error: 'Daily write quota exceeded for this API key. Limit: 100 writes/day.' });
+    res.status(429).json({ error: `Daily write quota exceeded for this credential. Limit: ${limits.perKeyWriteDaily} writes/day.` });
     return false;
   }
 
-  const dailyUser = dailyWriteQuotaLimiter.consume(`write:daily:user:${userId}`, WRITE_RATE_LIMITS.perUserWriteDaily);
+  const dailyUser = dailyWriteQuotaLimiter.consume(`write:daily:user:${userId}`, limits.perUserWriteDaily);
   if (!dailyUser.allowed) {
     applyRateLimitHeaders(res, dailyUser);
-    res.status(429).json({ error: 'Daily write quota exceeded. Limit: 300 writes/day across all API keys.' });
+    res.status(429).json({ error: `Daily write quota exceeded. Limit: ${limits.perUserWriteDaily} writes/day across all credentials.` });
     return false;
   }
 
@@ -561,7 +612,8 @@ async function handleCreateCheck(
   res: Parameters<Parameters<typeof onRequest>[0]>[1],
   userId: string,
   keyDocId: string,
-  path: string
+  path: string,
+  isAgentSession = false
 ): Promise<void> {
   // Idempotency key required for POST
   const idempotencyKey = req.header('Idempotency-Key') || '';
@@ -637,17 +689,17 @@ async function handleCreateCheck(
     return;
   }
 
-  // DNS checks: Nano and Scale only
+  // DNS checks: any paid tier
   if (resolvedType === 'dns') {
     if (userTier === 'free') {
-      res.status(403).json({ error: 'DNS monitoring is available on Nano and Scale plans only.' });
+      res.status(403).json({ error: 'DNS monitoring requires a paid plan.' });
       return;
     }
   }
 
   // Domain-only checks: Nano+ (gated by `domainIntel` tier flag)
   if (resolvedType === 'domain' && !TIER_LIMITS[userTier].domainIntel) {
-    res.status(403).json({ error: 'Domain Intelligence requires a Nano, Pro, or Agency subscription.' });
+    res.status(403).json({ error: 'Domain Intelligence requires a Nano or Pro subscription.' });
     return;
   }
 
@@ -906,6 +958,9 @@ async function handleCreateCheck(
       nextCheckAt: resolvedType === 'domain' ? null : now,
       orderIndex: maxOrderIndex + ORDER_INDEX_GAP,
       type: resolvedType,
+      // Attribution — lets us compare agent-onboarded accounts against the
+      // normal funnel. Checks added in the dashboard carry no value here.
+      createdVia: isAgentSession ? 'mcp' : 'api',
       ...(isHttpCheck
         ? {
           httpMethod: resolvedHttpMethod,
@@ -1409,6 +1464,531 @@ async function handleAcceptBaseline(
 }
 
 // ============================================================
+// Alert channel handlers
+//
+// These exist so an agent can finish onboarding without the dashboard: configure
+// where alerts go, then fire a real test so the user sees the thing work. They
+// deliberately mirror the callable equivalents in email.ts / webhooks.ts —
+// same tier limits, same duplicate rejection, same notifySettingsEdit fan-out —
+// rather than reimplementing the rules.
+// ============================================================
+
+const ALERT_EMAIL_COLLECTION = 'emailSettings';
+const WEBHOOKS_COLLECTION = 'webhooks';
+
+async function handleGetEmailAlerts(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string
+): Promise<void> {
+  const doc = await firestore.collection(ALERT_EMAIL_COLLECTION).doc(userId).get();
+  if (!doc.exists) {
+    res.json({ data: null });
+    return;
+  }
+  const data = doc.data() as EmailSettings;
+  res.json({
+    data: {
+      enabled: !!data.enabled,
+      recipients: getConfiguredEmailRecipients(data),
+      events: data.events || [],
+      emailFormat: data.emailFormat || 'html',
+      updatedAt: data.updatedAt ?? null,
+    },
+  });
+}
+
+function getConfiguredEmailRecipients(settings: EmailSettings): string[] {
+  if (Array.isArray(settings.recipients) && settings.recipients.length > 0) {
+    return settings.recipients.filter((r) => typeof r === 'string' && r.trim().length > 0);
+  }
+  if (typeof settings.recipient === 'string' && settings.recipient.trim()) {
+    return [settings.recipient.trim()];
+  }
+  return [];
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_RECIPIENTS = 10;
+
+async function handleUpdateEmailAlerts(
+  req: Parameters<Parameters<typeof onRequest>[0]>[0],
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string
+): Promise<void> {
+  const body = req.body || {};
+  const { recipients, enabled, events, emailFormat } = body;
+
+  const update: Record<string, unknown> = { userId, updatedAt: Date.now() };
+
+  if (recipients !== undefined) {
+    if (!Array.isArray(recipients)) {
+      res.status(400).json({ error: 'recipients must be an array of email addresses' });
+      return;
+    }
+    if (recipients.length > MAX_EMAIL_RECIPIENTS) {
+      res.status(400).json({ error: `At most ${MAX_EMAIL_RECIPIENTS} recipients are allowed` });
+      return;
+    }
+    const cleaned = recipients
+      .filter((r: unknown): r is string => typeof r === 'string')
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+    const invalid = cleaned.find((r) => !EMAIL_PATTERN.test(r));
+    if (invalid) {
+      res.status(400).json({ error: `"${invalid}" is not a valid email address` });
+      return;
+    }
+    if (cleaned.length === 0) {
+      res.status(400).json({ error: 'At least one recipient email is required' });
+      return;
+    }
+    update.recipients = Array.from(new Set(cleaned));
+  }
+
+  if (events !== undefined) {
+    if (!Array.isArray(events)) {
+      res.status(400).json({ error: 'events must be an array' });
+      return;
+    }
+    const normalized = normalizeEventList(events);
+    if (normalized.length === 0) {
+      res.status(400).json({ error: 'At least one valid event is required. Known events: website_down, website_up, website_error, ssl_error, ssl_warning, domain_expiring, domain_expired, domain_renewed' });
+      return;
+    }
+    update.events = normalized;
+  }
+
+  if (enabled !== undefined) {
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled must be a boolean' });
+      return;
+    }
+    update.enabled = enabled;
+  }
+
+  if (emailFormat !== undefined) {
+    if (emailFormat !== 'html' && emailFormat !== 'text') {
+      res.status(400).json({ error: "emailFormat must be 'html' or 'text'" });
+      return;
+    }
+    update.emailFormat = emailFormat;
+  }
+
+  const docRef = firestore.collection(ALERT_EMAIL_COLLECTION).doc(userId);
+  const existing = await docRef.get();
+
+  // Creating settings from scratch needs both halves — enabling alerts with no
+  // recipients, or recipients with no events, silently delivers nothing.
+  if (!existing.exists) {
+    if (!update.recipients) {
+      res.status(400).json({ error: 'recipients is required when creating email alert settings' });
+      return;
+    }
+    if (!update.events) {
+      update.events = ['website_down', 'website_up'];
+    }
+    if (update.enabled === undefined) {
+      update.enabled = true;
+    }
+    update.createdAt = Date.now();
+  }
+
+  await docRef.set(update, { merge: true });
+  await notifySettingsEdit(userId);
+
+  const saved = await docRef.get();
+  const data = saved.data() as EmailSettings;
+  res.json({
+    data: {
+      enabled: !!data.enabled,
+      recipients: getConfiguredEmailRecipients(data),
+      events: data.events || [],
+      emailFormat: data.emailFormat || 'html',
+    },
+  });
+}
+
+async function handleTestEmailAlert(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string
+): Promise<void> {
+  const snap = await firestore.collection(ALERT_EMAIL_COLLECTION).doc(userId).get();
+  if (!snap.exists) {
+    res.status(412).json({ error: 'No email alert settings configured. PATCH /v1/public/alerts/email first.' });
+    return;
+  }
+  const settings = snap.data() as EmailSettings;
+  const recipients = getConfiguredEmailRecipients(settings);
+  if (recipients.length === 0) {
+    res.status(412).json({ error: 'No recipient emails configured' });
+    return;
+  }
+
+  const { apiKey, fromAddress } = getResendCredentials();
+  if (!apiKey) {
+    res.status(503).json({ error: 'Email delivery is not configured' });
+    return;
+  }
+
+  const { Resend } = await import('resend');
+  const resend = new Resend(apiKey);
+  const format = settings.emailFormat || 'html';
+  const subject = 'Test: Exit1 email alerts';
+  const html = format === 'text' ? undefined : `
+    <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+      <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
+        <h2 style="margin:0 0 8px 0">Your Exit1 alerts are live</h2>
+        <p style="margin:0 0 12px 0;color:#94a3b8">This is the test alert your AI assistant asked us to send. Real alerts will look like this and arrive the moment something goes down.</p>
+        <a href="https://app.exit1.dev/checks" style="color:#38bdf8">Open your dashboard</a>
+      </div>
+    </div>`;
+  const text = format === 'text'
+    ? 'Your Exit1 alerts are live\n==========================\n\nThis is the test alert your AI assistant asked us to send. Real alerts will arrive the moment something goes down.\n\nDashboard: https://app.exit1.dev/checks'
+    : undefined;
+
+  const delivered: string[] = [];
+  try {
+    for (let i = 0; i < recipients.length; i++) {
+      // Resend allows 2 req/sec — space the sends out.
+      if (i > 0) await new Promise((resolve) => setTimeout(resolve, 600));
+      const response = format === 'text'
+        ? await resend.emails.send({ from: fromAddress, to: recipients[i], subject, text: text! })
+        : await resend.emails.send({ from: fromAddress, to: recipients[i], subject, html: html! });
+      if (response.error) {
+        logger.error('Public API test email failed', { userId, recipient: recipients[i], error: response.error });
+        res.status(502).json({ error: response.error.message, delivered });
+        return;
+      }
+      delivered.push(recipients[i]);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to send test email';
+    logger.error('Public API test email threw', { userId, error });
+    res.status(502).json({ error: message, delivered });
+    return;
+  }
+
+  res.json({ data: { delivered, message: `Test alert sent to ${delivered.join(', ')}` } });
+}
+
+async function handleListWebhookAlerts(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string
+): Promise<void> {
+  const snap = await firestore.collection(WEBHOOKS_COLLECTION).where('userId', '==', userId).get();
+  const data = snap.docs.map((doc) => {
+    const w = doc.data() as WebhookSettings;
+    return {
+      id: doc.id,
+      name: w.name,
+      url: redactWebhookUrl(w.url),
+      webhookType: w.webhookType || 'generic',
+      events: w.events || [],
+      enabled: !!w.enabled,
+      createdAt: (w as unknown as { createdAt?: number }).createdAt ?? null,
+    };
+  });
+  res.json({ data });
+}
+
+/**
+ * Never echo a full webhook URL back over the API — Slack/Discord URLs are
+ * bearer credentials, and a checks:read-level leak shouldn't hand them out.
+ */
+function redactWebhookUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}/…`;
+  } catch {
+    return '…';
+  }
+}
+
+const VALID_WEBHOOK_TYPES = ['slack', 'discord', 'teams', 'pumble', 'pagerduty', 'opsgenie', 'pushover', 'generic'];
+
+async function handleCreateWebhookAlert(
+  req: Parameters<Parameters<typeof onRequest>[0]>[0],
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string
+): Promise<void> {
+  const body = req.body || {};
+  const { url, name, events, webhookType, secret } = body;
+
+  if (typeof url !== 'string' || !url.trim()) {
+    res.status(400).json({ error: 'url is required' });
+    return;
+  }
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    res.status(400).json({ error: 'Invalid webhook URL' });
+    return;
+  }
+  if (parsedUrl.protocol !== 'https:') {
+    res.status(400).json({ error: 'Webhook URL must use https' });
+    return;
+  }
+  if (typeof name !== 'string' || !name.trim() || name.length > 100) {
+    res.status(400).json({ error: 'name is required (max 100 characters)' });
+    return;
+  }
+  if (webhookType !== undefined && (typeof webhookType !== 'string' || !VALID_WEBHOOK_TYPES.includes(webhookType))) {
+    res.status(400).json({ error: `webhookType must be one of: ${VALID_WEBHOOK_TYPES.join(', ')}` });
+    return;
+  }
+
+  const normalizedEvents = normalizeEventList(Array.isArray(events) && events.length > 0 ? events : ['website_down', 'website_up']);
+  if (normalizedEvents.length === 0) {
+    res.status(400).json({ error: 'At least one valid event is required' });
+    return;
+  }
+
+  const userTier = await getUserTier(userId);
+  const maxWebhooks = CONFIG.getMaxWebhooksForTier(userTier);
+
+  const existing = await firestore.collection(WEBHOOKS_COLLECTION).where('userId', '==', userId).get();
+  if (existing.size >= maxWebhooks) {
+    res.status(409).json({ error: `You have reached the maximum of ${maxWebhooks} webhook${maxWebhooks === 1 ? '' : 's'} for your plan.` });
+    return;
+  }
+  if (existing.docs.some((doc) => doc.data().url === url)) {
+    res.status(409).json({ error: 'A webhook already exists for this URL' });
+    return;
+  }
+
+  const now = Date.now();
+  const docRef = await firestore.collection(WEBHOOKS_COLLECTION).add({
+    url,
+    name: name.trim(),
+    userId,
+    enabled: true,
+    events: normalizedEvents,
+    checkFilter: { mode: 'all' },
+    secret: typeof secret === 'string' && secret ? secret : null,
+    headers: {},
+    webhookType: webhookType || inferWebhookType(url),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await notifySettingsEdit(userId);
+
+  res.status(201).json({
+    data: {
+      id: docRef.id,
+      name: name.trim(),
+      url: redactWebhookUrl(url),
+      webhookType: webhookType || inferWebhookType(url),
+      events: normalizedEvents,
+      enabled: true,
+    },
+  });
+}
+
+/** Match the platform detection the callable path and delivery pipeline use. */
+function inferWebhookType(url: string): string {
+  if (url.includes('hooks.slack.com')) return 'slack';
+  if (url.includes('pumble.com')) return 'pumble';
+  if (url.includes('discord.com') || url.includes('discordapp.com')) return 'discord';
+  if (url.includes('.webhook.office.com') || url.includes('.logic.azure.com')) return 'teams';
+  return 'generic';
+}
+
+async function handleDeleteWebhookAlert(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string,
+  webhookId: string
+): Promise<void> {
+  if (!isValidDocId(webhookId)) {
+    res.status(400).json({ error: 'Invalid webhook ID format' });
+    return;
+  }
+  const ref = firestore.collection(WEBHOOKS_COLLECTION).doc(webhookId);
+  const doc = await ref.get();
+  if (!doc.exists) {
+    res.status(404).json({ error: 'Webhook not found' });
+    return;
+  }
+  if ((doc.data() as WebhookSettings).userId !== userId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  await ref.delete();
+  await notifySettingsEdit(userId);
+  res.json({ data: { id: webhookId, deleted: true } });
+}
+
+async function handleTestWebhookAlert(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string,
+  webhookId: string
+): Promise<void> {
+  if (!isValidDocId(webhookId)) {
+    res.status(400).json({ error: 'Invalid webhook ID format' });
+    return;
+  }
+  const doc = await firestore.collection(WEBHOOKS_COLLECTION).doc(webhookId).get();
+  if (!doc.exists) {
+    res.status(404).json({ error: 'Webhook not found' });
+    return;
+  }
+  const webhook = doc.data() as WebhookSettings;
+  if (webhook.userId !== userId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+
+  const result = await deliverWebhookTest(webhook, webhookId, userId);
+  if (!result.success) {
+    res.status(502).json({ error: result.message });
+    return;
+  }
+  res.json({ data: { message: result.message, status: result.status ?? null } });
+}
+
+async function deliverWebhookTest(
+  webhook: WebhookSettings,
+  webhookId: string,
+  userId: string
+): Promise<{ success: boolean; message: string; status?: number }> {
+  const type = webhook.webhookType || inferWebhookType(webhook.url);
+
+  // Pushover, PagerDuty and Opsgenie need bespoke envelopes; the public API keeps
+  // to the formats it can build without the incident-specific helpers, and tells
+  // the caller to use the dashboard for the rest.
+  if (type === 'pushover' || type === 'pagerduty' || type === 'opsgenie') {
+    return {
+      success: false,
+      message: `Test delivery for ${type} integrations is only available from the dashboard (https://app.exit1.dev/integrations).`,
+    };
+  }
+
+  let payload: object;
+  if (type === 'slack' || type === 'pumble') {
+    payload = { text: '🔔 Exit1 test alert — your integration is working. Real alerts will arrive here.' };
+  } else if (type === 'discord') {
+    payload = { content: '🔔 **Exit1 test alert** — your integration is working. Real alerts will arrive here.' };
+  } else if (type === 'teams') {
+    payload = {
+      type: 'message',
+      summary: 'Exit1 test alert',
+      attachments: [{
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: {
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          type: 'AdaptiveCard',
+          version: '1.4',
+          msteams: { width: 'Full' },
+          body: [
+            { type: 'TextBlock', text: '✅ Exit1 test alert', weight: 'Bolder', size: 'Medium', wrap: true },
+            { type: 'TextBlock', text: 'Your integration is working. Real alerts will arrive here.', wrap: true },
+          ],
+        },
+      }],
+    };
+  } else {
+    payload = {
+      event: 'website_down',
+      summary: '🚨 Test Website is DOWN',
+      timestamp: Date.now(),
+      website: {
+        id: 'test-website-id',
+        name: 'Test Website',
+        url: 'https://example.com',
+        status: 'offline',
+        responseTime: 1500,
+        lastError: 'Connection timeout',
+      },
+      previousStatus: 'online',
+      userId,
+      test: true,
+    };
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Exit1-Website-Monitor/1.0 (Test)',
+    ...(webhook.headers || {}),
+  };
+
+  if (webhook.secret) {
+    const { createHmac } = await import('crypto');
+    headers['X-Exit1-Signature'] = `sha256=${createHmac('sha256', webhook.secret).update(JSON.stringify(payload)).digest('hex')}`;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(webhook.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return {
+      success: response.ok,
+      status: response.status,
+      message: response.ok
+        ? 'Test alert delivered'
+        : `Webhook responded HTTP ${response.status}: ${response.statusText}`,
+    };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.warn('Public API webhook test failed', { userId, webhookId, error: message });
+    return { success: false, message: `Failed to reach the webhook: ${message}` };
+  }
+}
+
+/**
+ * Account snapshot. Exists so an agent can plan inside the user's plan instead of
+ * discovering limits by hitting 409s halfway through onboarding.
+ */
+async function handleGetAccount(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string,
+  scopes: string[]
+): Promise<void> {
+  const [tier, stats, webhookSnap, emailSnap] = await Promise.all([
+    getUserTier(userId),
+    getUserCheckStats(userId),
+    firestore.collection(WEBHOOKS_COLLECTION).where('userId', '==', userId).count().get(),
+    firestore.collection(ALERT_EMAIL_COLLECTION).doc(userId).get(),
+  ]);
+
+  const tierLimits = TIER_LIMITS[tier];
+  const emailSettings = emailSnap.exists ? (emailSnap.data() as EmailSettings) : null;
+
+  res.json({
+    data: {
+      tier,
+      scopes,
+      limits: {
+        maxChecks: CONFIG.getMaxChecksForTier(tier),
+        minCheckIntervalMinutes: tierLimits.minCheckIntervalMinutes,
+        maxWebhooks: CONFIG.getMaxWebhooksForTier(tier),
+        maxApiKeys: CONFIG.getMaxApiKeysForTier(tier),
+        regionChoice: !!tierLimits.regionChoice,
+        domainIntel: !!tierLimits.domainIntel,
+      },
+      usage: {
+        checks: stats?.checkCount ?? 0,
+        webhooks: webhookSnap.data().count,
+      },
+      alerts: {
+        emailConfigured: !!emailSettings && getConfiguredEmailRecipients(emailSettings).length > 0,
+        emailEnabled: !!emailSettings?.enabled,
+        webhookCount: webhookSnap.data().count,
+      },
+      dashboardUrl: 'https://app.exit1.dev/checks',
+    },
+  });
+}
+
+// ============================================================
 // Main request handler
 // ============================================================
 
@@ -1418,8 +1998,8 @@ export const publicApi = onRequest({
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key, Idempotency-Key');
-  res.set('Access-Control-Expose-Headers', 'RateLimit, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Retry-After');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key, Authorization, Idempotency-Key');
+  res.set('Access-Control-Expose-Headers', 'RateLimit, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Retry-After, WWW-Authenticate');
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return;
@@ -1435,75 +2015,99 @@ export const publicApi = onRequest({
       return;
     }
 
+    // Two credential types resolve to the same principal shape: long-lived API
+    // keys (X-Api-Key) and OAuth access tokens minted for MCP clients (Bearer).
+    // Everything downstream sees only { userId, scopes, principalId }.
     const apiKey = (req.header('x-api-key') || req.header('X-Api-Key') || '').trim();
-    if (!apiKey) {
-      res.status(401).json({ error: 'Missing X-Api-Key' });
+    const authHeader = (req.header('authorization') || req.header('Authorization') || '').trim();
+    const bearerToken = /^Bearer\s+/i.test(authHeader) ? authHeader.replace(/^Bearer\s+/i, '').trim() : '';
+
+    if (!apiKey && !bearerToken) {
+      res.set('WWW-Authenticate', buildWwwAuthenticate());
+      res.status(401).json({ error: 'Missing credentials. Send X-Api-Key or an OAuth Bearer token.' });
       return;
     }
 
-    const hash = await hashApiKey(apiKey);
-
-    // Auth: resolve API key
-    let keyDocId: string;
+    let principalId: string;
     let userId: string;
-    let keyEnabled: boolean;
     let keyScopes: string[];
+    let isAgentSession = false;
 
-    const cachedKey = getCachedApiKey(hash);
-    if (cachedKey) {
-      keyDocId = cachedKey.keyDocId;
-      userId = cachedKey.userId;
-      keyEnabled = cachedKey.enabled;
-      keyScopes = cachedKey.scopes;
-    } else {
-      const keySnap = await firestore
-        .collection(API_KEYS_COLLECTION)
-        .where('hash', '==', hash)
-        .limit(1)
-        .get();
-
-      if (keySnap.empty) {
-        res.status(401).json({ error: 'Invalid API key' });
+    if (bearerToken) {
+      const resolved = await resolveBearerToken(bearerToken);
+      if (!resolved) {
+        res.set('WWW-Authenticate', buildWwwAuthenticate('The access token is invalid or expired'));
+        res.status(401).json({ error: 'Invalid or expired access token' });
         return;
       }
+      principalId = resolved.tokenDocId;
+      userId = resolved.userId;
+      keyScopes = resolved.scopes;
+      isAgentSession = true;
+    } else {
+      const hash = await hashApiKey(apiKey);
+      let keyEnabled: boolean;
 
-      const keyDoc = keySnap.docs[0];
-      const key = keyDoc.data() as ApiKeyDoc;
-      keyDocId = keyDoc.id;
-      userId = key.userId;
-      keyEnabled = key.enabled;
-      keyScopes = key.scopes || [];
+      const cachedKey = getCachedApiKey(hash);
+      if (cachedKey) {
+        principalId = cachedKey.keyDocId;
+        userId = cachedKey.userId;
+        keyEnabled = cachedKey.enabled;
+        keyScopes = cachedKey.scopes;
+      } else {
+        const keySnap = await firestore
+          .collection(API_KEYS_COLLECTION)
+          .where('hash', '==', hash)
+          .limit(1)
+          .get();
 
-      setCachedApiKey(hash, keyDocId, userId, keyEnabled, keyScopes);
+        if (keySnap.empty) {
+          res.status(401).json({ error: 'Invalid API key' });
+          return;
+        }
+
+        const keyDoc = keySnap.docs[0];
+        const key = keyDoc.data() as ApiKeyDoc;
+        principalId = keyDoc.id;
+        userId = key.userId;
+        keyEnabled = key.enabled;
+        keyScopes = key.scopes || [];
+
+        setCachedApiKey(hash, principalId, userId, keyEnabled, keyScopes);
+      }
+
+      if (!keyEnabled) {
+        res.status(401).json({ error: 'API key disabled' });
+        return;
+      }
     }
 
-    if (!keyEnabled) {
-      res.status(401).json({ error: 'API key disabled' });
-      return;
-    }
+    const keyDocId = principalId;
+    const limits: RateLimitProfile = isAgentSession ? AGENT_RATE_LIMITS : RATE_LIMITS;
+    const writeLimits: WriteRateLimitProfile = isAgentSession ? AGENT_WRITE_RATE_LIMITS : WRITE_RATE_LIMITS;
 
     // Daily quota checks
-    const dailyKeyQuota = dailyQuotaLimiter.consume(`daily:key:${keyDocId}`, RATE_LIMITS.perKeyDaily);
+    const dailyKeyQuota = dailyQuotaLimiter.consume(`daily:key:${keyDocId}`, limits.perKeyDaily);
     if (!dailyKeyQuota.allowed) {
       applyRateLimitHeaders(res, dailyKeyQuota);
       res.status(429).json({
-        error: 'Daily API key quota exceeded. Limit: 500 requests/day. Resets at midnight UTC.',
-        quotaLimit: RATE_LIMITS.perKeyDaily,
+        error: `Daily quota exceeded for this credential. Limit: ${limits.perKeyDaily} requests/day. Resets at midnight UTC.`,
+        quotaLimit: limits.perKeyDaily,
         quotaReset: dailyKeyQuota.resetAtMs
       });
-      logger.warn(`API key ${keyDocId} exceeded daily quota (${RATE_LIMITS.perKeyDaily} req/day)`);
+      logger.warn(`Credential ${keyDocId} exceeded daily quota (${limits.perKeyDaily} req/day)`);
       return;
     }
 
-    const dailyUserQuota = dailyQuotaLimiter.consume(`daily:user:${userId}`, RATE_LIMITS.perUserDaily);
+    const dailyUserQuota = dailyQuotaLimiter.consume(`daily:user:${userId}`, limits.perUserDaily);
     if (!dailyUserQuota.allowed) {
       applyRateLimitHeaders(res, dailyUserQuota);
       res.status(429).json({
-        error: 'Daily user quota exceeded. Limit: 2000 requests/day across all API keys. Resets at midnight UTC.',
-        quotaLimit: RATE_LIMITS.perUserDaily,
+        error: `Daily user quota exceeded. Limit: ${limits.perUserDaily} requests/day across all credentials. Resets at midnight UTC.`,
+        quotaLimit: limits.perUserDaily,
         quotaReset: dailyUserQuota.resetAtMs
       });
-      logger.warn(`User ${userId} exceeded daily quota (${RATE_LIMITS.perUserDaily} req/day)`);
+      logger.warn(`User ${userId} exceeded daily quota (${limits.perUserDaily} req/day)`);
       return;
     }
 
@@ -1511,7 +2115,7 @@ export const publicApi = onRequest({
     const segments = reqPath.split('?')[0].split('/').filter(Boolean);
 
     // Post-auth rate limits
-    const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDocId}:total`, RATE_LIMITS.perKeyTotalPerMinute);
+    const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDocId}:total`, limits.perKeyTotalPerMinute);
     if (!globalKeyDecision.allowed) {
       applyRateLimitHeaders(res, globalKeyDecision);
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
@@ -1519,23 +2123,31 @@ export const publicApi = onRequest({
     }
 
     const routeName = getRouteName(segments, req.method);
-    const endpointDecision = apiKeyLimiter.consume(`key:${keyDocId}:route:${routeName}`, RATE_LIMITS.perEndpointPerMinute);
+    const endpointDecision = apiKeyLimiter.consume(`key:${keyDocId}:route:${routeName}`, limits.perEndpointPerMinute);
     applyRateLimitHeaders(res, endpointDecision);
     if (!endpointDecision.allowed) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
       return;
     }
 
-    // Track usage (best-effort)
+    // Track usage (best-effort). Only API keys live in the apiKeys collection —
+    // an OAuth principal id is a token doc, so writing there would 404-loop.
     const usageNow = Date.now();
     if (shouldWriteApiKeyUsage(keyDocId, usageNow)) {
-      firestore.collection(API_KEYS_COLLECTION).doc(keyDocId).update({ lastUsedAt: usageNow, lastUsedPath: reqPath }).catch(() => {});
+      const usageCollection = isAgentSession ? MCP_TOKENS_COLLECTION : API_KEYS_COLLECTION;
+      const usagePayload = isAgentSession
+        ? { lastUsedAt: usageNow }
+        : { lastUsedAt: usageNow, lastUsedPath: reqPath };
+      firestore.collection(usageCollection).doc(keyDocId).update(usagePayload).catch(() => {});
     }
 
     // --- Scope enforcement ---
     const requiredScope = getRequiredScope(req.method, routeName);
     if (!hasScope(keyScopes, requiredScope)) {
-      res.status(403).json({ error: `API key does not have the required scope: ${requiredScope}` });
+      if (isAgentSession) {
+        res.set('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${requiredScope}"`);
+      }
+      res.status(403).json({ error: `Credential does not have the required scope: ${requiredScope}` });
       return;
     }
 
@@ -1547,7 +2159,57 @@ export const publicApi = onRequest({
     }
 
     // Write rate limits (layered on top of general limits)
-    if (isWrite && !enforceWriteRateLimit(res, keyDocId, userId)) {
+    if (isWrite && !enforceWriteRateLimit(res, keyDocId, userId, writeLimits)) {
+      return;
+    }
+
+    // ============== ALERT CHANNEL ROUTES ==============
+
+    const isAlertRoute = segments.length >= 4 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'alerts';
+    if (isAlertRoute) {
+      // PATCH /v1/public/alerts/email
+      if (req.method === 'PATCH' && segments.length === 4 && segments[3] === 'email') {
+        await handleUpdateEmailAlerts(req, res, userId);
+        return;
+      }
+      // POST /v1/public/alerts/email/test
+      if (req.method === 'POST' && segments.length === 5 && segments[3] === 'email' && segments[4] === 'test') {
+        await handleTestEmailAlert(res, userId);
+        return;
+      }
+      // GET /v1/public/alerts/email
+      if (req.method === 'GET' && segments.length === 4 && segments[3] === 'email') {
+        await handleGetEmailAlerts(res, userId);
+        return;
+      }
+      // POST /v1/public/alerts/webhooks
+      if (req.method === 'POST' && segments.length === 4 && segments[3] === 'webhooks') {
+        await handleCreateWebhookAlert(req, res, userId);
+        return;
+      }
+      // GET /v1/public/alerts/webhooks
+      if (req.method === 'GET' && segments.length === 4 && segments[3] === 'webhooks') {
+        await handleListWebhookAlerts(res, userId);
+        return;
+      }
+      // POST /v1/public/alerts/webhooks/:id/test
+      if (req.method === 'POST' && segments.length === 6 && segments[3] === 'webhooks' && segments[5] === 'test') {
+        await handleTestWebhookAlert(res, userId, segments[4]);
+        return;
+      }
+      // DELETE /v1/public/alerts/webhooks/:id
+      if (req.method === 'DELETE' && segments.length === 5 && segments[3] === 'webhooks') {
+        await handleDeleteWebhookAlert(res, userId, segments[4]);
+        return;
+      }
+
+      res.status(404).json({ error: `No alerts endpoint matches ${req.method} ${reqPath}` });
+      return;
+    }
+
+    // GET /v1/public/account
+    if (req.method === 'GET' && segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'account') {
+      await handleGetAccount(res, userId, keyScopes.length > 0 ? keyScopes : [API_SCOPES.CHECKS_READ]);
       return;
     }
 
@@ -1555,7 +2217,7 @@ export const publicApi = onRequest({
 
     // POST /v1/public/checks - Create check
     if (req.method === 'POST' && segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
-      await handleCreateCheck(req, res, userId, keyDocId, reqPath);
+      await handleCreateCheck(req, res, userId, keyDocId, reqPath, isAgentSession);
       return;
     }
 

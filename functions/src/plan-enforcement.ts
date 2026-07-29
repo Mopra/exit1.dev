@@ -76,10 +76,11 @@ export async function backfillCheckUserTier(userId: string, newTier: UserTier): 
 }
 
 /**
- * Disable SLA reporting, custom status domains, and clear any agency-only
- * features. No-ops for users that don't have these enabled — idempotent.
+ * Disable SLA reporting and custom status domains — both Pro-only. Called when
+ * a user lands on a tier whose TIER_LIMITS lack those flags. No-ops for users
+ * that don't have them enabled — idempotent.
  */
-async function disableAgencyOnlyFeatures(userId: string): Promise<{ statusPagesUpdated: number }> {
+async function disableSlaAndCustomDomain(userId: string): Promise<{ statusPagesUpdated: number }> {
   const statusSnap = await firestore.collection('status_pages').where('userId', '==', userId).get();
   const batcher = createBatcher();
   let statusPagesUpdated = 0;
@@ -101,7 +102,7 @@ async function disableAgencyOnlyFeatures(userId: string): Promise<{ statusPagesU
     }
   }
 
-  await batcher.commit('disableAgencyOnlyFeatures', userId);
+  await batcher.commit('disableSlaAndCustomDomain', userId);
   return { statusPagesUpdated };
 }
 
@@ -297,7 +298,7 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
   // Step 4: Disable all status pages beyond the Free cap of 1.
   // Free allows 1 status page — disable the rest, keep the newest enabled (by createdAt desc).
   let statusPagesDisabled = 0;
-  const freeStatusCap = 1; // Matches TIER_LIMITS.free.maxStatusPages
+  const freeStatusCap = CONFIG.getTierLimits('free').maxStatusPages;
   const enabledStatus = statusPagesSnap.docs.filter((d) => d.data().enabled !== false);
   const sortedEnabled = enabledStatus
     .map((d) => ({ doc: d, createdAt: Number(d.data().createdAt) || 0 }))
@@ -352,25 +353,87 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
 }
 
 /**
- * Pro → Nano. Clamp intervals, disable SMS + API keys, prune excess checks to
- * 50, webhooks to 5, status pages to 5. Does NOT delete check history; retention
- * is managed separately by BigQuery purge jobs reading tier retention.
+ * Prune enabled API keys down to `maxAllowed`, oldest-first. `maxAllowed === 0`
+ * disables every key.
  */
-export async function handleProToNanoDowngrade(userId: string): Promise<{
+async function pruneApiKeysToLimit(userId: string, maxAllowed: number): Promise<number> {
+  if (maxAllowed <= 0) return disableAllApiKeys(userId);
+
+  const snap = await firestore.collection('apiKeys')
+    .where('userId', '==', userId)
+    .where('enabled', '==', true)
+    .get();
+  if (snap.size <= maxAllowed) return 0;
+
+  const sorted = snap.docs
+    .map((d) => ({ ref: d.ref, createdAt: Number(d.data().createdAt) || 0 }))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  const excess = sorted.slice(0, sorted.length - maxAllowed);
+  const batcher = createBatcher();
+  for (const { ref } of excess) {
+    batcher.add(ref, { enabled: false, disabledReason: 'plan_downgrade' });
+  }
+  await batcher.commit(`pruneApiKeysToLimit(${maxAllowed})`, userId);
+  return excess.length;
+}
+
+/**
+ * True when moving `from` → `to` tightens ANY limit, so enforcement must run.
+ *
+ * Rank alone is not sufficient: Indie probes at 15s and Nano at 2min, so the
+ * rank-upgrade Indie→Nano still has to clamp check intervals. Comparing the
+ * TIER_LIMITS rows dimension-by-dimension catches every such case, and lets a
+ * genuine all-round upgrade (free→pro) skip the enforcement queries entirely.
+ */
+export function ceilingTightens(from: UserTier, to: UserTier): boolean {
+  const a = CONFIG.getTierLimits(from);
+  const b = CONFIG.getTierLimits(to);
+
+  // Numeric caps: a smaller allowance on the target tier tightens the ceiling.
+  if (b.maxChecks < a.maxChecks) return true;
+  if (b.maxWebhooks < a.maxWebhooks) return true;
+  if (b.maxStatusPages < a.maxStatusPages) return true;
+  if (b.maxApiKeys < a.maxApiKeys) return true;
+  // Interval is a floor, so a LARGER minimum is the tighter one.
+  if (b.minCheckIntervalMinutes > a.minCheckIntervalMinutes) return true;
+
+  // Feature flags: losing a flag tightens.
+  if (a.smsAlerts && !b.smsAlerts) return true;
+  if (a.maintenanceMode && !b.maintenanceMode) return true;
+  if (a.domainIntel && !b.domainIntel) return true;
+  if (a.slaReporting && !b.slaReporting) return true;
+  if (a.customStatusDomain && !b.customStatusDomain) return true;
+
+  return false;
+}
+
+export type CeilingResult = {
   checksClamped: number;
   checksPruned: number;
   webhooksPruned: number;
   statusPagesPruned: number;
   apiKeysDisabled: number;
   smsDisabled: boolean;
-}> {
-  logger.info(`[plan-enforcement] Starting Pro→Nano enforcement for ${userId}`);
+};
 
-  const nanoMinInterval = CONFIG.getMinCheckIntervalMinutesForTier('nano');
-  const nanoMaxChecks = CONFIG.getMaxChecksForTier('nano');
-  const nanoMaxWebhooks = CONFIG.getMaxWebhooksForTier('nano');
+/**
+ * Bring every resource a user owns under the ceiling of `newTier`, reading the
+ * limits straight from TIER_LIMITS. Idempotent — safe to re-run on webhook retry.
+ *
+ * Call this on ANY tier change, not just rank downgrades. The plan ladder is not
+ * monotonic on check interval: Indie (15s) probes faster than Nano (2min), so an
+ * Indie→Nano move is a rank *upgrade* that still has to clamp intervals. Driving
+ * everything off TIER_LIMITS keeps that correct without per-transition handlers.
+ *
+ * `newTier === 'free'` is special-cased by the caller — see handlePlanDowngrade,
+ * which disables all checks outright rather than pruning to the Free cap.
+ */
+export async function enforceTierCeiling(userId: string, newTier: UserTier): Promise<CeilingResult> {
+  logger.info(`[plan-enforcement] Enforcing ${newTier} ceiling for ${userId}`);
 
-  // 1. Clamp + denormalise tier on every check.
+  const limits = CONFIG.getTierLimits(newTier);
+
+  // 1. Clamp interval + denormalise tier + strip flag-gated per-check state.
   const checksSnap = await firestore.collection('checks').where('userId', '==', userId).get();
   const clampBatcher = createBatcher();
   let checksClamped = 0;
@@ -378,42 +441,73 @@ export async function handleProToNanoDowngrade(userId: string): Promise<{
     const data = doc.data();
     const currentFreq = Number(data.checkFrequency) || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
     const updates: Record<string, unknown> = {};
-    if (data.userTier !== 'nano') updates.userTier = 'nano';
-    if (currentFreq < nanoMinInterval) updates.checkFrequency = nanoMinInterval;
+
+    if (data.userTier !== newTier) updates.userTier = newTier;
+    if (currentFreq < limits.minCheckIntervalMinutes) {
+      updates.checkFrequency = limits.minCheckIntervalMinutes;
+    }
+    if (!limits.maintenanceMode && data.maintenanceMode) {
+      updates.maintenanceMode = false;
+      updates.maintenanceStartedAt = null;
+      updates.maintenanceExpiresAt = null;
+      updates.maintenanceDuration = null;
+      updates.maintenanceReason = null;
+    }
+    if (!limits.domainIntel && data.domainExpiry?.enabled) {
+      updates['domainExpiry.enabled'] = false;
+    }
+
     if (Object.keys(updates).length > 0) {
       clampBatcher.add(doc.ref, updates);
       checksClamped++;
     }
   }
-  await clampBatcher.commit('pro→nano clamp', userId);
+  await clampBatcher.commit(`${newTier} ceiling clamp`, userId);
 
-  // 2. Prune excess checks (beyond 50).
-  const checksPruned = await pruneChecksToLimit(userId, nanoMaxChecks, 'nano');
+  // 2. Prune every countable resource to its cap.
+  const checksPruned = await pruneChecksToLimit(userId, limits.maxChecks, newTier);
+  const webhooksPruned = await pruneWebhooksToLimit(userId, limits.maxWebhooks);
+  const statusPagesPruned = await pruneStatusPagesToLimit(userId, limits.maxStatusPages);
+  const apiKeysDisabled = await pruneApiKeysToLimit(userId, limits.maxApiKeys);
 
-  // 3. Prune excess webhooks (beyond 5).
-  const webhooksPruned = await pruneWebhooksToLimit(userId, nanoMaxWebhooks);
-
-  // 4. Prune status pages (beyond 5) — Nano maxStatusPages = 5.
-  const statusPagesPruned = await pruneStatusPagesToLimit(userId, 5);
-
-  // 5. Disable all API keys (Nano has maxApiKeys = 0).
-  const apiKeysDisabled = await disableAllApiKeys(userId);
-
-  // 6. Disable SMS.
-  const smsDisabled = await disableSmsSettings(userId);
+  // 3. Flag-gated features.
+  const smsDisabled = limits.smsAlerts ? false : await disableSmsSettings(userId);
+  if (!limits.slaReporting || !limits.customStatusDomain) {
+    await disableSlaAndCustomDomain(userId);
+  }
 
   const result = { checksClamped, checksPruned, webhooksPruned, statusPagesPruned, apiKeysDisabled, smsDisabled };
-  logger.info(`[plan-enforcement] Pro→Nano enforcement complete for ${userId}`, result);
+  logger.info(`[plan-enforcement] ${newTier} ceiling enforcement complete for ${userId}`, result);
   return result;
 }
 
 /**
+ * Apply the ceiling for whatever tier the user just landed on. Free routes to
+ * handlePlanDowngrade (which disables checks outright instead of pruning).
+ */
+export async function applyTierChange(userId: string, newTier: UserTier): Promise<void> {
+  if (newTier === 'free') {
+    await handlePlanDowngrade(userId);
+    return;
+  }
+  await enforceTierCeiling(userId, newTier);
+}
+
+/**
+ * @deprecated Use `enforceTierCeiling(userId, 'nano')`. Kept so any tooling
+ * pinned to the old name keeps working.
+ */
+export async function handleProToNanoDowngrade(userId: string): Promise<CeilingResult> {
+  return enforceTierCeiling(userId, 'nano');
+}
+
+/**
  * Pro → Free. Delegates to handlePlanDowngrade (which zeroes out everything for
- * Free), plus explicitly ensures Pro-only state is cleared. CSV export and SLA
- * reporting have no persistent state yet, so nothing to clear there.
+ * Free), plus explicitly ensures Pro-only state is cleared.
  */
 export async function handleProToFreeDowngrade(userId: string): Promise<EnforcementResult> {
   logger.info(`[plan-enforcement] Starting Pro→Free enforcement for ${userId}`);
+  await disableSlaAndCustomDomain(userId);
   // handlePlanDowngrade already: disables all checks (clamps to 5 min),
   // disables all API keys, disables all webhooks, disables SMS, and prunes
   // status pages down to 1. That covers Pro→Free.
@@ -423,77 +517,12 @@ export async function handleProToFreeDowngrade(userId: string): Promise<Enforcem
 }
 
 /**
- * Agency → (pro | nano | free). Dispatches to the right handler and also
- * clears Agency-only state (custom status domain, SLA reporting). Team seats
- * have no persistent state yet — coming in Plan 2.
- */
-export async function handleAgencyDowngrade(
-  userId: string,
-  newTier: 'pro' | 'nano' | 'free',
-): Promise<void> {
-  logger.info(`[plan-enforcement] Starting Agency→${newTier} enforcement for ${userId}`);
-
-  // Always clear agency-only features first.
-  await disableAgencyOnlyFeatures(userId);
-
-  if (newTier === 'free') {
-    await handleProToFreeDowngrade(userId);
-  } else if (newTier === 'nano') {
-    await handleProToNanoDowngrade(userId);
-  } else {
-    // Agency → Pro. Clamp intervals to Pro minimum, prune to Pro caps, but
-    // keep SMS/API/webhooks/status pages enabled (Pro allows them).
-    const proMinInterval = CONFIG.getMinCheckIntervalMinutesForTier('pro');
-    const proMaxChecks = CONFIG.getMaxChecksForTier('pro');
-    const proMaxWebhooks = CONFIG.getMaxWebhooksForTier('pro');
-    const proMaxApiKeys = CONFIG.getMaxApiKeysForTier('pro');
-
-    // Clamp + retag userTier on every check.
-    const checksSnap = await firestore.collection('checks').where('userId', '==', userId).get();
-    const clampBatcher = createBatcher();
-    for (const doc of checksSnap.docs) {
-      const data = doc.data();
-      const currentFreq = Number(data.checkFrequency) || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
-      const updates: Record<string, unknown> = {};
-      if (data.userTier !== 'pro') updates.userTier = 'pro';
-      if (currentFreq < proMinInterval) updates.checkFrequency = proMinInterval;
-      if (Object.keys(updates).length > 0) clampBatcher.add(doc.ref, updates);
-    }
-    await clampBatcher.commit('agency→pro clamp', userId);
-
-    await pruneChecksToLimit(userId, proMaxChecks, 'pro');
-    await pruneWebhooksToLimit(userId, proMaxWebhooks);
-    await pruneStatusPagesToLimit(userId, 25);
-
-    // Prune excess API keys (Agency: 25 → Pro: 10). Disable oldest first.
-    const apiSnap = await firestore.collection('apiKeys')
-      .where('userId', '==', userId)
-      .where('enabled', '==', true)
-      .get();
-    if (apiSnap.size > proMaxApiKeys) {
-      const sorted = apiSnap.docs
-        .map((d) => ({ ref: d.ref, createdAt: Number(d.data().createdAt) || 0 }))
-        .sort((a, b) => a.createdAt - b.createdAt);
-      const excess = sorted.slice(0, sorted.length - proMaxApiKeys);
-      const apiBatcher = createBatcher();
-      for (const { ref } of excess) {
-        apiBatcher.add(ref, { enabled: false, disabledReason: 'plan_downgrade' });
-      }
-      await apiBatcher.commit('agency→pro api keys', userId);
-    }
-  }
-
-  logger.info(`[plan-enforcement] Agency→${newTier} enforcement complete for ${userId}`);
-}
-
-/**
- * @deprecated Scale is gone — legacy cached rows now resolve to 'agency' via
- * normalizeTier. This wrapper stays for back-compat with any tooling that
- * hard-codes the old name. Dispatches to handleAgencyDowngrade.
+ * @deprecated Agency and Scale were retired; both plan keys now resolve to Pro.
+ * Kept so tooling pinned to the old names keeps working.
  */
 export async function handleScaleToNanoDowngrade(userId: string): Promise<{ checksUpdated: number }> {
-  logger.info(`[plan-enforcement] Legacy handleScaleToNanoDowngrade for ${userId} — delegating to Agency→Nano`);
-  await handleAgencyDowngrade(userId, 'nano');
+  logger.info(`[plan-enforcement] Legacy handleScaleToNanoDowngrade for ${userId} — delegating to nano ceiling`);
+  await enforceTierCeiling(userId, 'nano');
   // Legacy return shape — not reliable, kept only for API compat.
   return { checksUpdated: 0 };
 }

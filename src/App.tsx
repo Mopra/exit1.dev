@@ -56,7 +56,6 @@ const DomainIntelligence = lazy(() => import('./pages/DomainIntelligence'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
-const FoundersUpgrade = lazy(() => import('./pages/FoundersUpgrade'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -267,15 +266,13 @@ function App() {
                   </Layout>
                 }
               />
+              {/* Founders is closed to new signups — the upgrade surface was
+                  removed. Existing Founders subscribers keep their plan and
+                  still see the Founders card + badge on /billing. Old links
+                  and bookmarks redirect rather than 404. */}
               <Route
                 path="/founders-upgrade"
-                element={
-                  <Layout>
-                    <AuthGuard>
-                      <FoundersUpgrade />
-                    </AuthGuard>
-                  </Layout>
-                }
+                element={<Navigate to="/billing" replace />}
               />
               <Route
                 path="/onboarding"

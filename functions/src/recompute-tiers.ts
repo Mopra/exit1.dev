@@ -1,7 +1,7 @@
 import * as logger from "firebase-functions/logger";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { createClerkClient } from "@clerk/backend";
-import { firestore, tierFromPlanKey } from "./init";
+import { firestore, tierFromPlanKey, TIER_RANK } from "./init";
 import type { UserTier } from "./init";
 import { backfillCheckUserTier } from "./plan-enforcement";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
@@ -107,7 +107,7 @@ export const recomputeAllTiers = onCall({
     try {
       const user = await clerk.users.getUser(userId);
       if (user.publicMetadata?.admin === true) {
-        return { tier: "agency", planKey: null };
+        return { tier: "pro", planKey: null };
       }
       if (user.publicMetadata?.lifetimeNano === true) {
         return { tier: "pro", planKey: "nano" };
@@ -128,7 +128,7 @@ export const recomputeAllTiers = onCall({
         }>;
       };
       const items = Array.isArray(sub.subscriptionItems) ? sub.subscriptionItems : [];
-      const rank: Record<UserTier, number> = { free: 0, nano: 1, pro: 2, agency: 3 };
+      const rank = TIER_RANK;
       let best: UserTier = "free";
       let bestKey: string | null = null;
       for (const item of items) {

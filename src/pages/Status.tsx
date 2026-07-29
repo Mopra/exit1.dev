@@ -160,7 +160,7 @@ const Status: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Per-tier status-page cap — mirrors TIER_LIMITS[tier].maxStatusPages.
-  // Free: 1, Nano: 5, Pro: 25, Agency: 50.
+  // Free: 1, Indie: 1, Nano: 5, Pro: 50.
   const maxStatusPages = getMaxStatusPagesForTier(tier);
   const atTierLimit = statusPages.length >= maxStatusPages;
   const atFreeLimit = !nano && atTierLimit;

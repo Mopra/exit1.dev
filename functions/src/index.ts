@@ -221,6 +221,3 @@ export { submitFeedback } from './feedback';
 
 // Inbound SMS on the Twilio number → forwarded to email via Resend
 export { twilioInboundSms } from './twilio-inbound';
-
-// Anderro affiliate tracking (2-week trial — remove if not renewed)
-export { trackAnderroSignup } from './anderro';

@@ -15,7 +15,7 @@ export interface Website {
   lastChecked?: number
   lastHistoryAt?: number
   checkFrequency?: number // in minutes
-  userTier?: 'free' | 'nano' | 'pro' | 'agency' // user subscription tier (cached on the check doc)
+  userTier?: 'free' | 'indie' | 'nano' | 'pro' // user subscription tier (cached on the check doc)
   // Single owning region for where this check executes
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1'
   // User-set region override; when set, auto-region detection is skipped

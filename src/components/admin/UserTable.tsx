@@ -41,7 +41,7 @@ export interface PlatformUser {
   emailVerified?: boolean;
   checksCount?: number;
   webhooksCount?: number;
-  tier?: 'free' | 'nano' | 'pro' | 'agency';
+  tier?: 'free' | 'indie' | 'nano' | 'pro';
 }
 
 

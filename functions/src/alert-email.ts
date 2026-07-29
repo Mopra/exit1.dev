@@ -111,12 +111,12 @@ export const deliverEmailAlert = async ({
   }
 
   // Resolve the check's cached userTier to the budget lookup tier.
-  // Legacy values migrate: premium → nano, scale → agency.
+  // Legacy values migrate: premium → nano, scale/agency → pro.
   const rawTier = website.userTier as unknown;
-  const emailTier: 'free' | 'nano' | 'pro' | 'agency' =
-    rawTier === 'agency' || rawTier === 'scale' ? 'agency'
-    : rawTier === 'pro' ? 'pro'
+  const emailTier: 'free' | 'indie' | 'nano' | 'pro' =
+    rawTier === 'pro' || rawTier === 'agency' || rawTier === 'scale' ? 'pro'
     : rawTier === 'nano' || rawTier === 'premium' ? 'nano'
+    : rawTier === 'indie' ? 'indie'
     : 'free';
 
   const budgetAllowed = await acquireUserEmailBudget(
@@ -551,7 +551,7 @@ const limitNotifiedThisWindow = new Set<string>();
  */
 export const sendLimitReachedEmail = async (
   userId: string,
-  tier: 'free' | 'nano' | 'pro' | 'agency',
+  tier: 'free' | 'indie' | 'nano' | 'pro',
   channel: 'email' | 'sms',
   monthlyLimit: number
 ): Promise<void> => {

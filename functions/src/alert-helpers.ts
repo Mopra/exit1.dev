@@ -331,19 +331,19 @@ export const getCachedAdminStatus = async (userId: string): Promise<boolean> => 
 
 /**
  * Resolve the SMS-eligibility tier for a check. SMS alerts are enabled for
- * tiers whose TIER_LIMITS.smsAlerts flag is true — currently Pro and Agency.
- * Admins are treated as Agency. Nano, Free, and legacy stale values get 'free'.
- * Legacy values: 'premium' → nano (no SMS), 'scale' → agency (SMS enabled).
+ * tiers whose TIER_LIMITS.smsAlerts flag is true — currently Pro only.
+ * Admins are treated as Pro. Indie, Nano, Free, and legacy stale values get 'free'.
+ * Legacy values: 'premium' → nano (no SMS), 'scale'/'agency' → pro (SMS enabled).
  */
 export const resolveSmsTier = async (
   website: Website,
-): Promise<'free' | 'nano' | 'pro' | 'agency'> => {
+): Promise<'free' | 'indie' | 'nano' | 'pro'> => {
   const raw = website.userTier as unknown;
-  if (raw === 'agency' || raw === 'scale') return 'agency';
-  if (raw === 'pro') return 'pro';
+  if (raw === 'pro' || raw === 'agency' || raw === 'scale') return 'pro';
   if (raw === 'nano' || raw === 'premium') return 'nano';
+  if (raw === 'indie') return 'indie';
   const isAdmin = await getCachedAdminStatus(website.userId);
-  return isAdmin ? 'agency' : 'free';
+  return isAdmin ? 'pro' : 'free';
 };
 
 // ============================================================================

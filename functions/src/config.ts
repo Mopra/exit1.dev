@@ -4,13 +4,17 @@ dotenv.config();
 
 // Canonical user tier union. Kept here so config/helpers are self-contained;
 // `init.ts` re-uses the same string literal union under the `UserTier` alias.
-export type Tier = 'free' | 'nano' | 'pro' | 'agency';
+//
+// NOTE: the ladder is deliberately NOT monotonic on check interval. Indie is the
+// "few sites, watched closely" tier (10 checks @ 15s); Nano is the "many sites,
+// watched normally" tier (100 checks @ 2min). An indie -> nano move is a rank
+// *upgrade* that still clamps intervals — see plan-enforcement.ts.
+export type Tier = 'free' | 'indie' | 'nano' | 'pro';
 
 // Single source of truth for per-tier feature limits + flags.
-// Shape is locked in by Docs/plans/tier-restructure-plan-1-rollout.md §3.
 export const TIER_LIMITS = {
   free: {
-    maxChecks: 10,
+    maxChecks: 5,
     minCheckIntervalMinutes: 5,
     maxWebhooks: 1,
     maxApiKeys: 0,
@@ -32,11 +36,34 @@ export const TIER_LIMITS = {
     allAlertChannels: false,
     regionChoice: false,
   },
+  indie: {
+    maxChecks: 10,
+    minCheckIntervalMinutes: 0.25, // 15 sec
+    maxWebhooks: 3,
+    maxApiKeys: 1, // MCP access follows apiAccess — no separate flag
+    emailHourly: 50,
+    emailMonthly: 500,
+    smsHourly: 0,
+    smsMonthly: 0,
+    retentionDays: 60,
+    maxStatusPages: 1,
+    statusPageBuilder: false,
+    domainIntel: false,
+    maintenanceMode: false,
+    smsAlerts: false,
+    apiAccess: true,
+    csvExport: false,
+    teamSeats: 0,
+    slaReporting: false,
+    customStatusDomain: false,
+    allAlertChannels: false, // email + webhooks only
+    regionChoice: false,
+  },
   nano: {
-    maxChecks: 50,
+    maxChecks: 100,
     minCheckIntervalMinutes: 2,
     maxWebhooks: 5,
-    maxApiKeys: 0,
+    maxApiKeys: 1,
     emailHourly: 50,
     emailMonthly: 1000,
     smsHourly: 0,
@@ -47,7 +74,7 @@ export const TIER_LIMITS = {
     domainIntel: true,
     maintenanceMode: true,
     smsAlerts: false,
-    apiAccess: false,
+    apiAccess: true, // MCP access follows apiAccess — no separate flag
     csvExport: false,
     teamSeats: 0,
     slaReporting: false,
@@ -55,38 +82,17 @@ export const TIER_LIMITS = {
     allAlertChannels: false,
     regionChoice: false,
   },
+  // Pro absorbed the retired Agency tier in full, except the email/SMS budgets,
+  // which stay at Pro's historical levels.
   pro: {
-    maxChecks: 500,
-    minCheckIntervalMinutes: 0.5, // 30 sec
-    maxWebhooks: 25,
-    maxApiKeys: 10,
-    emailHourly: 500,
-    emailMonthly: 10000,
-    smsHourly: 25,
-    smsMonthly: 50,
-    retentionDays: 365,
-    maxStatusPages: 25,
-    statusPageBuilder: true,
-    domainIntel: true,
-    maintenanceMode: true,
-    smsAlerts: true,
-    apiAccess: true, // MCP access follows apiAccess — no separate flag
-    csvExport: true,
-    teamSeats: 0,
-    slaReporting: false,
-    customStatusDomain: false,
-    allAlertChannels: true,
-    regionChoice: true,
-  },
-  agency: {
     maxChecks: 1000,
     minCheckIntervalMinutes: 0.25, // 15 sec
     maxWebhooks: 50,
     maxApiKeys: 25,
-    emailHourly: 1000,
-    emailMonthly: 50000,
-    smsHourly: 50,
-    smsMonthly: 100,
+    emailHourly: 500,
+    emailMonthly: 10000,
+    smsHourly: 25,
+    smsMonthly: 50,
     retentionDays: 1095, // 3 years
     maxStatusPages: 50,
     statusPageBuilder: true,
@@ -95,7 +101,7 @@ export const TIER_LIMITS = {
     smsAlerts: true,
     apiAccess: true, // MCP access follows apiAccess — no separate flag
     csvExport: true,
-    teamSeats: 10, // revisit — see Plan 2
+    teamSeats: 10,
     slaReporting: true,
     customStatusDomain: true,
     allAlertChannels: true,
@@ -125,7 +131,7 @@ export const TIER_LIMITS = {
   regionChoice: boolean;
 }>;
 
-// Hard floor for check intervals — matches the fastest tier (Agency, 15s).
+// Hard floor for check intervals — matches the fastest tiers (Indie/Pro, 15s).
 // Centralised so `getNextCheckAtMs` doesn't need to reach into TIER_LIMITS.
 const MIN_INTERVAL_FLOOR_MINUTES = 0.25;
 
@@ -167,7 +173,7 @@ export const CONFIG = {
   // *ForTier helpers below (e.g. getMinCheckIntervalMinutesForTier, getMaxChecksForTier).
 
   // DNS Record Monitoring intervals
-  // Pro/Agency get 1-minute DNS intervals; Nano gets 5-minute; Free cannot create DNS checks.
+  // Pro gets 1-minute DNS intervals; Indie/Nano get 5-minute; Free cannot create DNS checks.
   // These are DNS-specific and intentionally tighter than the tier's general check interval.
   MIN_DNS_CHECK_INTERVAL_MINUTES_PAID_FAST: 1,
   MIN_DNS_CHECK_INTERVAL_MINUTES_NANO: 5,
@@ -698,6 +704,12 @@ export const CONFIG = {
   // Tier-based helpers — all read from TIER_LIMITS (see top of file).
   // ---------------------------------------------------------------------------
 
+  // Full limit row for a tier. Prefer this when a caller needs several limits at
+  // once (e.g. plan enforcement) instead of calling five separate helpers.
+  getTierLimits(tier: Tier): (typeof TIER_LIMITS)[Tier] {
+    return TIER_LIMITS[tier];
+  },
+
   getEmailBudgetMaxPerWindowForTier(tier: Tier): number {
     return TIER_LIMITS[tier].emailHourly;
   },
@@ -740,10 +752,12 @@ export const CONFIG = {
   },
 
   // DNS monitoring availability + minimum interval.
-  // Free: 0 (not allowed). Nano: 5 min. Pro/Agency: 1 min.
+  // Free: 0 (not allowed). Indie/Nano: 5 min. Pro: 1 min.
+  // DNS queries are far more expensive than an HTTP probe, so Indie's 15s general
+  // interval deliberately does NOT carry over here.
   getMinDnsCheckIntervalMinutesForTier(tier: Tier): number {
     if (tier === 'free') return 0;
-    if (tier === 'nano') return this.MIN_DNS_CHECK_INTERVAL_MINUTES_NANO;
+    if (tier === 'indie' || tier === 'nano') return this.MIN_DNS_CHECK_INTERVAL_MINUTES_NANO;
     return this.MIN_DNS_CHECK_INTERVAL_MINUTES_PAID_FAST;
   },
 

@@ -601,12 +601,12 @@ export default function Billing() {
                         label={
                           isFounders
                             ? "Current: Founders"
-                            : realTier === "agency"
-                              ? "Current: Agency"
-                              : realTier === "pro"
-                                ? "Current: Pro"
-                                : realTier === "nano"
-                                  ? "Current: Nano"
+                            : realTier === "pro"
+                              ? "Current: Pro"
+                              : realTier === "nano"
+                                ? "Current: Nano"
+                                : realTier === "indie"
+                                  ? "Current: Indie"
                                   : "Current: Free"
                         }
                         className="self-start sm:self-auto"
@@ -652,9 +652,9 @@ export default function Billing() {
                       <>
                         Canceling your Founders plan forfeits your grandfathered
                         $4/mo pricing and Pro features. If you resubscribe, new
-                        pricing applies — Nano at $9/mo, Pro at $24/mo, or Agency
-                        at $49/mo. You'll keep access until the end of the billing
-                        period, then drop to Free (10 monitors, 5-minute intervals,
+                        pricing applies — Indie at $4/mo, Nano at $9/mo, or Pro
+                        at $24/mo. You'll keep access until the end of the billing
+                        period, then drop to Free (5 monitors, 5-minute intervals,
                         60-day retention).
                       </>
                     ) : (
@@ -708,9 +708,9 @@ function PlanMatrix({
   clerkPlans,
   onRequestDowngrade,
 }: PlanMatrixProps) {
-  // Founders users see the Founders card in place of the Nano card. The Pro
-  // card is hidden for them (they already have Pro entitlements), but we keep
-  // Agency visible so they can upgrade sideways.
+  // Founders users see the Founders card in place of the Pro card — they
+  // already have Pro entitlements at a grandfathered price, so showing Pro
+  // would just be a more expensive version of what they have.
   const cards: React.ReactNode[] = []
 
   const makeCard = (entry: PlanMatrixEntry, highlighted = false) => {
@@ -738,20 +738,16 @@ function PlanMatrix({
     )
   }
 
+  // PLAN_MATRIX order: [0] Free, [1] Indie, [2] Nano, [3] Pro.
   cards.push(makeCard(PLAN_MATRIX[0]))
+  cards.push(makeCard(PLAN_MATRIX[1]))
+  cards.push(makeCard(PLAN_MATRIX[2]))
 
   if (isFounders) {
-    // Founders get Pro entitlements at a grandfathered price, so the Pro card
-    // itself is hidden (showing it would just be a more expensive Pro). Nano is
-    // kept visible as a genuine downgrade option; Agency as a sideways upgrade.
-    cards.push(makeCard(PLAN_MATRIX[1]))
     cards.push(<FoundersCard key="founders" period={foundersPeriod} />)
   } else {
-    cards.push(makeCard(PLAN_MATRIX[1]))
-    cards.push(makeCard(PLAN_MATRIX[2], true))
+    cards.push(makeCard(PLAN_MATRIX[3], true))
   }
-
-  cards.push(makeCard(PLAN_MATRIX[3]))
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">

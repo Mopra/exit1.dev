@@ -32,7 +32,8 @@ function isLegacyProps(p: TierBadgeProps): p is TierBadgePropsLegacy {
 }
 
 function legacyToTier(p: TierBadgePropsLegacy): TierBadgeTier {
-  if (p.scale) return "agency"
+  // `scale` was the old alias for the retired Agency tier, which Pro absorbed.
+  if (p.scale) return "pro"
   if (p.nano) return "nano"
   return "free"
 }

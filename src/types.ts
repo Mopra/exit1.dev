@@ -54,8 +54,9 @@ export interface Website {
   lastFailureTime?: number | null;
   downtimeCount?: number;
   lastDowntime?: number | null;
-  // Backend uses 'free' | 'nano' (older docs may have 'premium' but are normalized server-side).
-  userTier?: 'free' | 'nano' | 'scale' | 'premium';
+  // Current lineup. Older docs may carry retired values ('premium', 'scale',
+  // 'agency') but those are normalized server-side.
+  userTier?: 'free' | 'indie' | 'nano' | 'pro';
   disabledAt?: number | null;
   disabledReason?: string | null;
   

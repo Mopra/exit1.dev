@@ -411,7 +411,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                           requiredTier="pro"
                           currentTier={tier}
                           title="Upgrade to Pro to add comments"
-                          description="Annotate log entries with notes to record root causes, incident context, and follow-ups. Available on Pro and Agency plans."
+                          description="Annotate log entries with notes to record root causes, incident context, and follow-ups. Available on the Pro plan."
                         >
                           <></>
                         </FeatureGate>

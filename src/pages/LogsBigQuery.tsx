@@ -1206,17 +1206,12 @@ const LogsBigQuery: React.FC = () => {
           <Info className="h-4 w-4 text-primary" />
           <AlertDescription className="text-sm text-foreground pr-8">
             {(() => {
-              const retentionLabel =
-                tier === 'agency' ? '3 years'
-                : tier === 'pro' ? '1 year'
-                : '60 days';
+              const retentionLabel = tier === 'pro' ? '3 years' : '60 days';
               return (
                 <>
                   We retain log data for {retentionLabel}.{' '}
                   Data older than {retentionLabel} is automatically removed.
-                  {tier === 'free' && ' Upgrade to Pro for 1 year of data retention, or Agency for 3 years.'}
-                  {tier === 'nano' && ' Upgrade to Pro for 1 year of data retention, or Agency for 3 years.'}
-                  {tier === 'pro' && ' Upgrade to Agency for 3 years of data retention.'}
+                  {tier !== 'pro' && ' Upgrade to Pro for 3 years of data retention.'}
                 </>
               );
             })()}

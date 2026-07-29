@@ -126,22 +126,22 @@ const AdminDashboard: React.FC = () => {
       const result = await syncFn({ instance: 'prod', dryRun });
       const data = result.data as {
         success: boolean;
-        stats: { total: number; free: number; nano: number; pro: number; agency: number; skipped: number; errors: number; dryRun: boolean };
+        stats: { total: number; free: number; indie: number; nano: number; pro: number; skipped: number; errors: number; dryRun: boolean };
         details?: Array<{ email: string; tier: string }>;
         errors?: Array<{ email: string; error: string }>;
       };
 
       addSegmentLog(`Total users processed: ${data.stats.total}`, 'info');
       addSegmentLog(`Free tier: ${data.stats.free}`, 'info');
+      addSegmentLog(`Indie tier: ${data.stats.indie}`, 'success');
       addSegmentLog(`Nano tier: ${data.stats.nano}`, 'success');
       addSegmentLog(`Pro tier: ${data.stats.pro}`, 'success');
-      addSegmentLog(`Agency tier: ${data.stats.agency}`, 'success');
       addSegmentLog(`Skipped (no email): ${data.stats.skipped}`, 'info');
 
       if (data.details && data.details.length > 0) {
         addSegmentLog(`--- User tier breakdown ---`, 'info');
         data.details.forEach((d) => {
-          const paid = d.tier === 'nano' || d.tier === 'pro' || d.tier === 'agency';
+          const paid = d.tier === 'indie' || d.tier === 'nano' || d.tier === 'pro';
           addSegmentLog(`  ${d.email} → ${d.tier}`, paid ? 'success' : 'info');
         });
         if (data.stats.total > data.details.length) {
@@ -155,7 +155,7 @@ const AdminDashboard: React.FC = () => {
       }
 
       addSegmentLog(`${mode} segment sync completed!`, 'success');
-      toast.success(`${mode} segment sync: ${data.stats.free} free, ${data.stats.nano} nano, ${data.stats.pro} pro, ${data.stats.agency} agency`);
+      toast.success(`${mode} segment sync: ${data.stats.free} free, ${data.stats.indie} indie, ${data.stats.nano} nano, ${data.stats.pro} pro`);
     } catch (err: any) {
       const message = err?.message || 'Unknown error';
       addSegmentLog(`Segment sync failed: ${message}`, 'error');

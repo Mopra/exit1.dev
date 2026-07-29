@@ -200,14 +200,6 @@ export default function Onboarding() {
   const { data: plans } = usePlans();
   const onboardingStatus = useOnboardingStatus();
 
-  useAnderroSignupTracking({
-    userId,
-    alreadyTracked: Boolean(
-      (user?.publicMetadata as { anderroSignupTracked?: unknown } | undefined)
-        ?.anderroSignupTracked,
-    ),
-  });
-
   // GA4 `sign_up` conversion — the app end of the marketing→signup funnel.
   useSignUpAnalytics({ userId, user });
 
@@ -404,7 +396,7 @@ export default function Onboarding() {
   const submitResponse = useCallback(
     async (choice: PlanKey): Promise<boolean> => {
       // The backend `submitOnboardingResponse` callable still uses the legacy
-      // 'personal' | 'nano' enum — collapse nano/pro/agency down to 'nano' so
+      // 'personal' | 'nano' enum — collapse indie/nano/pro down to 'nano' so
       // any paid choice still counts as "paid" without needing a Phase A api
       // contract bump.
       const planChoice: 'personal' | 'nano' = choice === 'free' ? 'personal' : 'nano';
@@ -1117,58 +1109,4 @@ function useSignUpAnalytics({
     markGaSignupFired(userId);
     trackSignUp(resolveSignUpMethod(user));
   }, [userId, user]);
-}
-
-// Anderro affiliate tracking (2-week trial). Fire-and-forget — onboarding
-// must never block on a third-party tracker. Idempotency is enforced server-
-// side via Clerk publicMetadata, but we also gate here to skip the round-trip
-// when we already know the user is tracked.
-declare global {
-  interface Window {
-    anderro?: { getVisitorId?: () => string };
-  }
-}
-
-function useAnderroSignupTracking({
-  userId,
-  alreadyTracked,
-}: {
-  userId: string | null | undefined;
-  alreadyTracked: boolean;
-}) {
-  const firedRef = useRef(false);
-
-  useEffect(() => {
-    if (!userId || alreadyTracked || firedRef.current) return;
-    firedRef.current = true;
-
-    let cancelled = false;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 10; // ~5s total at 500ms intervals
-
-    const tryFire = async () => {
-      if (cancelled) return;
-      const visitorId = window.anderro?.getVisitorId?.() ?? '';
-      if (!visitorId) {
-        attempts += 1;
-        if (attempts < MAX_ATTEMPTS) {
-          window.setTimeout(tryFire, 500);
-        }
-        // No visitor cookie after retries → user came in without an affiliate
-        // link. Nothing to track; bail silently.
-        return;
-      }
-      try {
-        await apiClient.trackAnderroSignup(visitorId);
-      } catch {
-        // Best-effort — never surface tracker failures to the user.
-      }
-    };
-
-    void tryFire();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [userId, alreadyTracked]);
 }

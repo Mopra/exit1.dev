@@ -72,7 +72,8 @@ const SCOPE_OPTIONS = [
 ] as const;
 
 export default function ApiKeys() {
-  const { tier, pro, isLoading: nanoLoading } = usePlan();
+  // API keys (and therefore MCP) are available on every paid tier from Indie up.
+  const { tier, pro, paid: hasApiAccess, isLoading: nanoLoading } = usePlan();
   const [keys, setKeys] = React.useState<ApiKey[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -196,12 +197,12 @@ export default function ApiKeys() {
       />
 
       <FeatureGate
-        enabled={!nanoLoading && !pro && !hasDowngradedKeys}
-        requiredTier="pro"
+        enabled={!nanoLoading && !hasApiAccess && !hasDowngradedKeys}
+        requiredTier="indie"
         currentTier={tier}
         title="API Keys"
-        description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Pro to create API keys."
-        ctaLabel="Upgrade to Pro"
+        description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Indie or higher to create API keys."
+        ctaLabel="Upgrade"
       >
         <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
           {hasDowngradedKeys && !pro && (

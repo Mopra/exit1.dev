@@ -93,9 +93,9 @@ function UserAvatarWithBadges({
 // precedence and is applied separately above.
 const TIER_RING: Record<TierVisualTier, string> = {
   free: "",
+  indie: "ring-2 ring-tier-indie/70 shadow-lg shadow-tier-indie/10",
   nano: "ring-2 ring-tier-nano/70 shadow-lg shadow-tier-nano/10",
   pro: "ring-2 ring-tier-pro/70 shadow-lg shadow-tier-pro/10",
-  agency: "ring-2 ring-tier-agency/70 shadow-lg shadow-tier-agency/10",
 }
 const FOUNDERS_RING = "ring-2 ring-tier-pro/70 shadow-lg shadow-tier-pro/10"
 

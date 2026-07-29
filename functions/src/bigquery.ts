@@ -29,9 +29,9 @@ const BACKOFF_INITIAL_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60 * 1000;
 const MAX_FAILURES_BEFORE_DROP = 10;
 const FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
-// Retention: Partition expiration set to the widest tier retention (Agency = 1095 days / 3 years).
+// Retention: Partition expiration set to the widest tier retention (Pro = 1095 days / 3 years).
 // Per-tier purging is handled in purgeOldCheckHistory().
-const HISTORY_RETENTION_DAYS = CONFIG.getHistoryRetentionDaysForTier('agency');
+const HISTORY_RETENTION_DAYS = CONFIG.getHistoryRetentionDaysForTier('pro');
 const HISTORY_RETENTION_MS = HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 // Maximum lookback for incident intervals - most users care about recent incidents
@@ -2588,8 +2588,8 @@ export const getIncidentsForHour = async (
  * Purge BigQuery history rows past the retention boundary for each user's tier.
  *
  * @param nanoUserIds — IDs of users entitled to the longer "paid" retention.
- *   Callers pass every user whose resolved tier is Nano/Pro/Agency (they get the
- *   widest retention — Agency's 1095 days). The remainder are purged at Free's
+ *   Callers pass every user whose resolved tier is Pro (they get the
+ *   widest retention — 1095 days). The remainder are purged at Free's
  *   retention. This coarse-grained approach is intentional: we don't want to
  *   issue one DELETE per tier here; the backstop query at the end cleans up
  *   anything older than the widest tier anyway.
@@ -2627,10 +2627,10 @@ export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void
       });
     }
 
-    // 2. Backstop: purge anything older than the widest tier retention (Agency).
+    // 2. Backstop: purge anything older than the widest tier retention (Pro).
     //    Catches Nano data older than 60d (Nano's retention dropped from 365 → 60 in the
-    //    tier restructure), Pro data older than 365d, and Agency data older than 1095d.
-    const maxRetentionDays = CONFIG.getHistoryRetentionDaysForTier('agency');
+    //    tier restructure) and Pro data older than 1095d.
+    const maxRetentionDays = CONFIG.getHistoryRetentionDaysForTier('pro');
     const maxCutoff = new Date(now - maxRetentionDays * 24 * 60 * 60 * 1000);
     const maxQuery = `
       DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`

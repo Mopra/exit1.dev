@@ -236,9 +236,9 @@ export default function Sms() {
 
       <FeatureGate
         requiredTier="pro"
-        currentTier={isAdmin ? "agency" : tier}
+        currentTier={isAdmin ? "pro" : tier}
         title="Upgrade to Pro"
-        description="SMS alerts are available on the Pro plan or higher. Upgrade to enable SMS notifications for your checks."
+        description="SMS alerts are available on the Pro plan. Upgrade to enable SMS notifications for your checks."
         ctaLabel="Upgrade to Pro"
         className="p-6"
       >

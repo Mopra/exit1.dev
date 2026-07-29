@@ -239,7 +239,8 @@ const EXAMPLE_PROMPTS = [
 ];
 
 export default function Mcp() {
-  const { tier, pro, isLoading } = usePlan();
+  // MCP access follows API access — available on every paid tier from Indie up.
+  const { tier, paid: hasApiAccess, isLoading } = usePlan();
 
   return (
     <PageContainer>
@@ -258,8 +259,8 @@ export default function Mcp() {
       />
 
       <FeatureGate
-        enabled={!isLoading && !pro}
-        requiredTier="pro"
+        enabled={!isLoading && !hasApiAccess}
+        requiredTier="indie"
         currentTier={tier}
         title="Connect exit1 to AI"
         description="The exit1 MCP server lets AI assistants read your checks, history, and stats. It uses a Public API key, so it's available on the same plans as the API."

@@ -214,12 +214,12 @@ export const exportChecksCsv = onCall(
       throw new HttpsError("unauthenticated", "Authentication required");
     }
 
-    // Tier gate — Pro or Agency only.
+    // Tier gate — Pro only.
     const { tier } = await getUserPlanInfo(uid);
-    if (tier !== "pro" && tier !== "agency") {
+    if (tier !== "pro") {
       throw new HttpsError(
         "permission-denied",
-        "CSV export is available on Pro and Agency plans",
+        "CSV export is available on the Pro plan",
       );
     }
 

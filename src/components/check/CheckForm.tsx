@@ -337,7 +337,7 @@ export default function CheckForm({
   const { tier, pro, nano } = usePlan();
   const { isAdmin } = useAdmin();
   const minCheckIntervalSeconds = getMinCheckIntervalSecondsForTier(tier);
-  // Region selection is gated to Pro/Agency. Everyone else is locked to vps-eu-1.
+  // Region selection is gated to Pro. Everyone else is locked to vps-eu-1.
   const canPickRegion = pro;
 
   const form = useForm<CheckFormData>({

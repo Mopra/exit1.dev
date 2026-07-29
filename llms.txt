@@ -6,7 +6,7 @@ Exit1 monitors websites and APIs from 3 global regions (US, Europe, Asia) every 
 
 Key capabilities: HTTP/HTTPS/TCP/UDP monitoring, SSL certificate expiration alerts, domain registration expiry tracking (RDAP), response validation (status codes, JSONPath, text matching), public status pages, BigQuery-powered analytics, and a REST API for programmatic access.
 
-Tier-based pricing: Free (10 checks, 5-min intervals, 60-day retention) and Nano (200 checks, 2-min intervals, 365-day retention, domain intelligence).
+Tier-based pricing: Free (5 checks, 5-min intervals, 60-day retention), Indie ($4, 10 checks, 15-sec intervals, API + MCP), Nano ($9, 100 checks, 2-min intervals, domain intelligence) and Pro ($24, 1,000 checks, 15-sec intervals, 3-year retention, SMS, CSV export, all alert channels). See PRICING.md for the canonical matrix.
 
 ## Source Code
 

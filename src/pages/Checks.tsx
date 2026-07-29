@@ -641,7 +641,7 @@ const Checks: React.FC = () => {
 
       {hasDowngradedChecks && !nano && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
-          <DowngradeBanner message="Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to 10 checks." />
+          <DowngradeBanner message="Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to 5 checks." />
         </div>
       )}
 

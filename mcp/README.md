@@ -5,7 +5,7 @@ MCP server for [Exit1](https://exit1.dev) uptime monitoring. Query your checks, 
 ## Requirements
 
 - Node.js 18+
-- Exit1 account on Nano or Scale plan
+- Exit1 account on a paid plan (Indie, Nano, or Pro) — MCP access follows API access
 - API key with `checks:read` scope (create one in your [Exit1 dashboard](https://app.exit1.dev))
 
 ## Supported clients

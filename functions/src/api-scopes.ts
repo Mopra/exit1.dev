@@ -9,6 +9,11 @@ export const API_SCOPES = {
   CHECKS_READ: 'checks:read',
   CHECKS_WRITE: 'checks:write',
   CHECKS_DELETE: 'checks:delete',
+  // Alert channels are a separate capability from checks: creating a webhook
+  // points our servers at an arbitrary URL, which a checks:write key has no
+  // business doing. Keys minted before these existed carry neither.
+  ALERTS_READ: 'alerts:read',
+  ALERTS_WRITE: 'alerts:write',
 } as const;
 
 export type ApiScope = typeof API_SCOPES[keyof typeof API_SCOPES];

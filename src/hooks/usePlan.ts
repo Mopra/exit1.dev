@@ -4,7 +4,7 @@ import { useUser } from "@clerk/clerk-react";
 import { resolvePlanKey } from "@/lib/subscription";
 import { useAdminTierPreview } from "./useAdminTierPreview";
 
-export type Tier = "free" | "nano" | "pro" | "agency";
+export type Tier = "free" | "indie" | "nano" | "pro";
 
 /**
  * Clerk plan slug → resolved tier. Mirrors the backend `PLAN_KEY_TO_TIER`
@@ -12,11 +12,12 @@ export type Tier = "free" | "nano" | "pro" | "agency";
  */
 const PLAN_KEY_TO_TIER: Record<string, Tier> = {
   free_user: "free",
+  indie: "indie",   // new Indie tier
   nano: "pro",      // Founders — grandfathered to Pro entitlements
   nanov2: "nano",   // new Nano
   pro: "pro",
-  agency: "agency",
-  scale: "agency",  // legacy, no subscribers
+  agency: "pro",    // retired tier — Pro carries every Agency entitlement
+  scale: "pro",     // legacy, no subscribers
   starter: "nano",  // legacy
 };
 
@@ -26,20 +27,20 @@ function tierFromPlanKey(planKey: string | null | undefined): Tier {
 }
 
 /**
- * Map admin preview values to the new tier vocabulary. `useAdminTierPreview`
- * emits the full 'agency' | 'pro' | 'nano' | 'free' enum and internally
- * migrates any legacy "scale" localStorage value to "agency" on read, so we
- * only need to guard against unexpected strings here.
+ * Map admin preview values to the current tier vocabulary. `useAdminTierPreview`
+ * emits the full 'pro' | 'nano' | 'indie' | 'free' enum and internally migrates
+ * legacy "scale"/"agency" localStorage values to "pro" on read, so we only need
+ * to guard against unexpected strings here.
  */
 function normalizePreviewTier(preview: string | null | undefined): Tier {
   switch (preview) {
-    case "agency":
     case "pro":
     case "nano":
+    case "indie":
     case "free":
       return preview;
     default:
-      return "agency";
+      return "pro";
   }
 }
 
@@ -52,7 +53,7 @@ function normalizePreviewTier(preview: string | null | undefined): Tier {
  *   - `realTier`: the user's *actual* subscription tier, ignoring admin
  *     status and preview overrides. Billing UI should use this.
  *   - `tier`: the *effective* tier used for entitlements. Admins default to
- *     'agency' and can override via the admin preview (localStorage).
+ *     'pro' and can override via the admin preview (localStorage).
  *
  * Resolution priority for `realTier`:
  *   1. `publicMetadata.lifetimeNano === true` → 'pro' (legacy Founders metadata)
@@ -92,7 +93,7 @@ export function usePlan() {
     return tierFromPlanKey(subscribedPlanKey);
   }, [lifetimeNano, subscribedPlanKey]);
 
-  // Effective tier — admins default to 'agency' entitlements but can preview
+  // Effective tier — admins default to 'pro' entitlements but can preview
   // any tier via the admin preview. Non-admins always use their real tier.
   const tier = useMemo<Tier>(() => {
     if (isAdmin) return normalizePreviewTier(previewTier);
@@ -100,13 +101,16 @@ export function usePlan() {
   }, [isAdmin, previewTier, realTier]);
 
   const paid = tier !== "free";
-  // `nano` = "any paid plan" for back-compat with old useNanoPlan call sites.
-  const nano = tier === "nano" || tier === "pro" || tier === "agency";
-  const pro = tier === "pro" || tier === "agency";
-  const agency = tier === "agency";
-  // `scale` kept as a deprecated alias for `agency` so existing call sites
-  // that only test `scale` (e.g. 15s intervals) keep working unchanged.
-  const scale = agency;
+  // `nano` = "Nano-or-better entitlements" for back-compat with old useNanoPlan
+  // call sites (status page builder, domain intel, maintenance mode). Indie is
+  // deliberately excluded — it is cheaper than Nano and lacks those features.
+  const nano = tier === "nano" || tier === "pro";
+  const pro = tier === "pro";
+  const indie = tier === "indie";
+  /** @deprecated Agency was retired and folded into Pro. Alias for `pro`. */
+  const agency = pro;
+  /** @deprecated legacy alias for `pro`. */
+  const scale = pro;
 
   return {
     tier,
@@ -117,8 +121,10 @@ export function usePlan() {
     paid,
     nano,
     pro,
+    indie,
+    /** @deprecated Agency was retired — alias for `pro` */
     agency,
-    /** @deprecated alias for `agency` */
+    /** @deprecated alias for `pro` */
     scale,
     // Pass-through from useSubscription():
     subscription,

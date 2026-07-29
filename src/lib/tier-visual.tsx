@@ -1,7 +1,7 @@
 import type { ComponentType } from "react"
-import { Crown, Gem, Sparkles, Zap, type LucideProps } from "lucide-react"
+import { Gem, Rocket, Sparkles, Zap, type LucideProps } from "lucide-react"
 
-export type TierVisualTier = "free" | "nano" | "pro" | "agency"
+export type TierVisualTier = "free" | "indie" | "nano" | "pro"
 
 export type TierVisual = {
   label: string
@@ -30,6 +30,20 @@ const VISUALS: Record<TierVisualTier, TierVisual> = {
     palette: null,
     Icon: Sparkles,
   },
+  indie: {
+    label: "Indie",
+    palette: {
+      text: "text-tier-indie/95",
+      bg: "bg-tier-indie/10",
+      border: "border-tier-indie/20",
+      shadow: "drop-shadow-[0_0_8px_var(--tier-indie)]",
+      glow: "var(--tier-indie)",
+      hoverBg: "hover:bg-tier-indie/20",
+      hoverBorder: "hover:border-tier-indie/30",
+      dotBg: "bg-tier-indie text-tier-indie-foreground",
+    },
+    Icon: Rocket,
+  },
   nano: {
     label: "Nano",
     palette: {
@@ -57,20 +71,6 @@ const VISUALS: Record<TierVisualTier, TierVisual> = {
       dotBg: "bg-tier-pro text-tier-pro-foreground",
     },
     Icon: Gem,
-  },
-  agency: {
-    label: "Agency",
-    palette: {
-      text: "text-tier-agency/95",
-      bg: "bg-tier-agency/10",
-      border: "border-tier-agency/20",
-      shadow: "drop-shadow-[0_0_8px_var(--tier-agency)]",
-      glow: "var(--tier-agency)",
-      hoverBg: "hover:bg-tier-agency/20",
-      hoverBorder: "hover:border-tier-agency/30",
-      dotBg: "bg-tier-agency text-tier-agency-foreground",
-    },
-    Icon: Crown,
   },
 }
 

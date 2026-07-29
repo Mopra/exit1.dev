@@ -23,17 +23,18 @@ export function getActiveSubscriptionItems(subscription: SubscriptionLike | null
 
 /**
  * Exact-key plan resolver. Returns the active paid item's raw plan slug
- * (e.g. 'nano', 'nanov2', 'pro', 'agency', 'scale', 'starter'), or null if
- * the only active item is the free plan or the user has no subscription.
+ * (e.g. 'indie', 'nanov2', 'pro', plus retired 'agency'/'scale'/'starter'), or
+ * null if the only active item is the free plan or the user has no subscription.
  *
  * Uses exact slug match — substring matching is unsafe because 'nanov2'
  * would also match 'nano'.
  */
 export function resolvePlanKey(subscription: SubscriptionLike | null | undefined): string | null {
   const items = getActiveSubscriptionItems(subscription)
-  // Paid plan keys in priority order — first match wins. Keep 'agency'/'scale' first
-  // so if a user somehow has multiple active items, the higher tier wins.
-  const PAID_KEYS = ["agency", "scale", "pro", "nanov2", "nano", "starter"]
+  // Paid plan keys in priority order — first match wins. Highest-entitlement
+  // keys first so a user with multiple active items resolves to the best one.
+  // 'agency'/'scale' are retired but still map to Pro entitlements.
+  const PAID_KEYS = ["agency", "scale", "pro", "nanov2", "nano", "starter", "indie"]
   for (const key of PAID_KEYS) {
     if (items.some((item) => item.plan?.slug === key)) return key
   }
@@ -70,11 +71,11 @@ export function getNanoSubscriptionItem(subscription: SubscriptionLike | null | 
 }
 
 /**
- * @deprecated Use usePlan().agency instead. Remove in a follow-up.
+ * @deprecated Use usePlan().pro instead. Remove in a follow-up.
  */
 export function isScalePlan(subscription: SubscriptionLike | null | undefined) {
   const key = resolvePlanKey(subscription)
-  return key === "scale" || key === "agency"
+  return key === "scale" || key === "agency" || key === "pro"
 }
 
 /**
@@ -84,46 +85,57 @@ export function isNanoPlan(subscription: SubscriptionLike | null | undefined) {
   return resolvePlanKey(subscription) !== null
 }
 
+/**
+ * Client-side mirror of `TIER_LIMITS` from `functions/src/config.ts`. Kept as a
+ * tiny local map to avoid importing server code into the browser bundle.
+ * Keep in sync with the backend — the backend is authoritative and re-validates
+ * everything here.
+ *
+ * Note the interval column is NOT monotonic: Indie ($3) probes at 15s while
+ * Nano ($9) probes at 2min. Indie is the "few sites, watched closely" tier.
+ */
+type TierKey = "free" | "indie" | "nano" | "pro"
+
+const TIER_LIMITS_MIRROR: Record<TierKey, {
+  emailsPerHour: number
+  emailsPerMonth: number
+  maxStatusPages: number
+  minCheckIntervalSeconds: number
+  maxChecks: number
+}> = {
+  free:  { emailsPerHour: 10,  emailsPerMonth: 10,    maxStatusPages: 1,  minCheckIntervalSeconds: 300, maxChecks: 5 },
+  indie: { emailsPerHour: 50,  emailsPerMonth: 500,   maxStatusPages: 1,  minCheckIntervalSeconds: 15,  maxChecks: 10 },
+  nano:  { emailsPerHour: 50,  emailsPerMonth: 1000,  maxStatusPages: 5,  minCheckIntervalSeconds: 120, maxChecks: 100 },
+  pro:   { emailsPerHour: 500, emailsPerMonth: 10000, maxStatusPages: 50, minCheckIntervalSeconds: 15,  maxChecks: 1000 },
+}
+
+/** @deprecated Use `TIER_LIMITS_MIRROR` — this only covered free/nano. */
 export const PLAN_LIMITS = {
-  free: { emailsPerHour: 10, emailsPerMonth: 10 },
-  nano: { emailsPerHour: 100, emailsPerMonth: 1000 },
+  free: { emailsPerHour: TIER_LIMITS_MIRROR.free.emailsPerHour, emailsPerMonth: TIER_LIMITS_MIRROR.free.emailsPerMonth },
+  nano: { emailsPerHour: TIER_LIMITS_MIRROR.nano.emailsPerHour, emailsPerMonth: TIER_LIMITS_MIRROR.nano.emailsPerMonth },
 } as const
 
-export function formatEmailBudget(isPaid: boolean): string {
-  const l = isPaid ? PLAN_LIMITS.nano : PLAN_LIMITS.free
+export function formatEmailBudgetForTier(tier: TierKey): string {
+  const l = TIER_LIMITS_MIRROR[tier] ?? TIER_LIMITS_MIRROR.free
   return `${l.emailsPerHour} emails/hour + ${l.emailsPerMonth}/month`
 }
 
-/**
- * Client-side mirror of `TIER_LIMITS.<tier>.maxStatusPages` from
- * `functions/src/config.ts`. Kept as a tiny local map to avoid importing
- * server code into the browser bundle. Keep in sync with the backend.
- */
-type TierKey = "free" | "nano" | "pro" | "agency"
-const MAX_STATUS_PAGES_BY_TIER: Record<TierKey, number> = {
-  free: 1,
-  nano: 5,
-  pro: 25,
-  agency: 50,
+export function formatEmailBudget(isPaid: boolean): string {
+  return formatEmailBudgetForTier(isPaid ? "nano" : "free")
 }
 
 export function getMaxStatusPagesForTier(tier: TierKey): number {
-  return MAX_STATUS_PAGES_BY_TIER[tier] ?? 1
+  return TIER_LIMITS_MIRROR[tier]?.maxStatusPages ?? 1
+}
+
+export function getMaxChecksForTier(tier: TierKey): number {
+  return TIER_LIMITS_MIRROR[tier]?.maxChecks ?? TIER_LIMITS_MIRROR.free.maxChecks
 }
 
 /**
- * Client-side mirror of `TIER_LIMITS.<tier>.minCheckIntervalMinutes` from
- * `functions/src/config.ts`, expressed in seconds. Founders are mapped to
- * 'pro' upstream by `usePlan()`, so this map covers them too. Keep in sync
- * with the backend.
+ * Minimum check interval in seconds. Founders are mapped to 'pro' upstream by
+ * `usePlan()`, so this map covers them too.
  */
-const MIN_CHECK_INTERVAL_SECONDS_BY_TIER: Record<TierKey, number> = {
-  free: 300,   // 5 min
-  nano: 120,   // 2 min
-  pro: 30,     // 30 sec
-  agency: 15,  // 15 sec
-}
-
 export function getMinCheckIntervalSecondsForTier(tier: TierKey): number {
-  return MIN_CHECK_INTERVAL_SECONDS_BY_TIER[tier] ?? 300
+  return TIER_LIMITS_MIRROR[tier]?.minCheckIntervalSeconds ?? 300
 }

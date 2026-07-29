@@ -3,7 +3,7 @@
  *
  * Uses RDAP to monitor domain registration expiration dates and alert users
  * before their domains expire. Available to any tier whose
- * `TIER_LIMITS.<tier>.domainIntel` flag is true (currently nano, pro, agency).
+ * `TIER_LIMITS.<tier>.domainIntel` flag is true (currently nano, pro).
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
@@ -68,7 +68,7 @@ export const checkDomainExpiry = onSchedule({
   logger.info(`Processing ${snapshot.docs.length} domains due for checking`);
   
   // Cache user tiers to minimize Clerk API calls
-  const userTierCache = new Map<string, 'free' | 'nano' | 'pro' | 'agency'>();
+  const userTierCache = new Map<string, 'free' | 'indie' | 'nano' | 'pro'>();
 
   // DI is available on any tier where TIER_LIMITS.<tier>.domainIntel is true.
   async function verifyDomainIntelTier(userId: string): Promise<boolean> {
@@ -288,7 +288,7 @@ export const enableDomainExpiry = onCall(
   if (!TIER_LIMITS[tier].domainIntel) {
     throw new HttpsError(
       'permission-denied',
-      'Domain Intelligence requires a Nano, Pro, or Agency subscription'
+      'Domain Intelligence requires a Nano or Pro subscription'
     );
   }
 
@@ -543,7 +543,7 @@ export const bulkEnableDomainExpiry = onCall(
   if (!TIER_LIMITS[tier].domainIntel) {
     throw new HttpsError(
       'permission-denied',
-      'Domain Intelligence requires a Nano, Pro, or Agency subscription'
+      'Domain Intelligence requires a Nano or Pro subscription'
     );
   }
 

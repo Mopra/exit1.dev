@@ -320,10 +320,12 @@ const createLockHeartbeat = (lockId: string, lockDoc: string) => {
   };
 };
 
-// NOTE: `getUserTier` returns 'free' | 'nano' | 'pro' | 'agency'. 'premium'/'scale'
-// may still be cached on older check docs — treat them as a paid tier for gating.
-// Every paid tier in the new lineup (nano, pro, agency) has Nano-or-better entitlements
-// for the feature gates below (maintenance mode, scheduled maintenance, recurring maintenance).
+// NOTE: `getUserTier` returns 'free' | 'indie' | 'nano' | 'pro'. Legacy values
+// ('premium'/'scale'/'agency') may still be cached on older check docs — treat
+// them as Nano-or-better for gating.
+// Gates maintenance mode, scheduled maintenance and recurring maintenance, i.e.
+// TIER_LIMITS.<tier>.maintenanceMode. Indie is deliberately EXCLUDED — it sits
+// below Nano on features despite probing faster.
 const isNanoTier = (tier: unknown): boolean =>
   tier === "nano" || tier === "pro" || tier === "agency" || tier === "scale" || tier === "premium";
 
@@ -1596,11 +1598,12 @@ export async function processOneCheck(
     // Trust the denormalised tier on the check doc when it's already a
     // current-lineup paid tier — downgrades explicitly backfill via
     // `backfillCheckUserTier` (see /PRICING.md → "Downgrade handling"), so
-    // stale paid values can't linger. Free/missing/legacy ('premium'/'scale')
-    // fall through to a live lookup so upgrades and legacy values are healed.
+    // stale paid values can't linger. Free/missing/legacy ('premium'/'scale'/
+    // 'agency') fall through to a live lookup so upgrades and retired tier
+    // values are healed rather than trusted.
     const cached = check.userTier;
     const effectiveTier =
-      cached === "nano" || cached === "pro" || cached === "agency"
+      cached === "indie" || cached === "nano" || cached === "pro"
         ? cached
         : await getEffectiveTierForUser(check.userId);
     check.userTier = effectiveTier as Website["userTier"];
@@ -2390,7 +2393,7 @@ export const addCheck = onCall({
       if (!TIER_LIMITS[userTier].domainIntel) {
         throw new HttpsError(
           'permission-denied',
-          'Domain Intelligence requires a Nano, Pro, or Agency subscription'
+          'Domain Intelligence requires a Nano or Pro subscription'
         );
       }
       const inputDomain = extractDomain(typeof url === 'string' ? url : '');
@@ -3487,7 +3490,7 @@ export const toggleCheckStatus = onCall({
     if (enabledCount >= maxChecks) {
       throw new HttpsError(
         "resource-exhausted",
-        `Free plan limit reached (${enabledCount}/${maxChecks}). Upgrade to Nano for up to ${CONFIG.getMaxChecksForTier('nano')} checks.`
+        `Plan limit reached (${enabledCount}/${maxChecks}). Upgrade for up to ${CONFIG.getMaxChecksForTier('pro')} checks.`
       );
     }
 

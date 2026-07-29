@@ -75,7 +75,7 @@ export const deliverSmsAlert = async ({
   eventType: WebhookEvent;
   context?: AlertContext;
   send: SmsSendFn;
-  smsTier: 'free' | 'nano' | 'pro' | 'agency';
+  smsTier: 'free' | 'indie' | 'nano' | 'pro';
 }): Promise<'sent' | 'throttled' | 'error'> => {
   const throttleAllowed = await acquireSmsThrottleSlot(
     website.userId,

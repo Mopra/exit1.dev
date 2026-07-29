@@ -171,7 +171,7 @@ export class Exit1ApiClient {
     }>(
       "exportChecksCsv", options, 'Failed to export checks',
       {
-        'functions/permission-denied': 'CSV export is available on Pro and Agency plans',
+        'functions/permission-denied': 'CSV export is available on the Pro plan',
       },
     );
   }
@@ -579,14 +579,6 @@ export class Exit1ApiClient {
   deleteOnboardingResponses(rows: Array<{ user_id: string; timestamp: number }>) {
     return this.call<{ deleted: number; pending: number }>(
       "deleteOnboardingResponses", { rows }, 'Failed to delete onboarding responses',
-    );
-  }
-
-  // ---- Anderro affiliate tracking (2-week trial) ----
-
-  trackAnderroSignup(visitorId: string) {
-    return this.call<{ tracked: boolean; reason?: string }>(
-      "trackAnderroSignup", { visitorId }, 'Failed to track signup',
     );
   }
 }

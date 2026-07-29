@@ -103,7 +103,7 @@ export async function getUserEmailFromClerk(uid: string): Promise<string | null>
   return null;
 }
 
-export type UserTier = 'free' | 'nano' | 'pro' | 'agency';
+export type UserTier = 'free' | 'indie' | 'nano' | 'pro';
 
 // OPTIMIZATION: Extended from 1 hour to 2 hours to reduce Clerk API calls
 // Trade-off: Tier changes take longer to reflect (acceptable since subscription changes are rare)
@@ -112,22 +112,30 @@ const USER_TIER_CACHE_MS = 2 * 60 * 60 * 1000; // 2 hours
 function normalizeTier(value: unknown): UserTier | null {
   // Back-compat: migrate values stored by older deploys.
   if (value === 'premium') return 'nano';
-  if (value === 'scale') return 'agency';
-  if (value === 'free' || value === 'nano' || value === 'pro' || value === 'agency') return value;
+  // Agency was retired; Pro absorbed its entitlements, so both legacy values
+  // land on 'pro' with no loss of capability.
+  if (value === 'scale' || value === 'agency') return 'pro';
+  if (value === 'free' || value === 'indie' || value === 'nano' || value === 'pro') return value;
   return null;
 }
 
-// Exact plan-key → tier mapping (Docs/plans/tier-restructure-plan-1-rollout.md §2.3).
-// Keys match Clerk plan.slug verbatim. Unknown keys fall back to 'free'.
+// Exact plan-key → tier mapping. Keys match Clerk plan.slug verbatim.
+// Unknown keys fall back to 'free'.
 export const PLAN_KEY_TO_TIER: Record<string, UserTier> = {
   free_user: 'free',
+  indie: 'indie',    // new Indie tier
   nano: 'pro',       // Founders — grandfathered onto Pro entitlements
   nanov2: 'nano',    // new Nano
   pro: 'pro',
-  agency: 'agency',
-  scale: 'agency',   // legacy, no subscribers — mapped to Agency
+  agency: 'pro',     // retired tier — Pro now carries every Agency entitlement
+  scale: 'pro',      // legacy, no subscribers
   starter: 'nano',   // legacy
 };
+
+// Tier ranking. Used to pick the strongest active subscription when a user has
+// several, and to order upgrade/downgrade decisions. Note this ranks *price*,
+// not check interval — Indie is cheaper than Nano but probes faster.
+export const TIER_RANK: Record<UserTier, number> = { free: 0, indie: 1, nano: 2, pro: 3 };
 
 export function tierFromPlanKey(planKey: string | null | undefined): UserTier {
   if (!planKey) return 'free';
@@ -162,8 +170,8 @@ async function fetchTierFromClerk(uid: string): Promise<{ tier: UserTier; planKe
     try {
       const user = await client.users.getUser(uid);
       if (user.publicMetadata?.admin === true) {
-        logger.debug(`Admin detected for ${uid} via publicMetadata in ${instance} — granting agency tier`);
-        return { tier: 'agency', planKey: null };
+        logger.debug(`Admin detected for ${uid} via publicMetadata in ${instance} — granting pro tier`);
+        return { tier: 'pro', planKey: null };
       }
       // Legacy lifetime-deal flag — grandfather onto Pro for parity with the
       // Founders `nano` plan-key path. Emit a debug log so we can track usage.
@@ -214,7 +222,7 @@ async function fetchTierFromClerk(uid: string): Promise<{ tier: UserTier; planKe
     });
 
     // Tier ranking so we pick the strongest active subscription when a user has multiple.
-    const rank: Record<UserTier, number> = { free: 0, nano: 1, pro: 2, agency: 3 };
+    const rank = TIER_RANK;
     let bestTier: UserTier = 'free';
     let bestPlanKey: string | null = null;
     for (const item of activeLike) {

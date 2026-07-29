@@ -1,14 +1,14 @@
 import { useSyncExternalStore, useCallback } from "react";
 
-export type TierPreview = "agency" | "pro" | "nano" | "free";
+export type TierPreview = "pro" | "nano" | "indie" | "free";
 
 const STORAGE_KEY = "adminTierPreview";
 const FOUNDERS_KEY = "adminTierPreviewFounders";
 
-// Cycle sequence: highest → lowest. Founders is a distinct stop between
-// agency and pro (Founders resolves to pro-tier entitlements but renders a
-// special badge variant).
-const TIERS: TierPreview[] = ["agency", "pro", "nano", "free"];
+// Cycle sequence: highest → lowest. Founders is a distinct stop right after
+// pro (Founders resolves to pro-tier entitlements but renders a special badge
+// variant).
+const TIERS: TierPreview[] = ["pro", "nano", "indie", "free"];
 
 const listeners = new Set<() => void>();
 
@@ -23,15 +23,15 @@ function notify() {
 
 function readTier(): TierPreview {
   const raw = localStorage.getItem(STORAGE_KEY);
-  // Migrate legacy "scale" → "agency" in-place so consumers never see it.
-  if (raw === "scale") {
-    localStorage.setItem(STORAGE_KEY, "agency");
-    return "agency";
+  // Migrate retired "scale"/"agency" → "pro" in-place so consumers never see them.
+  if (raw === "scale" || raw === "agency") {
+    localStorage.setItem(STORAGE_KEY, "pro");
+    return "pro";
   }
-  if (raw === "agency" || raw === "pro" || raw === "nano" || raw === "free") {
+  if (raw === "pro" || raw === "nano" || raw === "indie" || raw === "free") {
     return raw;
   }
-  return "agency";
+  return "pro";
 }
 
 function readFounders(): boolean {
@@ -41,7 +41,7 @@ function readFounders(): boolean {
 // useSyncExternalStore requires getSnapshot to return a referentially stable
 // value between unchanged reads. Cache the composite snapshot object.
 let cachedSnapshot: { previewTier: TierPreview; previewIsFounders: boolean } = {
-  previewTier: "agency",
+  previewTier: "pro",
   previewIsFounders: false,
 };
 let snapshotInitialized = false;
@@ -68,7 +68,7 @@ function getSnapshot() {
 }
 
 const SERVER_SNAPSHOT = {
-  previewTier: "agency" as TierPreview,
+  previewTier: "pro" as TierPreview,
   previewIsFounders: false,
 };
 
@@ -103,23 +103,18 @@ export function useAdminTierPreview(): {
   );
 
   // Cycle sequence with Founders as a distinct stop:
-  //   agency → pro-founders → pro → nano → free → agency ...
+  //   pro → pro-founders → nano → indie → free → pro ...
   const cycleTier = useCallback(() => {
     const currentTier = readTier();
     const currentFounders = readFounders();
 
-    if (currentTier === "agency") {
-      // agency → pro (founders on)
-      writeTier("pro");
+    if (currentTier === "pro" && !currentFounders) {
+      // pro → pro (founders on)
       writeFounders(true);
       return;
     }
-    if (currentTier === "pro" && currentFounders) {
-      // pro-founders → pro (founders off)
-      writeFounders(false);
-      return;
-    }
-    // pro → nano, nano → free, free → agency (and founders always off at these stops)
+    // pro-founders → nano, nano → indie, indie → free, free → pro
+    // (founders always off at these stops)
     const idx = TIERS.indexOf(currentTier);
     const next = TIERS[(idx + 1) % TIERS.length];
     if (currentFounders) writeFounders(false);

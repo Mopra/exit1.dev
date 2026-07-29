@@ -4,12 +4,12 @@ import { Rocket, Sparkles, X } from 'lucide-react';
 import { Alert, AlertDescription } from './alert';
 import { Button } from './Button';
 
-type TargetTier = 'nano' | 'pro' | 'agency';
+type TargetTier = 'indie' | 'nano' | 'pro';
 
 const TIER_LABEL: Record<TargetTier, string> = {
+  indie: 'Indie',
   nano: 'Nano',
   pro: 'Pro',
-  agency: 'Agency',
 };
 
 interface UpgradeBannerProps {
