@@ -1047,6 +1047,18 @@ export interface ProcessOneCheckContext {
    * first probe finds.
    */
   deployModeDisabledAt: number;
+  /**
+   * Aborted when the caller has given up on this invocation — currently the
+   * VPS runner's per-check timeout (CHECK_INVOCATION_TIMEOUT_MS) and its
+   * watchdog eviction. Undefined in the Cloud Functions scheduler path.
+   *
+   * An abandoned invocation has already been rescheduled by its caller, so
+   * anything it writes afterwards is stale by definition — a status update
+   * landing minutes late would overwrite the backoff and republish a
+   * long-superseded probe result. Checked immediately before the status
+   * writes; the probe itself is bounded separately.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ProcessOneCheckResult {
@@ -1066,7 +1078,7 @@ export async function processOneCheck(
     getEffectiveTierForUser, getUserSettings, enqueueHistoryRecord,
     throttleCache, budgetCache, emailMonthlyBudgetCache,
     smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache,
-    region, deployModeDisabledAt,
+    region, deployModeDisabledAt, signal,
   } = ctx;
 
   if (check.disabled) {
@@ -1734,6 +1746,11 @@ export async function processOneCheck(
           }
         }
       }
+      // Caller gave up on this invocation and already rescheduled the check —
+      // publishing now would overwrite that backoff with a stale result.
+      if (signal?.aborted) {
+        return { id: check.id, status, responseTime, skipped: true, reason: "aborted" };
+      }
       await addStatusUpdate(check.id, noChangeUpdate);
       await finalizeHistoryRow();
       return { id: check.id, status, responseTime, skipped: true, reason: "no-changes" };
@@ -2089,10 +2106,28 @@ export async function processOneCheck(
         applyPendingRetryFlags(updateData, result, "online", now, check as Website & { pendingUpSince?: number });
       }
     }
+    // See the no-changes path above — an abandoned invocation must not publish.
+    if (signal?.aborted) {
+      return { id: check.id, status, responseTime, skipped: true, reason: "aborted" };
+    }
     await addStatusUpdate(check.id, updateData);
     await finalizeHistoryRow();
     return { id: check.id, status, responseTime };
   } catch (error) {
+    // Abandoned invocation: the "error" here is typically the abort itself
+    // surfacing through a ctx read, not an observation about the endpoint.
+    // Recording it as a failure would let a timed-out invocation push a
+    // healthy check toward confirmed-down. The caller already rescheduled
+    // the check when it gave up; write nothing.
+    if (signal?.aborted) {
+      return {
+        id: check.id,
+        status: check.status ?? "unknown",
+        error: error instanceof Error ? error.message : "aborted",
+        skipped: true,
+        reason: "aborted",
+      };
+    }
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     const now = Date.now();
     const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);

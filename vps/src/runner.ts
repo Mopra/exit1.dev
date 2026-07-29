@@ -376,8 +376,8 @@ async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
 // ── Worker Pool State ──────────────────────────────────────────────────
 const sem = new Semaphore(MAX_CONCURRENT);
 const inFlight = new Set<string>(); // prevents double-runs of same check
-// Checks whose processOneCheck invocation is still running (checkId -> worker
-// start ms). The status hook deliberately releases a check from inFlight as
+// Checks whose processOneCheck invocation is still running (checkId -> task).
+// The status hook deliberately releases a check from inFlight as
 // soon as nextCheckAt is known (so a buffer-flush stall can't block
 // rescheduling), but some code paths write an immediate nextCheckAt
 // mid-invocation and keep working — e.g. maintenance auto-expiry (checks.ts)
@@ -387,7 +387,42 @@ const inFlight = new Set<string>(); // prevents double-runs of same check
 // worker's finally; the watchdog tick evicts entries stuck past
 // EXECUTING_STUCK_MS so one wedged invocation can't silently unmonitor a
 // check until restart.
-const executing = new Map<string, number>();
+//
+// The value is a task record rather than a bare timestamp so that the slot it
+// owns (semaphore permit + inFlight entry) can be reclaimed exactly once, by
+// whichever of the worker or the watchdog gets there first. See releaseSlot().
+interface WorkerTask {
+  id: string;
+  start: number;
+  /** Set by releaseSlot() — the permit and inFlight entry are already returned. */
+  released: boolean;
+  /** Aborted when the invocation exceeds CHECK_INVOCATION_TIMEOUT_MS. */
+  controller: AbortController;
+}
+const executing = new Map<string, WorkerTask>();
+
+// Return a task's pool resources exactly once.
+//
+// Both the worker's finally and the watchdog's stuck-entry eviction call this.
+// Before 2026-07-28 the eviction path only dropped the `executing` entry, which
+// left the semaphore permit and the inFlight guard leaked forever — 249 of 250
+// permits drained that way and wedged the Frankfurt pool with a healthy event
+// loop and a silent watchdog. Reclaiming here is what makes eviction real.
+//
+// Returns true if this call performed the release (i.e. the caller owns the
+// completion), false if the slot had already been reclaimed. A late-settling
+// zombie gets false and must not then double-release the permit or record its
+// bogus multi-minute duration as throughput.
+function releaseSlot(task: WorkerTask): boolean {
+  if (task.released) return false;
+  task.released = true;
+  sem.release();
+  inFlight.delete(task.id);
+  // Owner-checked: if this task was evicted and a newer run re-registered under
+  // the same id, the newer run owns the guard and must keep it.
+  if (executing.get(task.id) === task) executing.delete(task.id);
+  return true;
+}
 const schedule = new CheckSchedule();
 // Phase 1 of live-charts.md: in-memory 24h response-time history per check.
 // Appended to from the status-buffer hook on every probe completion.
@@ -449,35 +484,166 @@ const WATCHDOG_RESUME_GRACE_MS = 120_000;
 // check out of dispatch forever with no signal. Evicting restores probing —
 // worst case a duplicate run if the zombie worker ever settles.
 const EXECUTING_STUCK_MS = 10 * 60 * 1000;
+
+// ── Arm 3: real-throughput stall ───────────────────────────────────────
+// The arm above keys off lastSuccessfulCheckCompletedAt, which any completion
+// nudges — including ones that did no work at all. On 2026-07-28 that was
+// enough to keep it silent through a total wedge: 249 of 250 permits were
+// leaked, and the single free permit re-dispatched a check that returned early
+// from processOneCheck (~1ms, no probe, no write) every 500ms tick, refreshing
+// the timestamp forever while real throughput sat at exactly zero.
+//
+// This arm keys off a signal that early returns cannot forge: the status-buffer
+// write counters. Every check that actually completes calls addStatusUpdate,
+// which increments writesDeferred or writesImmediate before any I/O — so the
+// sum is a monotonic count of genuine completions.
+//
+// Flat counters alone are not sufficient evidence: a pool with nothing but
+// early-returning checks at the head of its schedule is degenerate but not
+// wedged, and restarting would just loop. So we additionally require the pool
+// to be near-fully occupied for the whole window. A wedge pins occupancy at
+// ~100% (permits leaked); a degenerate-but-live pool sits near 0%.
+const WATCHDOG_PROGRESS_STALL_MS =
+  Number(process.env.WATCHDOG_PROGRESS_STALL_MS) || 5 * 60 * 1000;
+// Fraction of the pool that must be continuously occupied to treat flat write
+// counters as a wedge. Deliberately below 1.0: the incident held 249/250, so a
+// strict "zero permits free" test would have missed it.
+const WATCHDOG_SATURATION_RATIO = 0.9;
+// Minimum status writes a saturated pool must produce across the window to be
+// considered alive. This is a volume test, not a "did the counter move" test:
+// the same class of mistake that defeated arm 2 — one trivial event refreshing
+// a liveness marker — would otherwise apply here, since a single manual check
+// served off the HTTP API also increments these counters. A healthy saturated
+// pool writes hundreds per window; a wedged one writes ~0.
+// Parsed so that an explicit 0 DISABLES arm 3 rather than falling through to
+// the default (`Number(x) || default` would treat 0 as unset). That 0 is the
+// ops kill switch: if this arm ever false-positives in prod it can be turned
+// off with an env var and a restart, no rebuild, while the older arms keep
+// running. Setting it is the correct response to a restart loop.
+const WATCHDOG_MIN_PROGRESS_WRITES = (() => {
+  const raw = process.env.WATCHDOG_MIN_PROGRESS_WRITES;
+  if (raw !== undefined && raw.trim() !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return Math.max(10, Math.floor(MAX_CONCURRENT / 10));
+})();
+let lastProgressCounter = -1;
+let lastProgressChangeAt = Date.now();
+let poolSaturatedSince = 0;
+// Tumbling-window anchors for the write-volume test. Anchoring the window at
+// saturation START would go blind on a late wedge: a mass outage can hold the
+// pool legitimately saturated for an hour with writes flowing, and if permits
+// then leak, a since-saturation-start counter is already far past any
+// threshold. Instead the window re-anchors every WATCHDOG_PROGRESS_STALL_MS,
+// so each evaluation only sees the writes of its own window. Worst-case
+// detection latency is ~2 windows (the wedge lands mid-window and the first
+// close doesn't yet see a fully-saturated window).
+let progressWindowAnchorAt = Date.now();
+let progressAtWindowAnchor = 0;
+
+function readProgressCounter(): number {
+  try {
+    const s = getHeartbeatDeferStats() as { writesDeferred?: number; writesImmediate?: number };
+    return (s.writesDeferred ?? 0) + (s.writesImmediate ?? 0);
+  } catch {
+    // Never let a stats hiccup take down the watchdog — returning the last
+    // known value keeps the timestamp frozen rather than faking progress,
+    // and the saturation conjunct still gates any exit.
+    return lastProgressCounter;
+  }
+}
+
 const watchdogTimer = setInterval(() => {
   try {
     // A graceful shutdown legitimately stalls the pool while it drains and
     // flushes — exiting 1 here would discard those flushes.
     if (shuttingDown) return;
     const now = Date.now();
-    for (const [id, startedAt] of executing) {
-      if (now - startedAt > EXECUTING_STUCK_MS) {
+    for (const [id, task] of executing) {
+      if (now - task.start > EXECUTING_STUCK_MS) {
+        // Reclaim, don't just forget. releaseSlot() returns the semaphore
+        // permit and the inFlight guard as well as the executing entry; the
+        // worker's finally is idempotent against this, so a zombie that
+        // settles later cannot double-release.
+        const reclaimed = releaseSlot(task);
         console.warn(
-          `[watchdog] check ${id} stuck in executing for ${Math.round((now - startedAt) / 1000)}s — evicting so it can be dispatched again`
+          `[watchdog] check ${id} stuck in executing for ${Math.round((now - task.start) / 1000)}s — ` +
+          `${reclaimed ? 'reclaimed its permit and re-armed dispatch' : 'slot already reclaimed'}`
         );
-        executing.delete(id);
+        // Abort so the hung invocation stops doing further work and cannot
+        // write a stale status update if it ever settles.
+        try { task.controller.abort(); } catch { /* ignore */ }
       }
     }
+
+    const dueNow = schedule.getStats().dueNow;
+
+    // Track real-throughput progress and pool occupancy every tick, whether or
+    // not we go on to evaluate an exit.
+    const progress = readProgressCounter();
+    if (progress !== lastProgressCounter) {
+      lastProgressCounter = progress;
+      lastProgressChangeAt = now;
+    }
+    const occupied = MAX_CONCURRENT - sem.available;
+    if (occupied >= MAX_CONCURRENT * WATCHDOG_SATURATION_RATIO) {
+      if (poolSaturatedSince === 0) poolSaturatedSince = now;
+    } else {
+      poolSaturatedSince = 0;
+    }
+    // Close the current window if it has run its course. Capture the verdict
+    // before re-anchoring, and re-anchor regardless of suppression below — a
+    // suppressed tick must not stretch the next window's span.
+    let windowVerdict: { writes: number; saturatedWholeWindow: boolean } | null = null;
+    if (now - progressWindowAnchorAt >= WATCHDOG_PROGRESS_STALL_MS) {
+      windowVerdict = {
+        writes: progress - progressAtWindowAnchor,
+        // Saturation must predate the window: a pool that saturated mid-window
+        // had free permits for part of it, so low volume proves nothing yet.
+        saturatedWholeWindow:
+          poolSaturatedSince !== 0 && poolSaturatedSince <= progressWindowAnchorAt,
+      };
+      progressWindowAnchorAt = now;
+      progressAtWindowAnchor = progress;
+    }
+
+    // Shared suppressions for both exit arms.
+    const suppressed =
+      dueNow <= WATCHDOG_DUE_THRESHOLD ||
+      // Don't fight deploy mode — it legitimately pauses dispatch. But only
+      // trust the latch while its cache is actually refreshing: the deploy-
+      // mode read re-runs every 30s, so an active flag with no refresh for
+      // over 3 minutes means dispatch() is wedged inside that read — the
+      // exact zombie this watchdog exists to kill.
+      (deployModeActive && now - deployModeLastChecked < DEPLOY_MODE_CACHE_MS * 6) ||
+      // Boot/warmup grace: don't kill ourselves before the first checks
+      // have had time to complete after a fresh resume.
+      now - dispatcherResumeAt < WATCHDOG_RESUME_GRACE_MS;
+    if (suppressed) return;
+
+    // Arm 3 — a pool that was pinned for an entire window while producing
+    // essentially no status writes is wedged, whatever the liveness timestamp
+    // says. Disabled entirely when the threshold is set to 0 (ops kill switch).
+    if (
+      WATCHDOG_MIN_PROGRESS_WRITES > 0 &&
+      windowVerdict &&
+      windowVerdict.saturatedWholeWindow &&
+      windowVerdict.writes < WATCHDOG_MIN_PROGRESS_WRITES
+    ) {
+      console.error(
+        `[watchdog] worker pool wedged — ${windowVerdict.writes} status writes ` +
+        `(<${WATCHDOG_MIN_PROGRESS_WRITES}) in ${Math.round(WATCHDOG_PROGRESS_STALL_MS / 1000)}s ` +
+        `with ${occupied}/${MAX_CONCURRENT} permits held since ` +
+        `${Math.round((now - poolSaturatedSince) / 1000)}s ago and ${dueNow} due — exiting for restart`
+      );
+      process.exit(1);
+    }
+
+    // Arm 2 — no completions at all. Kept for wedges that leave the pool idle
+    // rather than saturated, which arm 3 deliberately ignores.
     const stallMs = now - lastSuccessfulCheckCompletedAt;
     if (stallMs <= WATCHDOG_STALL_MS) return;
-    // Don't restart an idle box — if there's no work queued, a long
-    // quiet period is fine.
-    const dueNow = schedule.getStats().dueNow;
-    if (dueNow <= WATCHDOG_DUE_THRESHOLD) return;
-    // Don't fight deploy mode — it legitimately pauses dispatch. But only
-    // trust the latch while its cache is actually refreshing: the deploy-
-    // mode read re-runs every 30s, so an active flag with no refresh for
-    // over 3 minutes means dispatch() is wedged inside that read — the
-    // exact zombie this watchdog exists to kill.
-    if (deployModeActive && now - deployModeLastChecked < DEPLOY_MODE_CACHE_MS * 6) return;
-    // Boot/warmup grace: don't kill ourselves before the first checks
-    // have had time to complete after a fresh resume.
-    if (now - dispatcherResumeAt < WATCHDOG_RESUME_GRACE_MS) return;
     console.error(
       `[watchdog] no progress for ${Math.round(stallMs / 1000)}s with ${dueNow} due — exiting for restart`
     );
@@ -518,6 +684,22 @@ function nsToMs1dp(ns: number): number {
 // Caches live for the process lifetime. TTL-based eviction prevents
 // unbounded growth. getUserTier is memoized per-user with 5-min TTL.
 
+// Both per-user caches below memoize the in-flight PROMISE, not the resolved
+// value, so concurrent probes for the same user share one Firestore read. That
+// is a real win — and it was the amplifier in the 2026-07-28 wedge.
+//
+// Each cache evicts on rejection, but a promise that NEVER SETTLES is neither
+// resolved nor rejected: it stays in the map, and every subsequent check owned
+// by that user awaits the same dead promise and parks its worker. One hung
+// gRPC read became hundreds of hung workers. Worse, on TTL expiry a fresh read
+// starts and re-poisons the entry.
+//
+// Bounding the read closes it: a wedged channel now poisons a user for at most
+// the timeout, then rejects, evicts, and the next probe retries. Without this,
+// bounding processOneCheck alone would only convert a permanent wedge into
+// every affected check burning a full invocation timeout.
+const USER_READ_TIMEOUT_MS = Number(process.env.USER_READ_TIMEOUT_MS) || 15_000;
+
 const TIER_CACHE_TTL_MS = 5 * 60 * 1000;
 // getUserTier fails open to 'free' on any Firestore/Clerk error, so a 'free'
 // result may be a transient blip rather than the user's real tier — and
@@ -529,17 +711,25 @@ const tierCache = new Map<string, { value: Promise<unknown>; expiresAt: number }
 function getEffectiveTierForUser(uid: string): Promise<unknown> {
   const cached = tierCache.get(uid);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
-  const p = getUserTier(uid);
+  const raw = withTimeout(getUserTier(uid), USER_READ_TIMEOUT_MS, `getUserTier(${uid})`);
+  // getUserTier's contract is fail-open — 'free' on any Firestore/Clerk
+  // error — and the timeout must honor it, not break it. The tier lookup runs
+  // AFTER a successful probe (checks.ts, denormalised-tier fallthrough), so a
+  // rejection here would land in processOneCheck's catch and record a false
+  // check failure for an endpoint that just answered fine. Serve 'free' to
+  // whoever is already waiting; the rejection handler below still evicts the
+  // entry so the next probe retries the real read.
+  const p = raw.catch(() => 'free' as unknown);
   const entry = { value: p, expiresAt: Date.now() + TIER_CACHE_TTL_MS };
   tierCache.set(uid, entry);
-  p.then(
+  raw.then(
     (tier: unknown) => {
       if (tier === 'free' && tierCache.get(uid) === entry) {
         entry.expiresAt = Math.min(entry.expiresAt, Date.now() + TIER_FREE_TTL_MS);
       }
     },
-    // getUserTier doesn't reject today, but if that ever changes a cached
-    // rejection must not poison every probe of this user until the TTL.
+    // Timeout (or a future rejecting getUserTier): a memoized dead read must
+    // not poison every probe of this user until the TTL.
     () => {
       if (tierCache.get(uid) === entry) tierCache.delete(uid);
     },
@@ -553,14 +743,17 @@ const settingsCache = new Map<string, { value: Promise<unknown>; expiresAt: numb
 function getUserSettings(uid: string): Promise<unknown> {
   const cached = settingsCache.get(uid);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
-  const p = fetchAlertSettingsFromFirestore(uid);
+  const p = withTimeout(
+    fetchAlertSettingsFromFirestore(uid), USER_READ_TIMEOUT_MS, `alertSettings(${uid})`,
+  );
   const entry = { value: p, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS };
   settingsCache.set(uid, entry);
   // fetchAlertSettingsFromFirestore has no internal catch — one transient
   // Firestore error would otherwise be memoized for the full TTL, making
   // processOneCheck throw (post-probe, pre-hook) for every check this user
   // owns: no alert evaluation AND no nextCheckAt advance, so the dispatcher
-  // hot-loops the probe. Evict on rejection so the next call retries.
+  // hot-loops the probe. Evict on rejection so the next call retries. The
+  // timeout above routes a hung read into this same eviction path.
   p.catch(() => {
     if (settingsCache.get(uid) === entry) settingsCache.delete(uid);
   });
@@ -709,6 +902,48 @@ const checkCtx: Record<string, unknown> = {
   deployModeDisabledAt: 0,
 };
 
+// Per-invocation view of the shared context, carrying the worker's abort
+// signal. The signal is armed when the invocation exceeds
+// CHECK_INVOCATION_TIMEOUT_MS (or when the watchdog evicts a stuck worker).
+//
+// Note on scope: the Firestore Node SDK does not accept an AbortSignal on
+// get()/set(), so an in-flight gRPC call cannot actually be cancelled. What the
+// signal buys is that an abandoned invocation stops initiating NEW work — no
+// further settings/tier reads, no BigQuery insert — and, via the guard in
+// checks.ts, no stale status write landing minutes after the worker gave up
+// and rescheduled the check. Bounding the individual reads (see
+// USER_READ_TIMEOUT_MS above) is what keeps a wedged channel from parking the
+// calls in the first place.
+//
+// The spread snapshots deployModeDisabledAt at dispatch time rather than
+// exposing the live mirror. Safe because checkDeployMode() updates that mirror
+// before dispatch() proceeds within the same tick, and no checks are dispatched
+// while deploy mode is active — so a snapshot taken here is always the
+// post-lift value, and it stays consistent for the whole invocation.
+function buildCheckCtx(signal: AbortSignal): Record<string, unknown> {
+  return {
+    ...checkCtx,
+    signal,
+    getEffectiveTierForUser: (uid: string) => {
+      if (signal.aborted) return Promise.reject(new Error('check invocation aborted'));
+      return getEffectiveTierForUser(uid);
+    },
+    getUserSettings: (uid: string) => {
+      if (signal.aborted) return Promise.reject(new Error('check invocation aborted'));
+      return getUserSettings(uid);
+    },
+    enqueueHistoryRecord: (record: unknown) => {
+      // Dropping the row is the right call here: the worker has already
+      // rescheduled this check, so a fresh probe will produce a current row
+      // shortly. Writing the abandoned one risks out-of-order history.
+      if (signal.aborted) return Promise.resolve();
+      return insertCheckHistory(record).catch((err: unknown) => {
+        console.error('Failed to enqueue history record:', err);
+      });
+    },
+  };
+}
+
 // ── Health endpoint ────────────────────────────────────────────────────
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -739,6 +974,13 @@ const server = createServer((req, res) => {
       watchdog: {
         secondsSinceProgress: Math.round((Date.now() - lastSuccessfulCheckCompletedAt) / 1000),
         stallThresholdSeconds: Math.round(WATCHDOG_STALL_MS / 1000),
+        // Arm 3 — real throughput. secondsSinceProgress above can be nudged by
+        // completions that did no work; these two cannot. A wedge shows up as
+        // both climbing together.
+        secondsSinceStatusWrite: Math.round((Date.now() - lastProgressChangeAt) / 1000),
+        secondsSaturated: poolSaturatedSince === 0
+          ? 0 : Math.round((Date.now() - poolSaturatedSince) / 1000),
+        progressStallThresholdSeconds: Math.round(WATCHDOG_PROGRESS_STALL_MS / 1000),
       },
       caches: {
         tierCacheSize: tierCache.size,
@@ -1515,6 +1757,19 @@ let shuttingDown = false;
 // interval) for as long as the failure persists.
 const FAILED_CHECK_BACKOFF_MS = 30_000;
 
+// Hard ceiling on a single processOneCheck invocation. Budget: HTTP_TIMEOUT_MS
+// (30s) + PEER_CONFIRM_TIMEOUT_MS (35s) + headroom for the Firestore reads,
+// alert dispatch and BigQuery enqueue around them. Down-confirmation does NOT
+// belong in this budget — DOWN_CONFIRMATION_ATTEMPTS is spread across separate
+// scheduled invocations, not retried inside one.
+//
+// Deliberately generous. Steady state is ~3.8k EU checks on 2-min intervals
+// through 250 slots, i.e. ~8s of headroom per slot, so a timeout should be a
+// genuine anomaly rather than routine load-shedding. Its job is to make the
+// pool impossible to wedge, not to police slow checks.
+const CHECK_INVOCATION_TIMEOUT_MS =
+  Number(process.env.CHECK_INVOCATION_TIMEOUT_MS) || 120_000;
+
 async function dispatch() {
   if (shuttingDown) return;
   try {
@@ -1542,7 +1797,10 @@ async function dispatch() {
           return;
         }
         const start = Date.now();
-        executing.set(check.id, start);
+        const task: WorkerTask = {
+          id: check.id, start, released: false, controller: new AbortController(),
+        };
+        executing.set(check.id, task);
         try {
           // Inject heartbeat ping state into check object for processOneCheck to evaluate
           if (check.type === 'heartbeat') {
@@ -1552,32 +1810,48 @@ async function dispatch() {
               check.lastPingMetadata = pingData.metadata;
             }
           }
-          await processOneCheck(check, checkCtx);
+          // Hard bound on the whole invocation. processOneCheck's probe is
+          // bounded (AbortSignal.timeout) but the Firestore reads, alert
+          // dispatch and BigQuery enqueue around it are not — on 2026-07-28 a
+          // wedged Firestore read parked ~250 workers before the status write,
+          // and because the await never settled the finally never ran and every
+          // permit leaked. A timeout here means the finally always runs, so the
+          // worst case is degraded throughput rather than a locked pool.
+          await withTimeout(
+            processOneCheck(check, buildCheckCtx(task.controller.signal)),
+            CHECK_INVOCATION_TIMEOUT_MS,
+            `check ${check.id}`,
+          );
         } catch (err: unknown) {
           console.error(`[Worker] Check ${check.id} failed:`, err);
           // Back off only if the hook didn't already advance nextCheckAt
           // (a late throw after the hook fired must not pull the next run
-          // earlier than the real schedule).
+          // earlier than the real schedule). A timeout lands here too, so a
+          // timed-out check reschedules on the same backoff as any failure.
           const cur = (schedule.getCheck(check.id) as { nextCheckAt?: number } | undefined)?.nextCheckAt;
           if (typeof cur !== 'number' || cur <= Date.now()) {
             schedule.updateNextCheckAt(check.id, Date.now() + FAILED_CHECK_BACKOFF_MS);
           }
         } finally {
-          sem.release();
-          inFlight.delete(check.id);
-          // Owner-checked: if the watchdog evicted this entry and a newer
-          // run re-registered, a late-settling zombie must not delete the
-          // newer run's guard.
-          if (executing.get(check.id) === start) executing.delete(check.id);
-          // Track throughput
-          const elapsed = Date.now() - start;
-          thisMinuteChecks++;
-          thisMinuteTotalMs += elapsed;
-          if (elapsed > thisMinuteMaxMs) thisMinuteMaxMs = elapsed;
-          // Liveness signal — the watchdog uses this to detect "running but
-          // not working". Update on any completion (success or error) so a
-          // pool that's actually moving doesn't get killed for failed probes.
-          lastSuccessfulCheckCompletedAt = Date.now();
+          // Stop the abandoned invocation from doing further work or writing a
+          // stale status update if it settles after the timeout. Harmless on
+          // the normal path — nothing reads the signal once the work is done.
+          try { task.controller.abort(); } catch { /* ignore */ }
+          // Idempotent against watchdog eviction. If the watchdog already
+          // reclaimed this slot, releaseSlot returns false and we skip the
+          // metrics below: a zombie's multi-minute "duration" is not throughput,
+          // and letting it nudge the liveness timestamp is precisely how the
+          // 2026-07-28 wedge stayed invisible.
+          if (releaseSlot(task)) {
+            const elapsed = Date.now() - start;
+            thisMinuteChecks++;
+            thisMinuteTotalMs += elapsed;
+            if (elapsed > thisMinuteMaxMs) thisMinuteMaxMs = elapsed;
+            // Liveness signal — the watchdog uses this to detect "running but
+            // not working". Update on any completion (success or error) so a
+            // pool that's actually moving doesn't get killed for failed probes.
+            lastSuccessfulCheckCompletedAt = Date.now();
+          }
         }
       }).catch((err: unknown) => {
         // Semaphore acquire itself failed (shouldn't happen) — clean up
