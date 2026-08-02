@@ -49,6 +49,12 @@ export interface Website {
   // Stamped when a refresh attempt fails to resolve geo, so the scheduled
   // refresher can back off instead of retrying the same dead lookup daily.
   targetMetadataLastAttempt?: number
+  // DNS freshness, tracked separately from geo. Geo enrichment is currently
+  // failing (ipwho.is blocks our egress) and its 7-day backoff used to hold
+  // targetIp hostage with it — so a propagated DNS change could stay invisible
+  // for weeks in the UI and in alert bodies. DNS is cheap and local; it gets
+  // its own, much shorter TTL.
+  targetDnsLastChecked?: number
 
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;

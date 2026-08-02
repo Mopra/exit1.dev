@@ -377,6 +377,14 @@ export const CONFIG = {
   // proxying lookups through the VPS static IP, then reconsider this backoff.
   TARGET_METADATA_FAILURE_BACKOFF_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
 
+  // DNS-only refresh cadence, deliberately independent of the geo TTL and the
+  // geo failure backoff. A/AAAA records DO change (and users notice within
+  // minutes via dnschecker), so targetIp must not inherit geo's 30-day TTL or
+  // sit behind its 7-day failure backoff. Resolution is c-ares + cached, so a
+  // daily sweep across all checks is nearly free. Under the scheduler's 24h
+  // cadence anything below 24h means "every run"; 12h leaves room for drift.
+  TARGET_DNS_TTL_MS: 12 * 60 * 60 * 1000, // 12 hours
+
   // SSL refresh cadence — adaptive based on daysUntilExpiry so renewals are
   // detected fast in the danger zone without wasting work on certs that aren't
   // close to expiring. See getSslRefreshIntervalMs below.

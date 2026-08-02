@@ -240,6 +240,7 @@ export const performHttpRequest = async ({
   useRange,
   readBody,
   totalTimeoutMs,
+  onResolved,
 }: {
   url: string;
   method: string;
@@ -248,6 +249,11 @@ export const performHttpRequest = async ({
   useRange: boolean;
   readBody: boolean;
   totalTimeoutMs: number;
+  // Reports the IP this request actually talked to, as observed on the socket.
+  // Fires before the response (and before a connect-stage error), so failure
+  // paths get it too — that's the whole point: an EHOSTUNREACH alert should
+  // name the IP that was unreachable, not a cached one from days ago.
+  onResolved?: (ip: string, family: number) => void;
 }): Promise<HttpRequestResult> => {
   const urlObj = new URL(url);
   const transport = urlObj.protocol === "https:" ? https : http;
@@ -337,14 +343,27 @@ export const performHttpRequest = async ({
       }
     );
 
+    // IP literals never fire "lookup" — report the host itself as the target.
+    if (onResolved && net.isIP(urlObj.hostname)) {
+      onResolved(urlObj.hostname, net.isIP(urlObj.hostname));
+    }
+
     req.on("socket", (socket) => {
-      socket.once("lookup", () => {
+      socket.once("lookup", (err, address, family) => {
         dnsAt = Date.now();
         setStage("CONNECT");
+        if (!err && address && onResolved) {
+          onResolved(address, typeof family === "number" ? family : (net.isIP(address) || 4));
+        }
       });
 
       socket.once("connect", () => {
         connectAt = Date.now();
+        // remoteAddress is authoritative — it's the peer we're actually
+        // speaking to (matters for happy-eyeballs / multi-A-record hosts).
+        if (onResolved && socket.remoteAddress) {
+          onResolved(socket.remoteAddress, socket.remoteFamily === "IPv6" ? 6 : 4);
+        }
         if (urlObj.protocol === "https:") {
           setStage("TLS");
         } else {
@@ -418,8 +437,10 @@ const buildCachedTargetMetadata = (website: Website): TargetMetadata => {
 
 const shouldRefreshTargetMetadata = (website: Website): boolean => {
   // Only do inline refresh for checks that have NEVER had metadata populated.
-  // Routine refreshes (7-day TTL, 1-hour missing-geo retry) are handled by
-  // the background refreshTargetMetadata scheduled function.
+  // Routine refreshes are handled by the background refreshTargetMetadata
+  // scheduled function (geo on a 30-day TTL behind a 7-day failure backoff,
+  // DNS on its own 12-hour TTL). The IP reported for THIS probe doesn't depend
+  // on any of that — see applyObservedIp.
   return typeof website.targetMetadataLastChecked !== "number";
 };
 
@@ -445,6 +466,27 @@ const mergeTargetMetadata = (base: TargetMetadata, incoming: TargetMetadata): Ta
     ipFamily: incoming.ipFamily ?? base.ipFamily,
     geo: hasTargetGeo(mergedGeo) ? mergedGeo : undefined,
   };
+};
+
+/**
+ * The IP observed on the wire always beats the stored one. `targetIp` is
+ * otherwise only re-resolved by the daily background refresher (30-day TTL,
+ * and longer while geo enrichment is failing), so after a DNS change the
+ * stored value can lag reality by weeks — and it is what alert emails render.
+ * The probe's own DNS is 2-minute-cached, so this is both free and current.
+ *
+ * Geo fields are left alone: for round-robin / CDN hosts the observed IP
+ * legitimately differs per probe, and blanking country/ISP on every such
+ * probe would flap the UI. The background refresher re-pairs geo with the
+ * current IP.
+ */
+const applyObservedIp = (
+  meta: TargetMetadata,
+  observedIp?: string,
+  observedIpFamily?: number
+): TargetMetadata => {
+  if (!observedIp || observedIp === meta.ip) return meta;
+  return { ...meta, ip: observedIp, ipFamily: observedIpFamily ?? meta.ipFamily };
 };
 
 // Lightweight monotonic counter for BigQuery history record IDs.
@@ -857,6 +899,11 @@ export async function checkRestEndpoint(
   const startTime = Date.now();
   const totalTimeoutMs = CONFIG.getCheckTimeout(website);
 
+  // Declared out here so the error path below can report the IP too — a
+  // connect failure is exactly when knowing which IP we hit matters most.
+  let observedIp: string | undefined;
+  let observedIpFamily: number | undefined;
+
   try {
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
@@ -908,6 +955,14 @@ export async function checkRestEndpoint(
         useRange,
         readBody,
         totalTimeoutMs,
+        // First observation only. Later hops (redirect chain, https fallback)
+        // can point at a different host, and targetIp/targetHostname must stay
+        // describing the URL the user actually monitors.
+        onResolved: (ip, family) => {
+          if (observedIp !== undefined) return;
+          observedIp = ip;
+          observedIpFamily = family;
+        },
       });
 
     let httpResult: HttpRequestResult;
@@ -1007,7 +1062,11 @@ export async function checkRestEndpoint(
 
     const responseTime = httpResult.timings.totalMs;
     const targetMetaRaw = await targetMetaPromise;
-    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    const targetMeta = applyObservedIp(
+      mergeTargetMetadata(cachedTargetMeta, targetMetaRaw),
+      observedIp,
+      observedIpFamily
+    );
     const edge = extractEdgeHints(httpResult.headers);
     
     // Read only the first chunk for validation to avoid full body downloads
@@ -1203,10 +1262,12 @@ export async function checkRestEndpoint(
     const responseTime = Date.now() - startTime;
 
     const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
-    const targetMeta = targetMetaRaw
-      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
-      : cachedTargetMeta;
-    
+    const targetMeta = applyObservedIp(
+      targetMetaRaw ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw) : cachedTargetMeta,
+      observedIp,
+      observedIpFamily
+    );
+
     // Distinguish between timeout errors and connection errors
     const timeoutStage = error instanceof Error ? (error as Error & { stage?: string }).stage : undefined;
     const isTimeout = Boolean(timeoutStage) || (error instanceof Error && error.name === 'AbortError');
@@ -1258,6 +1319,10 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
     : Promise.resolve(cachedTargetMeta);
   const startTime = Date.now();
 
+  // See applyObservedIp — the IP we actually dialed beats the stored one.
+  let observedIp: string | undefined;
+  let observedIpFamily: number | undefined;
+
   try {
     const { hostname, port } = parseSocketTarget(website.url, "tcp:");
     const connectStart = Date.now();
@@ -1266,6 +1331,12 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
     const socketResult = await new Promise<SocketCheckResult>((resolve) => {
       let settled = false;
       const socket = net.createConnection({ host: hostname, port });
+
+      socket.once("lookup", (err, address, family) => {
+        if (err || !address) return;
+        observedIp = address;
+        observedIpFamily = typeof family === "number" ? family : (net.isIP(address) || 4);
+      });
 
       const finalize = (result: SocketCheckResult) => {
         if (settled) return;
@@ -1320,7 +1391,11 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
     });
 
     const targetMetaRaw = await targetMetaPromise;
-    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    const targetMeta = applyObservedIp(
+      mergeTargetMetadata(cachedTargetMeta, targetMetaRaw),
+      observedIp,
+      observedIpFamily
+    );
     return {
       ...socketResult,
       targetHostname: targetMeta.hostname,
@@ -1340,9 +1415,11 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
   } catch (error) {
     const responseTime = Date.now() - startTime;
     const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
-    const targetMeta = targetMetaRaw
-      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
-      : cachedTargetMeta;
+    const targetMeta = applyObservedIp(
+      targetMetaRaw ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw) : cachedTargetMeta,
+      observedIp,
+      observedIpFamily
+    );
     return {
       status: 'offline',
       responseTime,
@@ -1418,6 +1495,10 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
     : Promise.resolve(cachedTargetMeta);
   const startTime = Date.now();
 
+  // See applyObservedIp — the IP we actually dialed beats the stored one.
+  let observedIp: string | undefined;
+  let observedIpFamily: number | undefined;
+
   try {
     const { hostname, port } = parseSocketTarget(website.url, "udp:");
     const timeoutMs = CONFIG.getCheckTimeout(website);
@@ -1474,6 +1555,17 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
       });
 
       socket.connect(port, hostname, () => {
+        // dgram resolves the host during connect(); remoteAddress() is the
+        // peer we're actually sending to.
+        try {
+          const remote = socket.remoteAddress();
+          if (remote?.address) {
+            observedIp = remote.address;
+            observedIpFamily = remote.family === "IPv6" ? 6 : 4;
+          }
+        } catch {
+          // Socket already closed — fall back to the stored metadata.
+        }
         socket.send(Buffer.alloc(0), (error) => {
           if (error) {
             clearTimeout(timeout);
@@ -1493,7 +1585,11 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
     });
 
     const targetMetaRaw = await targetMetaPromise;
-    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    const targetMeta = applyObservedIp(
+      mergeTargetMetadata(cachedTargetMeta, targetMetaRaw),
+      observedIp,
+      observedIpFamily
+    );
     return {
       ...socketResult,
       targetHostname: targetMeta.hostname,
@@ -1513,9 +1609,11 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
   } catch (error) {
     const responseTime = Date.now() - startTime;
     const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
-    const targetMeta = targetMetaRaw
-      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
-      : cachedTargetMeta;
+    const targetMeta = applyObservedIp(
+      targetMetaRaw ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw) : cachedTargetMeta,
+      observedIp,
+      observedIpFamily
+    );
     return {
       status: 'offline',
       responseTime,

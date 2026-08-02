@@ -1692,6 +1692,7 @@ export async function processOneCheck(
         const retryWebsite: Website = {
           ...(check as Website),
           status, responseTime, detailedStatus: checkResult.detailedStatus,
+          targetIp: checkResult.targetIp ?? check.targetIp,
           lastStatusCode: checkResult.statusCode, lastError: checkResult.error ?? null,
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
@@ -1717,6 +1718,7 @@ export async function processOneCheck(
         const retryWebsite: Website = {
           ...(check as Website),
           status, responseTime, detailedStatus: checkResult.detailedStatus,
+          targetIp: checkResult.targetIp ?? check.targetIp,
           lastStatusCode: checkResult.statusCode, lastError: null,
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
@@ -2010,6 +2012,7 @@ export async function processOneCheck(
             ...(check as Website),
             status: "offline",
             detailedStatus: "DOWN",
+            targetIp: checkResult.targetIp ?? check.targetIp,
             lastError: (check as Website).lastError ?? null,
           };
           const owedResult = await triggerAlert(downSnapshot, "online", "offline",
@@ -2030,6 +2033,10 @@ export async function processOneCheck(
         ...(check as Website),
         status, responseTime, responseTimeLimit: check.responseTimeLimit,
         detailedStatus: checkResult.detailedStatus,
+        // Prefer the IP THIS probe resolved. `check.targetIp` is the stored
+        // value, refreshed only by the daily background job, so on a DNS
+        // change the alert body would otherwise name a long-dead IP.
+        targetIp: checkResult.targetIp ?? check.targetIp,
         lastStatusCode: checkResult.statusCode,
         lastError: status === "offline" ? (checkResult.error ?? null) : null,
         consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
@@ -2072,6 +2079,7 @@ export async function processOneCheck(
         const retryWebsite: Website = {
           ...(check as Website),
           status, responseTime, detailedStatus: checkResult.detailedStatus,
+          targetIp: checkResult.targetIp ?? check.targetIp,
           lastStatusCode: checkResult.statusCode, lastError: checkResult.error ?? null,
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
@@ -2095,6 +2103,7 @@ export async function processOneCheck(
         const retryWebsite: Website = {
           ...(check as Website),
           status, responseTime, detailedStatus: checkResult.detailedStatus,
+          targetIp: checkResult.targetIp ?? check.targetIp,
           lastStatusCode: checkResult.statusCode, lastError: null,
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
@@ -3999,6 +4008,7 @@ export const manualCheck = onCall({
           responseTime: status === 'online' ? responseTime : 0,
           detailedStatus: checkResult.detailedStatus,
           lastStatusCode: checkResult.statusCode,
+          targetIp: checkResult.targetIp ?? website.targetIp,
           lastError: status === 'offline' ? (checkResult.error ?? null) : null,
           consecutiveFailures: nextConsecutiveFailures,
           consecutiveSuccesses: status === 'online' ? 1 : 0,

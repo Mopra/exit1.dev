@@ -3,7 +3,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
-import { buildTargetMetadataBestEffort, TargetMetadata } from "./target-metadata";
+import { buildTargetMetadataBestEffort, resolveTarget, TargetMetadata } from "./target-metadata";
 import { CONFIG } from "./config";
 
 const FIRESTORE_BATCH_SIZE = 400;
@@ -119,7 +119,7 @@ const processUpdatesIndividually = async (updates: PendingUpdate[]): Promise<voi
   }
 };
 
-const needsRefresh = (website: Website, now: number): boolean => {
+const needsGeoRefresh = (website: Website, now: number): boolean => {
   // targetMetadataLastChecked is only written after a successful geo
   // enrichment; targetMetadataLastAttempt is written when an attempt fails to
   // resolve geo. A check is due when its last success is missing/expired AND
@@ -136,12 +136,36 @@ const needsRefresh = (website: Website, now: number): boolean => {
   return !failedRecently;
 };
 
+// DNS is checked on its own short TTL. It must NOT be gated on the geo backoff:
+// that coupling is what let a propagated A-record change stay invisible in the
+// UI and in alert emails for weeks while geo enrichment was failing.
+const needsDnsRefresh = (website: Website, now: number): boolean => {
+  const lastDns = website.targetDnsLastChecked;
+  return !(typeof lastDns === "number" && now - lastDns < CONFIG.TARGET_DNS_TTL_MS);
+};
+
+const needsRefresh = (website: Website, now: number): boolean =>
+  needsDnsRefresh(website, now) || needsGeoRefresh(website, now);
+
+// DNS-only variant of buildTargetMetadataBestEffort — skips the GeoIP call so a
+// daily DNS sweep doesn't drag thousands of known-dead geo lookups along.
+const buildTargetDnsOnly = async (inputUrl: string): Promise<TargetMetadata> => {
+  try {
+    const hostname = new URL(inputUrl).hostname;
+    const resolved = await resolveTarget(hostname);
+    return { hostname, ip: resolved.ip, ipsJson: resolved.ipsJson, ipFamily: resolved.ipFamily };
+  } catch {
+    return {};
+  }
+};
+
 const buildUpdateData = (meta: TargetMetadata, now: number): Partial<Website> => {
   const update: Partial<Website> = {};
   if (meta.hostname) update.targetHostname = meta.hostname;
   if (meta.ip) update.targetIp = meta.ip;
   if (meta.ipsJson) update.targetIpsJson = meta.ipsJson;
   if (meta.ipFamily) update.targetIpFamily = meta.ipFamily;
+  if (meta.ip) update.targetDnsLastChecked = now;
   if (meta.geo?.country) update.targetCountry = meta.geo.country;
   if (meta.geo?.region) update.targetRegion = meta.geo.region;
   if (meta.geo?.city) update.targetCity = meta.geo.city;
@@ -168,13 +192,27 @@ const processWebsite = async (
   const docId = doc.id;
 
   try {
-    const meta = await buildTargetMetadataBestEffort(website.url);
+    // Only pay for the geo lookup when geo is actually due. A check that just
+    // needs its DNS re-checked takes the cheap path.
+    const withGeo = needsGeoRefresh(website, now);
+    const meta = withGeo
+      ? await buildTargetMetadataBestEffort(website.url)
+      : await buildTargetDnsOnly(website.url);
     const updateData = buildUpdateData(meta, now);
 
     // Geo didn't resolve — stamp the attempt so the next runs back off
-    // (TARGET_METADATA_FAILURE_BACKOFF_MS) instead of retrying daily.
-    if (typeof updateData.targetMetadataLastChecked !== "number") {
+    // (TARGET_METADATA_FAILURE_BACKOFF_MS) instead of retrying daily. Only
+    // meaningful when geo was actually attempted; a DNS-only pass must not
+    // stamp it, or it would extend the backoff without having tried.
+    if (withGeo && typeof updateData.targetMetadataLastChecked !== "number") {
       updateData.targetMetadataLastAttempt = now;
+    }
+
+    // A DNS-only pass whose resolve failed produces no fields at all; an empty
+    // batch.update() is rejected by Firestore, so drop it.
+    if (Object.keys(updateData).length === 0) {
+      lookupFailureCount++;
+      return;
     }
 
     pendingUpdates.push({ docId, updateData });
