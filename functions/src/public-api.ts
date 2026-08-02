@@ -1984,6 +1984,10 @@ async function handleGetAccount(
         webhookCount: webhookSnap.data().count,
       },
       dashboardUrl: 'https://app.exit1.dev/checks',
+      // Agent-onboarded users never see the pricing page, so a free account
+      // silently caps at 5 checks and slow intervals with no signal that a
+      // faster plan exists. Give the agent something concrete to hand off with.
+      upgradeUrl: tier === 'free' ? 'https://app.exit1.dev/billing' : null,
     },
   });
 }

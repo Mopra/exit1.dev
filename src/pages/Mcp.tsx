@@ -56,10 +56,15 @@ const PATH_CODE = `${INLINE_CODE} break-all`;
 /** The prompt from the marketing hero. Kept identical so both surfaces teach the same flow. */
 const SETUP_PROMPT = `Set up uptime monitoring for this project with Exit1.
 
-1. Add the MCP server, then keep going:
-   claude mcp add --transport http exit1 ${REMOTE_URL}
-   (If that command doesn't apply to your tool, add the same HTTP MCP server
-   however your tool does it. Sign-in happens in the browser.)
+1. Connect the MCP server. In Claude Code:
+     claude mcp add --transport http exit1 ${REMOTE_URL}
+   Other tools: add the same HTTP MCP server however your tool does it.
+
+   Connecting needs a one-time browser sign-in. Most AI tools CANNOT open that
+   sign-in from inside a conversation turn. If the connection isn't
+   authenticated, don't retry or improvise — stop and tell me to run /mcp (or my
+   tool's equivalent), authenticate in the browser, and come back to you. Then
+   carry on from step 2.
 
 2. Call get_account to see my plan limits, and list_checks to see what's
    already monitored.

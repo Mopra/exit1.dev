@@ -23,7 +23,7 @@ import * as logger from "firebase-functions/logger";
 import { createHash, randomBytes } from "crypto";
 import { firestore } from "./init";
 import { FixedWindowRateLimiter, getClientIp } from "./rate-limit";
-import { type ApiScope, ALL_SCOPES } from "./api-scopes";
+import { type ApiScope } from "./api-scopes";
 import {
   DEFAULT_MCP_SCOPES,
   appendQuery,
@@ -646,6 +646,19 @@ async function revokeTokensForClientAndUser(clientId: string, userId: string): P
 
 // ── Metadata documents ──
 
+/**
+ * Scopes we advertise in discovery metadata.
+ *
+ * Deliberately NOT `ALL_SCOPES`. Clients read `scopes_supported` and request the
+ * whole list — Claude Code does exactly that — so advertising `checks:delete`
+ * meant every first-time user was shown a red "this can permanently delete your
+ * monitors" warning on the consent screen for access their agent never asked
+ * for. Withholding it from the advertisement is what actually keeps it out of
+ * the default grant; the constant below is still honoured if a client names it
+ * explicitly.
+ */
+const ADVERTISED_SCOPES = DEFAULT_MCP_SCOPES;
+
 function authorizationServerMetadata() {
   return {
     issuer: ISSUER,
@@ -653,7 +666,7 @@ function authorizationServerMetadata() {
     token_endpoint: `${ISSUER}/oauth/token`,
     registration_endpoint: `${ISSUER}/oauth/register`,
     revocation_endpoint: `${ISSUER}/oauth/revoke`,
-    scopes_supported: ALL_SCOPES,
+    scopes_supported: ADVERTISED_SCOPES,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
@@ -666,7 +679,7 @@ function protectedResourceMetadata() {
   return {
     resource: MCP_RESOURCE_URL,
     authorization_servers: [ISSUER],
-    scopes_supported: ALL_SCOPES,
+    scopes_supported: ADVERTISED_SCOPES,
     bearer_methods_supported: ["header"],
     resource_documentation: "https://docs.exit1.dev/integrations/mcp",
   };

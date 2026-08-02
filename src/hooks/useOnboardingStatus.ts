@@ -64,12 +64,31 @@ export function markOnboardingCompleteLocally(userId: string) {
   }
 }
 
+/**
+ * Destinations that must never be interrupted by the onboarding wizard.
+ *
+ * The OAuth consent screen is the middle of a handshake with an external AI
+ * tool that is sitting blocked on its callback. Dropping a five-step survey in
+ * front of it strands both the agent and the user — the whole promise of
+ * agent-native onboarding is sign up, approve, and you're back in your editor.
+ * These users still see onboarding the next time they open the dashboard.
+ *
+ * Anchored patterns only: `from` is a router pathname, but this decides whether
+ * to skip a gate, so it gets matched exactly rather than by prefix.
+ */
+const ONBOARDING_BYPASS_PATTERNS: RegExp[] = [
+  /^\/authorize\/[A-Za-z0-9_-]{1,128}$/,
+];
+
 // Auth handlers run before `useAuth().userId` updates, so they can't consult
 // the per-user cache synchronously. Route every post-auth redirect through
 // /onboarding; the page hydrates server state and forwards to `next` (or
 // /checks) if the user is already onboarded.
 export function resolvePostAuthDestination(from?: string | null): string {
   if (!from) return '/onboarding';
+  if (ONBOARDING_BYPASS_PATTERNS.some((pattern) => pattern.test(from))) {
+    return from;
+  }
   return `/onboarding?next=${encodeURIComponent(from)}`;
 }
 
