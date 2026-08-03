@@ -86,6 +86,7 @@ export default function Authorize() {
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState<"approve" | "deny" | null>(null);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
+  const [handoffUrl, setHandoffUrl] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -116,8 +117,13 @@ export default function Authorize() {
 
     const result = await apiClient.decideMcpAuthorization(requestId, approved);
     if (result.success && result.data?.redirectTo) {
-      // Hard navigation, not react-router: the target is the client's own
-      // callback (usually a loopback port), which is outside this app.
+      // Render the hand-off panel *before* navigating. The target is the AI
+      // tool's own loopback callback server, and if that has already given up
+      // waiting — a slow signup, a closed terminal — the redirect lands on
+      // nothing and the user is left on a dead tab with no idea whether their
+      // approval took. This way the page underneath says what happened.
+      setHandoffUrl(result.data.redirectTo);
+      // Hard navigation, not react-router: the target is outside this app.
       window.location.replace(result.data.redirectTo);
       return;
     }
@@ -134,6 +140,39 @@ export default function Authorize() {
           <AlertTitle>This request can&rsquo;t be completed</AlertTitle>
           <AlertDescription>{loadError}</AlertDescription>
         </Alert>
+      </ConsentShell>
+    );
+  }
+
+  // Only visible if the redirect above didn't take us away — i.e. the tool's
+  // callback server is gone. The approval already succeeded server-side, so the
+  // job here is to say so and offer a way through rather than look broken.
+  if (handoffUrl) {
+    return (
+      <ConsentShell>
+        <Card className="bg-card border-0 shadow-lg">
+          <CardHeader className="p-6 sm:p-8">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <Check className="h-5 w-5 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="text-xl">Approved</CardTitle>
+                <CardDescription>Sending you back to your AI tool&hellip;</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4 px-6 pb-6 pt-0 sm:px-8 sm:pb-8">
+            <p className="text-sm text-muted-foreground">
+              If nothing happened, your AI tool has probably stopped waiting for this
+              connection. Retry it there &mdash; you won&rsquo;t have to approve again unless it
+              asks.
+            </p>
+            <Button asChild variant="secondary" className="cursor-pointer">
+              <a href={handoffUrl}>Try the hand-off again</a>
+            </Button>
+          </CardContent>
+        </Card>
       </ConsentShell>
     );
   }

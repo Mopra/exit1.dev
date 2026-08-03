@@ -657,7 +657,17 @@ export function LoginForm({
                 
                 <div className="text-center text-sm">
                   Don&apos;t have an account?{" "}
-                  <Link to="/sign-up" className="underline underline-offset-4 cursor-pointer">
+                  {/* Forward `state` so the post-auth destination survives the
+                      hop. AuthGuard stashes where the visitor was headed in
+                      state.from; dropping it here orphans anything that sent
+                      them to sign in — most visibly the OAuth consent screen,
+                      where the AI tool is left waiting on a callback that never
+                      comes. */}
+                  <Link
+                    to="/sign-up"
+                    state={location.state}
+                    className="underline underline-offset-4 cursor-pointer"
+                  >
                     Sign up
                   </Link>
                 </div>
