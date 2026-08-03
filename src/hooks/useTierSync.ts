@@ -15,24 +15,25 @@ const syncMyTierFn = httpsCallable(functions, 'syncMyTier');
  * function that HAS secrets happens to refresh the cache.
  *
  * Solution: The frontend knows the correct tier from Clerk. When the user is on
- * Nano, we proactively call syncMyTier to update Firestore. This runs once per
- * session as a background fire-and-forget call.
+ * any paid tier, we proactively call syncMyTier to update Firestore. This runs
+ * once per session as a background fire-and-forget call.
  */
 export function useTierSync() {
   const { userId } = useAuth();
-  const { nano, isLoading } = usePlan();
+  const { paid, isLoading } = usePlan();
   const hasSynced = useRef(false);
 
   useEffect(() => {
     if (isLoading || !userId || hasSynced.current) return;
 
-    // Only sync when Clerk says the user is on Nano — the most common mismatch
-    // is Firestore stuck at 'free' after payment. No need to sync free users.
-    if (nano) {
+    // Sync on ANY paid tier, not just Nano-or-better — the most common mismatch
+    // is Firestore stuck at 'free' after payment, and that hits Indie exactly as
+    // hard. No need to sync free users.
+    if (paid) {
       hasSynced.current = true;
       syncMyTierFn({}).catch(() => {
         // Best-effort — if it fails, the next page load will retry
       });
     }
-  }, [userId, nano, isLoading]);
+  }, [userId, paid, isLoading]);
 }

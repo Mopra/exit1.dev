@@ -54,7 +54,7 @@ import { usePlan } from '../hooks/usePlan';
 import { toast } from 'sonner';
 import type { StatusPage, StatusPageDisplay, StatusPageFont, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
 import { buildFolderList, normalizeFolder } from '../lib/folder-utils';
-import { getMaxStatusPagesForTier } from '../lib/subscription';
+import { getMaxStatusPagesForTier, nextTierWithMore } from '../lib/subscription';
 
 // Server-side render endpoints (functions/src/status-pages.ts → MAX_CHECKS)
 // silently trim a status page to its first 50 resolved checks to bound the
@@ -164,6 +164,12 @@ const Status: React.FC = () => {
   const maxStatusPages = getMaxStatusPagesForTier(tier);
   const atTierLimit = statusPages.length >= maxStatusPages;
   const atFreeLimit = !nano && atTierLimit;
+  // Name the real next tier and its real cap. "Unlimited status pages" was never
+  // true — Nano allows 5 — and Indie sees this same upsell at its 1-page cap.
+  const nextStatusPageTier = nextTierWithMore(tier, 'maxStatusPages');
+  const statusPageUpsell = nextStatusPageTier
+    ? `Upgrade to ${nextStatusPageTier.name} for up to ${nextStatusPageTier.max} status pages and custom branding.`
+    : 'You have the highest status-page allowance available.';
   const canCreateStatusPage = !atTierLimit;
   const hasDowngradedPages = statusPages.some((p) => p.disabledReason === 'plan_downgrade');
 
@@ -556,12 +562,12 @@ const Status: React.FC = () => {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground">Want more status pages?</p>
               <p className="text-xs text-muted-foreground mt-0.5 mb-3">
-                Upgrade to Nano for unlimited status pages and custom branding.
+                {statusPageUpsell}
               </p>
               <Button asChild size="sm" className="cursor-pointer gap-1.5">
                 <Link to="/billing">
                   <Sparkles className="w-3.5 h-3.5" />
-                  Upgrade to Nano
+                  Upgrade to {nextStatusPageTier?.name ?? 'Nano'}
                 </Link>
               </Button>
             </div>
@@ -787,14 +793,14 @@ const Status: React.FC = () => {
                               Want more status pages?
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              Upgrade to Nano for unlimited status pages and custom branding.
+                              {statusPageUpsell}
                             </p>
                           </div>
                         </div>
                         <Button asChild size="sm" className="shrink-0 cursor-pointer gap-1.5">
                           <Link to="/billing">
                             <Sparkles className="w-3.5 h-3.5" />
-                            Upgrade to Nano
+                            Upgrade to {nextStatusPageTier?.name ?? 'Nano'}
                           </Link>
                         </Button>
                       </div>

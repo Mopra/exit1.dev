@@ -46,7 +46,16 @@ const FORMATS: { value: SnippetFormat; label: string }[] = [
   { value: 'markdown', label: 'Markdown' },
 ];
 
-export function BadgeEmbed({ checkId, checkName, nano = false }: { checkId: string; checkName: string; nano?: boolean }) {
+/**
+ * `canHideBranding` must mirror `PAID_TIERS` in functions/src/badge.ts, which is
+ * what actually honours `&branding=false` — that set includes Indie, so gating
+ * this on a Nano-or-better boolean locks a toggle the backend would have allowed.
+ */
+export function BadgeEmbed({
+  checkId,
+  checkName,
+  canHideBranding = false,
+}: { checkId: string; checkName: string; canHideBranding?: boolean }) {
   const [variant, setVariant] = useState<BadgeVariant>('status');
   const [format, setFormat] = useState<SnippetFormat>('script');
   const [hideBranding, setHideBranding] = useState(false);
@@ -95,7 +104,7 @@ export function BadgeEmbed({ checkId, checkName, nano = false }: { checkId: stri
       </div>
 
       {/* Branding toggle */}
-      {nano ? (
+      {canHideBranding ? (
         <div className="flex items-center justify-between">
           <span className="text-xs text-white/70">Hide exit1 branding</span>
           <button

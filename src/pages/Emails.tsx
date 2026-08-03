@@ -42,7 +42,7 @@ const sendTestEmailFn = httpsCallable(functions, 'sendTestEmail');
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
-  const { pro, nano } = usePlan();
+  const { pro, paid } = usePlan();
   const isMobile = useMobile(640);
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
 
@@ -396,7 +396,7 @@ export default function Emails() {
           monthlyReached={n.monthlyReached}
           monthlyResetLabel={monthlyResetLabel}
           isInitialized={n.isInitialized}
-          isFree={!nano}
+          isFree={!paid}
           onResetToDefault={n.handleResetToDefault}
           canReset={canReset}
           onTest={n.handleTest}

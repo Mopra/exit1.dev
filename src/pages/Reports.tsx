@@ -56,7 +56,9 @@ const Reports: React.FC = () => {
   // Use non-realtime mode to reduce Firestore reads - Reports page only needs the check list for the dropdown
   const { checks, loading: checksLoading } = useChecks(userId ?? null, log, { realtime: false });
   const hasNoChecks = !checksLoading && (!checks || checks.length === 0);
-  const { nano } = usePlan();
+  // The 60-day window is a paid-tier feature, not a Nano-or-better one — every
+  // paid tier (Indie included) retains 60 days of history.
+  const { paid } = usePlan();
   const isMobile = useMobile();
   const requestIdRef = React.useRef(0);
 
@@ -651,7 +653,7 @@ const Reports: React.FC = () => {
         <FilterBar
           timeRange={calendarDateRange ? '' : (timeRange as TimeRange)}
           onTimeRangeChange={(range) => {
-            if (range === '60d' && !nano) {
+            if (range === '60d' && !paid) {
               setShowUpgradeBanner(true);
               return;
             }
@@ -662,7 +664,7 @@ const Reports: React.FC = () => {
           disableTimeRangeToggle={Boolean(calendarDateRange)}
           dateRange={calendarDateRange}
           onDateRangeChange={setCalendarDateRange}
-          maxDateRangeDays={nano ? 60 : 30}
+          maxDateRangeDays={paid ? 60 : 30}
           searchTerm={''}
           onSearchChange={() => {}}
           hideSearch

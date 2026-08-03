@@ -5,6 +5,13 @@
 // leaves room for OAuth-based integrations later without forcing the URL form
 // shape onto them.
 
+import {
+  TIER_DISPLAY_NAME,
+  getMaxWebhooksForTier,
+  nextTierWithMore,
+  type TierKey,
+} from './subscription';
+
 export type WebhookPlatformType =
   | 'slack'
   | 'discord'
@@ -73,8 +80,26 @@ interface ScopeLabels {
   failureEmailSubject: string;
   crossLinkLabel: string;         // "Looking for Slack/Discord/etc? See Webhooks →"
   crossLinkPath: string;
-  upgradeLimitMessage: (max: number) => string;
-  downgradeMessage: string;
+  upgradeLimitMessage: (tier: TierKey) => string;
+  downgradeMessage: (tier: TierKey) => string;
+}
+
+// Alert-channel caps are per-tier (Free 1, Indie 3, Nano 5, Pro 50) and counted
+// across BOTH scopes, since they share one Firestore collection. The copy below
+// is derived from TIER_LIMITS_MIRROR rather than hardcoded so a tier change
+// can't leave the UI advertising a cap the backend doesn't honour.
+function channelLimitMessage(tier: TierKey): string {
+  const max = getMaxWebhooksForTier(tier);
+  const next = nextTierWithMore(tier, 'maxWebhooks');
+  const reached = `You've reached the ${TIER_DISPLAY_NAME[tier]} plan limit of ${max} alert channel${max === 1 ? '' : 's'} (webhooks and integrations combined).`;
+  return next ? `${reached} Upgrade to ${next.name} for up to ${next.max}.` : reached;
+}
+
+function channelDowngradeMessage(plural: string): (tier: TierKey) => string {
+  return (tier) => {
+    const max = getMaxWebhooksForTier(tier);
+    return `Your ${plural} were disabled after downgrading. You can re-enable up to ${max} across webhooks and integrations on the ${TIER_DISPLAY_NAME[tier]} plan.`;
+  };
 }
 
 const WEBHOOK_LABELS: ScopeLabels = {
@@ -102,8 +127,8 @@ const WEBHOOK_LABELS: ScopeLabels = {
   failureEmailSubject: 'Webhook',
   crossLinkLabel: 'Looking for Pushover, PagerDuty, or Opsgenie? Find them under Integrations →',
   crossLinkPath: '/integrations',
-  upgradeLimitMessage: (max) => `You've reached the free plan limit of ${max} alert channel${max === 1 ? '' : 's'} (webhooks and integrations combined). Upgrade to Nano for up to 50.`,
-  downgradeMessage: 'Your webhooks were disabled after downgrading. You can re-enable up to 1 across webhooks and integrations on the Free plan.',
+  upgradeLimitMessage: channelLimitMessage,
+  downgradeMessage: channelDowngradeMessage('webhooks'),
 };
 
 const INTEGRATION_LABELS: ScopeLabels = {
@@ -131,8 +156,8 @@ const INTEGRATION_LABELS: ScopeLabels = {
   failureEmailSubject: 'Integration',
   crossLinkLabel: 'Looking for Slack, Discord, Teams, or a generic webhook? Find them under Webhooks →',
   crossLinkPath: '/webhooks',
-  upgradeLimitMessage: (max) => `You've reached the free plan limit of ${max} alert channel${max === 1 ? '' : 's'} (webhooks and integrations combined). Upgrade to Nano for up to 50.`,
-  downgradeMessage: 'Your integrations were disabled after downgrading. You can re-enable up to 1 across webhooks and integrations on the Free plan.',
+  upgradeLimitMessage: channelLimitMessage,
+  downgradeMessage: channelDowngradeMessage('integrations'),
 };
 
 export function labelsForScope(scope: IntegrationScope): ScopeLabels {

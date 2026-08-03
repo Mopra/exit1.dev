@@ -13,6 +13,7 @@ import type { WebhookCheckFilter, WebhookSettings, TestResult, WebhookEvent } fr
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
 import { usePlan } from '@/hooks/usePlan';
+import { getMaxWebhooksForTier } from '../lib/subscription';
 import type { IntegrationScope, WebhookPlatformType } from '../lib/integration-scope';
 import {
   labelsForScope,
@@ -40,7 +41,7 @@ interface WebhooksContentProps {
 
 const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   const { userId } = useAuth();
-  const { nano } = usePlan();
+  const { tier } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const labels = labelsForScope(scope);
   const allowedPlatformTypes = platformTypesForScope(scope);
@@ -62,12 +63,19 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
 
   // Plan limit is counted across BOTH scopes (one Firestore collection, one
   // resource type). Splitting limits per-scope can come later if needed.
-  const maxWebhooks = nano ? 50 : 1;
-  const atWebhookLimit = !nano && webhooks.length >= maxWebhooks;
+  // Read from the tier mirror, not a paid/free boolean — Indie sits between Free
+  // and Nano (3 channels) and a boolean silently collapses it onto Free.
+  const maxWebhooks = getMaxWebhooksForTier(tier);
+  const atWebhookLimit = webhooks.length >= maxWebhooks;
   // Only flag downgraded webhooks that belong to THIS scope so the banner
-  // doesn't appear on a page that has nothing to do with them.
+  // doesn't appear on a page that has nothing to do with them. `disabledReason`
+  // is never cleared on re-enable, so require `enabled === false` too — otherwise
+  // the banner sticks around forever for anyone who was ever downgraded.
   const hasDowngradedWebhooks = webhooks.some(
-    (w) => w.disabledReason === 'plan_downgrade' && scopeOfWebhookType(w.webhookType) === scope,
+    (w) =>
+      w.enabled === false &&
+      w.disabledReason === 'plan_downgrade' &&
+      scopeOfWebhookType(w.webhookType) === scope,
   );
 
   const log = useCallback((_msg: string) => {}, []);
@@ -412,12 +420,12 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
       />
 
       <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
-        {hasDowngradedWebhooks && !nano && (
-          <DowngradeBanner message={labels.downgradeMessage} />
+        {hasDowngradedWebhooks && (
+          <DowngradeBanner message={labels.downgradeMessage(tier)} />
         )}
 
         {atWebhookLimit && !hasDowngradedWebhooks && (
-          <UpgradeBanner message={labels.upgradeLimitMessage(maxWebhooks)} />
+          <UpgradeBanner message={labels.upgradeLimitMessage(tier)} />
         )}
 
         {/* Cross-link to the sibling page so existing users can find items that

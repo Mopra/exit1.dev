@@ -21,7 +21,12 @@ import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
 import type { Website } from '../types';
 import { usePlan } from "@/hooks/usePlan";
-import { getMinCheckIntervalSecondsForTier } from "@/lib/subscription";
+import {
+  TIER_DISPLAY_NAME,
+  getMaxChecksForTier,
+  getMinCheckIntervalSecondsForTier,
+  nextTierWithMore,
+} from "@/lib/subscription";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useUserPreferences } from "../hooks/useUserPreferences";
 import CheckFolderView from "../components/check/CheckFolderView";
@@ -133,12 +138,23 @@ const Checks: React.FC = () => {
     checks.some((check) => (check.folder ?? '').trim().length > 0)
   ), [checks]);
 
-  const maxChecks = nano ? 200 : 10;
-  const atCheckLimit = !nano && checks.length >= maxChecks;
-  const isGrandfathered = !nano && checks.length > maxChecks;
+  // Per-tier check cap — mirrors TIER_LIMITS[tier].maxChecks (Free 5, Indie 10,
+  // Nano 100, Pro 1000). Must not be a paid/free boolean: that reported 10 to
+  // Free users the backend caps at 5, and never showed Nano/Pro their real cap.
+  const maxChecks = getMaxChecksForTier(tier);
+  const nextCheckTier = nextTierWithMore(tier, 'maxChecks');
+  const atCheckLimit = checks.length >= maxChecks;
+  const isGrandfathered = checks.length > maxChecks;
   const hasDowngradedChecks = React.useMemo(() =>
     checks.some((c) => c.disabledReason === 'plan_downgrade'),
   [checks]);
+  // A drop to Free disables every check outright (handlePlanDowngrade); a drop to
+  // any other tier only prunes past the new cap (enforceTierCeiling). Indie hits
+  // the second path, so "downgraded to Free" is the wrong story to tell it.
+  // `disabledReason` is cleared on re-enable, so this banner self-clears.
+  const downgradeMessage = tier === 'free'
+    ? `Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to ${maxChecks} checks.`
+    : `Some checks were disabled when your plan changed. You can re-enable up to ${maxChecks} checks on ${TIER_DISPLAY_NAME[tier]}.`;
 
   // Wrapper for debounced folder updates that matches the expected signature
   // (the debounced version returns a cleanup function, but components expect void)
@@ -639,17 +655,17 @@ const Checks: React.FC = () => {
         placeholder="Search checks..."
       />
 
-      {hasDowngradedChecks && !nano && (
+      {hasDowngradedChecks && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
-          <DowngradeBanner message="Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to 5 checks." />
+          <DowngradeBanner message={downgradeMessage} />
         </div>
       )}
 
       {atCheckLimit && !hasDowngradedChecks && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
           <UpgradeBanner message={isGrandfathered
-            ? `Your free plan now includes ${maxChecks} checks. Your existing ${checks.length} checks will keep running, but upgrade to Nano to add more.`
-            : `You've reached the free plan limit of ${maxChecks} checks. Upgrade to Nano to monitor up to 200.`
+            ? `Your ${TIER_DISPLAY_NAME[tier]} plan now includes ${maxChecks} checks. Your existing ${checks.length} checks will keep running${nextCheckTier ? `, but upgrade to ${nextCheckTier.name} to add more` : ''}.`
+            : `You've reached the ${TIER_DISPLAY_NAME[tier]} plan limit of ${maxChecks} checks.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
           } />
         </div>
       )}

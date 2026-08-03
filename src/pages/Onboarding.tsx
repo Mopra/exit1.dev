@@ -196,7 +196,9 @@ export default function Onboarding() {
   const [searchParams] = useSearchParams();
   const { userId } = useAuth();
   const { user } = useUser();
-  const { nano, isLoading } = usePlan();
+  // `paid`, not `nano`: an Indie subscriber is already paying and must get the
+  // "already subscribed" confirmation, not the plan picker again.
+  const { tier, paid, isLoading } = usePlan();
   const { data: plans } = usePlans();
   const onboardingStatus = useOnboardingStatus();
 
@@ -525,7 +527,7 @@ export default function Onboarding() {
   // cards at 240px each start getting squeezed below max-w-2xl. Paid users
   // never reach the 4-card layout (they see the short "already subscribed"
   // confirmation), so only widen when we're actually rendering the grid.
-  const isPlanGridVisible = step === 5 && !nano;
+  const isPlanGridVisible = step === 5 && !paid;
 
   return (
     <div className="flex flex-col items-center px-4 py-6 sm:py-10 overflow-y-auto">
@@ -743,7 +745,7 @@ export default function Onboarding() {
           </div>
         )}
 
-        {step === 5 && nano && (
+        {step === 5 && paid && (
           <div>
             <div className="text-center mb-8">
               <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">
@@ -767,7 +769,11 @@ export default function Onboarding() {
             <div className="flex justify-center">
               <Button
                 size="lg"
-                onClick={() => handlePaidCheckoutComplete('nano')}
+                onClick={() =>
+                  // Record the tier they actually hold. This block only renders
+                  // when `paid`, so `tier` is never 'free'.
+                  handlePaidCheckoutComplete(tier as Exclude<PlanKey, 'free'>)
+                }
                 disabled={submitting}
                 className="cursor-pointer gap-2 font-semibold disabled:cursor-not-allowed"
               >
@@ -787,7 +793,7 @@ export default function Onboarding() {
           </div>
         )}
 
-        {step === 5 && !nano && (
+        {step === 5 && !paid && (
           <div>
             <div className="text-center mb-6">
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">

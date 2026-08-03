@@ -429,7 +429,9 @@ const LogsBigQuery: React.FC = () => {
   
   // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
   const { checks, loading: checksLoading } = useChecks(userId ?? null, noop, { realtime: false });
-  const { tier, nano, pro } = usePlan();
+  // The 60-day window is a paid-tier feature, not a Nano-or-better one — every
+  // paid tier (Indie included) retains 60 days of history.
+  const { tier, paid, pro } = usePlan();
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);
@@ -1231,7 +1233,7 @@ const LogsBigQuery: React.FC = () => {
           <FilterBar
             timeRange={customStartDate && customEndDate ? '' : dateRange}
             onTimeRangeChange={(range) => {
-              if (range === '60d' && !nano) {
+              if (range === '60d' && !paid) {
                 setShowUpgradeBanner(true);
                 return;
               }
@@ -1246,7 +1248,7 @@ const LogsBigQuery: React.FC = () => {
             onCustomEndDateChange={setCustomEndDate}
             dateRange={calendarDateRange}
             onDateRangeChange={handleCalendarDateRangeChange}
-            maxDateRangeDays={nano ? 60 : 30}
+            maxDateRangeDays={paid ? 60 : 30}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
             searchPlaceholder="Search websites, errors..."

@@ -334,7 +334,7 @@ export default function CheckForm({
   const userEditedName = useRef(false);
 
   // Get user's subscription tier for check interval limits
-  const { tier, pro, nano } = usePlan();
+  const { tier, pro, paid } = usePlan();
   const { isAdmin } = useAdmin();
   const minCheckIntervalSeconds = getMinCheckIntervalSecondsForTier(tier);
   // Region selection is gated to Pro. Everyone else is locked to vps-eu-1.
@@ -1050,7 +1050,7 @@ export default function CheckForm({
                       </PopoverTrigger>
                       {embedOpen && <div className="fixed inset-0 bg-black/60 z-40" aria-hidden="true" />}
                       <PopoverContent side="bottom" align="end" className="z-50 w-[99vw] sm:w-[36rem] max-w-[36rem] p-4 sm:p-10 bg-black/60 border-white/10 shadow-2xl">
-                        <BadgeEmbed checkId={effectiveCheck.id} checkName={effectiveCheck.name || effectiveCheck.url || 'unknown'} nano={nano} />
+                        <BadgeEmbed checkId={effectiveCheck.id} checkName={effectiveCheck.name || effectiveCheck.url || 'unknown'} canHideBranding={paid} />
                       </PopoverContent>
                     </Popover>
                   ) : (

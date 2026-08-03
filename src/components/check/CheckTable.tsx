@@ -192,8 +192,12 @@ interface CheckTableProps {
   onEdit: (check: Website) => void;
   onDuplicate?: (check: Website) => void;
   isNano?: boolean;
-  /** Minimum check interval (seconds) allowed for the user's tier. Used to filter intervals in BulkEditModal. */
-  minIntervalSeconds?: number;
+  /**
+   * Minimum check interval (seconds) allowed for the user's tier. Used to filter
+   * intervals in BulkEditModal. Required: a paid/free fallback here silently gave
+   * Indie (15s) the Free floor of 300s.
+   */
+  minIntervalSeconds: number;
   groupBy?: 'none' | 'folder';
   onGroupByChange?: (next: 'none' | 'folder') => void;
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
@@ -1857,7 +1861,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
           open={bulkEditModal}
           onOpenChange={setBulkEditModal}
           selectedCount={selectedChecks.size}
-          minIntervalSeconds={minIntervalSeconds ?? (isNano ? 120 : 300)}
+          minIntervalSeconds={minIntervalSeconds}
           isNano={isNano}
           onApply={async (settings) => {
             await onBulkUpdateSettings(Array.from(selectedChecks), settings);

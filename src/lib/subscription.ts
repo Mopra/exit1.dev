@@ -91,10 +91,14 @@ export function isNanoPlan(subscription: SubscriptionLike | null | undefined) {
  * Keep in sync with the backend — the backend is authoritative and re-validates
  * everything here.
  *
- * Note the interval column is NOT monotonic: Indie ($3) probes at 15s while
+ * Note the interval column is NOT monotonic: Indie ($4) probes at 15s while
  * Nano ($9) probes at 2min. Indie is the "few sites, watched closely" tier.
+ *
+ * Always read caps through the helpers below. A `nano ? x : y` ternary silently
+ * treats Indie as Free (and Pro as Nano) — that class of bug is what this mirror
+ * exists to prevent.
  */
-type TierKey = "free" | "indie" | "nano" | "pro"
+export type TierKey = "free" | "indie" | "nano" | "pro"
 
 const TIER_LIMITS_MIRROR: Record<TierKey, {
   emailsPerHour: number
@@ -102,11 +106,12 @@ const TIER_LIMITS_MIRROR: Record<TierKey, {
   maxStatusPages: number
   minCheckIntervalSeconds: number
   maxChecks: number
+  maxWebhooks: number
 }> = {
-  free:  { emailsPerHour: 10,  emailsPerMonth: 10,    maxStatusPages: 1,  minCheckIntervalSeconds: 300, maxChecks: 5 },
-  indie: { emailsPerHour: 50,  emailsPerMonth: 500,   maxStatusPages: 1,  minCheckIntervalSeconds: 15,  maxChecks: 10 },
-  nano:  { emailsPerHour: 50,  emailsPerMonth: 1000,  maxStatusPages: 5,  minCheckIntervalSeconds: 120, maxChecks: 100 },
-  pro:   { emailsPerHour: 500, emailsPerMonth: 10000, maxStatusPages: 50, minCheckIntervalSeconds: 15,  maxChecks: 1000 },
+  free:  { emailsPerHour: 10,  emailsPerMonth: 10,    maxStatusPages: 1,  minCheckIntervalSeconds: 300, maxChecks: 5,    maxWebhooks: 1 },
+  indie: { emailsPerHour: 50,  emailsPerMonth: 500,   maxStatusPages: 1,  minCheckIntervalSeconds: 15,  maxChecks: 10,   maxWebhooks: 3 },
+  nano:  { emailsPerHour: 50,  emailsPerMonth: 1000,  maxStatusPages: 5,  minCheckIntervalSeconds: 120, maxChecks: 100,  maxWebhooks: 5 },
+  pro:   { emailsPerHour: 500, emailsPerMonth: 10000, maxStatusPages: 50, minCheckIntervalSeconds: 15,  maxChecks: 1000, maxWebhooks: 50 },
 }
 
 /** @deprecated Use `TIER_LIMITS_MIRROR` — this only covered free/nano. */
@@ -130,6 +135,42 @@ export function getMaxStatusPagesForTier(tier: TierKey): number {
 
 export function getMaxChecksForTier(tier: TierKey): number {
   return TIER_LIMITS_MIRROR[tier]?.maxChecks ?? TIER_LIMITS_MIRROR.free.maxChecks
+}
+
+export function getMaxWebhooksForTier(tier: TierKey): number {
+  return TIER_LIMITS_MIRROR[tier]?.maxWebhooks ?? TIER_LIMITS_MIRROR.free.maxWebhooks
+}
+
+export const TIER_DISPLAY_NAME: Record<TierKey, string> = {
+  free: "Free",
+  indie: "Indie",
+  nano: "Nano",
+  pro: "Pro",
+}
+
+// Price order. Deliberately NOT interval order — see the note above.
+const TIER_LADDER: readonly TierKey[] = ["free", "indie", "nano", "pro"]
+
+type CountableDimension = "maxChecks" | "maxWebhooks" | "maxStatusPages"
+
+/**
+ * Cheapest tier above `tier` whose cap for `dimension` is strictly larger, or
+ * null when `tier` is already the highest. Upgrade copy should be built from
+ * this rather than hardcoding "upgrade to Nano for 200" — that's how the UI
+ * ended up advertising caps the backend never honoured.
+ */
+export function nextTierWithMore(
+  tier: TierKey,
+  dimension: CountableDimension,
+): { tier: TierKey; name: string; max: number } | null {
+  const limits = TIER_LIMITS_MIRROR[tier] ?? TIER_LIMITS_MIRROR.free
+  const current = limits[dimension]
+  const start = TIER_LADDER.indexOf(tier)
+  for (const candidate of TIER_LADDER.slice(start + 1)) {
+    const max = TIER_LIMITS_MIRROR[candidate][dimension]
+    if (max > current) return { tier: candidate, name: TIER_DISPLAY_NAME[candidate], max }
+  }
+  return null
 }
 
 /**

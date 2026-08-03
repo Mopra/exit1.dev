@@ -10,7 +10,10 @@ import { getTierVisual } from '@/lib/tier-visual';
 
 export function UsageWidget() {
   const { usage, loading } = useUsage();
-  const { tier, isFounders, nano, isLoading: nanoLoading } = usePlan();
+  // SMS is Pro-only (TIER_LIMITS.smsAlerts), and the email-limit upsell only
+  // makes sense for users who aren't already paying — so these are two separate
+  // questions, not one `nano` boolean.
+  const { tier, isFounders, paid, pro, isLoading: nanoLoading } = usePlan();
   const tierVisual = getTierVisual(tier, isFounders);
   const [isExpanded, setIsExpanded] = useState(false);
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
@@ -32,11 +35,11 @@ export function UsageWidget() {
 
   // Auto-expand for free users at limit (only once per session)
   useEffect(() => {
-    if (!loading && !nanoLoading && !nano && isEmailAtLimit && !hasAutoExpanded) {
+    if (!loading && !nanoLoading && !paid && isEmailAtLimit && !hasAutoExpanded) {
       setIsExpanded(true);
       setHasAutoExpanded(true);
     }
-  }, [loading, nanoLoading, nano, isEmailAtLimit, hasAutoExpanded]);
+  }, [loading, nanoLoading, paid, isEmailAtLimit, hasAutoExpanded]);
 
   // Don't show while loading
   if (nanoLoading || loading) {
@@ -54,7 +57,7 @@ export function UsageWidget() {
   const hasLimit = isEmailAtLimit || isSmsAtLimit;
   
   // Show more prominent state for free users at limit
-  const showLimitAlert = !nano && isEmailAtLimit;
+  const showLimitAlert = !paid && isEmailAtLimit;
 
   return (
     <div className="usage-widget fixed bottom-16 right-4 z-20 hidden sm:block">
@@ -82,7 +85,7 @@ export function UsageWidget() {
                 {emailMonthly?.count}/{emailMonthly?.max}
               </span>
             </span>
-            {nano && smsMonthly && (
+            {pro && smsMonthly && (
               <span className="flex items-center gap-1.5">
                 <MessageSquare className="w-3.5 h-3.5" />
                 <span className={cn(
@@ -163,8 +166,8 @@ export function UsageWidget() {
                 />
               </div>
 
-              {/* SMS usage - show actual usage for Nano, locked for free */}
-              {nano && smsMonthly ? (
+              {/* SMS usage - show actual usage on Pro, locked below it */}
+              {pro && smsMonthly ? (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-1.5 text-muted-foreground">
@@ -195,7 +198,7 @@ export function UsageWidget() {
                       <MessageSquare className="w-3.5 h-3.5" />
                       <span>SMS alerts</span>
                     </div>
-                    <span className="text-muted-foreground text-[10px]">Nano only</span>
+                    <span className="text-muted-foreground text-[10px]">Pro only</span>
                   </div>
                   <Progress value={0} className="h-1.5" />
                 </div>
@@ -203,12 +206,12 @@ export function UsageWidget() {
             </div>
 
             {/* Upgrade CTA - only for free users */}
-            {!nano && (
+            {!paid && (
               <div className="mt-4 pt-3 border-t">
                 <Button asChild size="sm" className="w-full gap-1.5 cursor-pointer h-8 text-xs">
                   <Link to="/billing">
                     <Sparkles className="w-3 h-3" />
-                    Upgrade for 1000 emails + SMS
+                    Upgrade for more email alerts
                   </Link>
                 </Button>
               </div>
