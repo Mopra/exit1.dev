@@ -35,7 +35,7 @@ interface PagerDutyEnvelopeOpts {
   links?: Array<{ href: string; text: string }>;
 }
 
-export function buildPagerDutyEnvelope(opts: PagerDutyEnvelopeOpts): object {
+export function buildPagerDutyEnvelope(opts: PagerDutyEnvelopeOpts): Record<string, unknown> {
   // resolve / acknowledge only need the dedup_key — payload fields are ignored
   if (opts.eventAction !== 'trigger') {
     return {
@@ -80,7 +80,7 @@ interface OpsgenieDeliveryOpts {
 
 export interface OpsgenieDelivery {
   url: string;
-  body: object;
+  body: Record<string, unknown>;
 }
 
 // Normalize whatever the user pasted into the canonical /v2/alerts URL.

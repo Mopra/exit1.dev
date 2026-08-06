@@ -312,8 +312,11 @@ export interface StatusPage {
   updatedAt: number;
 }
 
-// Webhook types — canonical definitions live in api/types.ts
-export type { WebhookSettings, WebhookEvent, WebhookCheckFilter, WebhookPayload } from './api/types';
+// Webhook types — canonical definitions live in api/types.ts.
+// `WebhookPayload` deliberately absent: the outbound alert body is a backend wire
+// contract (functions/src/types.ts) that the browser never receives. The unused
+// frontend copy had silently drifted out of sync with it.
+export type { WebhookSettings, WebhookEvent, WebhookCheckFilter } from './api/types';
 
 // Email notification settings
 export interface EmailSettings {

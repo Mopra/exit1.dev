@@ -352,22 +352,49 @@ export type WebhookCheckFilter = {
   folderPaths?: string[];
 };
 
+/**
+ * The JSON body delivered to a plain `webhook` destination for uptime and SSL
+ * events. Documented publicly at docs.exit1.dev/alerting/webhook-alerts — keep the
+ * two in step, and treat any field rename here as a breaking API change.
+ *
+ * This interface previously drifted from the code that builds the payload (it
+ * declared `lastError` where the builder emits `error`, and omitted `summary`,
+ * `type` and `targetIp`). The drift went unnoticed because the payload variables in
+ * alert-webhook.ts were typed `WebhookPayload | ... | object`, and that trailing
+ * `object` member makes the union accept anything at all. Do not reintroduce it —
+ * annotate the provider-specific bodies instead.
+ *
+ * Domain and DNS events use their own flatter shapes (see alert-domain.ts and
+ * alert-dns.ts) and are deliberately NOT described by this type.
+ */
 export interface WebhookPayload {
   event: WebhookEvent;
+  /** Human-readable one-liner, e.g. "🚨 Production Website is DOWN". */
+  summary?: string;
   timestamp: number;
   website: {
     id: string;
     name: string;
     url: string;
+    /** Check type, e.g. 'website' | 'rest_endpoint' | 'ping' | 'tcp'. Absent on SSL payloads. */
+    type?: string;
     status: string;
     responseTime?: number;
     responseTimeLimit?: number;
     responseTimeExceeded?: boolean;
-    lastError?: string | null;
+    /**
+     * Failure reason on `website_down`. Named `error`, not `lastError` — the SSL
+     * payload builder still sets a `lastError` key but always to undefined, so it
+     * is dropped by JSON.stringify and never reaches the wire.
+     */
+    error?: string;
+    lastError?: undefined;
     lastStatusCode?: number;
     detailedStatus?: string;
     statusCodeInfo?: string;
     explanation?: string;
+    /** The IP the probe actually dialed. */
+    targetIp?: string;
     sslCertificate?: {
       valid: boolean;
       issuer?: string;
@@ -380,6 +407,8 @@ export interface WebhookPayload {
   };
   previousStatus?: string;
   userId: string;
+  /** Present and true only on payloads sent by the "Send Test" action. */
+  test?: boolean;
 } 
 
 // Email notification settings

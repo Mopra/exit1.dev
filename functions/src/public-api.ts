@@ -1889,6 +1889,9 @@ async function deliverWebhookTest(
       }],
     };
   } else {
+    // Keep in lockstep with the real uptime payload in alert-webhook.ts and with
+    // the testWebhook callable in webhooks.ts. The error field is `error`, NOT
+    // `lastError` — integrators code against whatever the test sends.
     payload = {
       event: 'website_down',
       summary: '🚨 Test Website is DOWN',
@@ -1897,9 +1900,15 @@ async function deliverWebhookTest(
         id: 'test-website-id',
         name: 'Test Website',
         url: 'https://example.com',
+        type: 'website',
         status: 'offline',
         responseTime: 1500,
-        lastError: 'Connection timeout',
+        responseTimeLimit: 5000,
+        responseTimeExceeded: false,
+        lastStatusCode: 503,
+        statusCodeInfo: 'HTTP 503',
+        error: 'Connection timeout',
+        targetIp: '93.184.216.34',
       },
       previousStatus: 'online',
       userId,

@@ -2,6 +2,18 @@ import { getFirestore, Timestamp, QueryDocumentSnapshot, FieldValue } from "fire
 import * as logger from "firebase-functions/logger";
 import { Website, WebhookSettings, WebhookPayload, WebhookEvent } from './types';
 import { CONFIG } from './config';
+
+/**
+ * Request bodies for non-Exit1 destinations (Slack/Pumble text, Discord content,
+ * Teams Adaptive Card, PagerDuty Events API v2, Opsgenie). Each provider owns its
+ * own schema, so this stays permissive on purpose — but it is a *named* escape
+ * hatch rather than a bare `object` in the payload union, so the WebhookPayload
+ * branch is still type-checked against types.ts.
+ */
+type ProviderWebhookBody =
+  | { text: string }
+  | { content: string }
+  | Record<string, unknown>;
 import { CLERK_SECRET_KEY_PROD } from './env';
 import { createClerkClient } from '@clerk/backend';
 import {
@@ -752,7 +764,10 @@ export async function sendWebhook(
   eventType: WebhookEvent,
   previousStatus: string
 ): Promise<void> {
-  let payload: WebhookPayload | { text: string } | { content: string } | object;
+  // No bare `object` member here: it silently accepted anything and let the
+  // WebhookPayload branch drift out of sync with types.ts (`error` vs `lastError`).
+  // Provider-specific bodies get their own named type instead.
+  let payload: WebhookPayload | ProviderWebhookBody;
   let requestUrl = webhook.url;
 
   const isSlack = webhook.webhookType === 'slack' || webhook.webhookType === 'pumble' || webhook.url.includes('hooks.slack.com') || webhook.url.includes('api.pumble.com') || webhook.url.includes('hooks.pumble.com');
@@ -1095,7 +1110,10 @@ export async function sendSSLWebhook(
     return;
   }
 
-  let payload: WebhookPayload | { text: string } | { content: string } | object;
+  // No bare `object` member here: it silently accepted anything and let the
+  // WebhookPayload branch drift out of sync with types.ts (`error` vs `lastError`).
+  // Provider-specific bodies get their own named type instead.
+  let payload: WebhookPayload | ProviderWebhookBody;
   let requestUrl = webhook.url;
 
   if (isPagerDuty) {

@@ -411,7 +411,10 @@ export const testWebhook = onCall(async (request) => {
       }],
     };
   } else {
-    // Send standard Exit1 webhook payload
+    // Standard Exit1 webhook payload. MUST mirror the real uptime payload built in
+    // alert-webhook.ts — a test that sends a different shape is worse than no test,
+    // because integrators code against it and then break on the first real alert.
+    // In particular the error field is `error`, NOT `lastError`.
     testPayload = {
       event: 'website_down',
       summary: '🚨 Test Website is DOWN',
@@ -420,12 +423,19 @@ export const testWebhook = onCall(async (request) => {
         id: 'test-website-id',
         name: 'Test Website',
         url: 'https://example.com',
+        type: 'website',
         status: 'offline',
         responseTime: 1500,
-        lastError: 'Connection timeout',
+        responseTimeLimit: 5000,
+        responseTimeExceeded: false,
+        lastStatusCode: 503,
+        statusCodeInfo: 'HTTP 503',
+        error: 'Connection timeout',
+        targetIp: '93.184.216.34',
       },
       previousStatus: 'online',
       userId: uid,
+      test: true,
     };
   }
 

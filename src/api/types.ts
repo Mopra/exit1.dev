@@ -249,36 +249,12 @@ export type WebhookCheckFilter = {
   folderPaths?: string[];
 };
 
-// Webhook payload structure
-export interface WebhookPayload {
-  event: WebhookEvent;
-  timestamp: number;
-  website: {
-    id: string;
-    name: string;
-    url: string;
-    status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
-    responseTime?: number;
-    responseTimeLimit?: number;
-    responseTimeExceeded?: boolean;
-    lastError?: string | null;
-    lastStatusCode?: number;
-    detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
-    statusCodeInfo?: string;
-    explanation?: string;
-    sslCertificate?: {
-      valid: boolean;
-      issuer?: string;
-      subject?: string;
-      validFrom?: number;
-      validTo?: number;
-      daysUntilExpiry?: number;
-      error?: string;
-    };
-  };
-  previousStatus?: string;
-  userId: string;
-}
+// Outbound webhook payload: intentionally NOT defined here. It is a backend wire
+// contract owned by `functions/src/types.ts` and delivered to customer endpoints —
+// the browser never receives one. An unused duplicate lived here and drifted out of
+// sync with the real payload (it declared `lastError` where the sender emits
+// `error`), so it was removed rather than kept in sync. Public docs:
+// https://docs.exit1.dev/alerting/webhook-alerts
 
 // Email notification settings
 export interface EmailSettings {
