@@ -1,6 +1,7 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import * as logger from 'firebase-functions/logger';
 import { CONFIG } from './config';
+import { chunkIds, capWebsiteIds, SUMMARY_QUERY_CHUNK, MAX_SUMMARY_WEBSITES } from './summary-batching';
 
 const bigquery = new BigQuery({
   projectId: 'exit1-dev',
@@ -1897,8 +1898,25 @@ export interface BatchCheckStats {
   maxResponseTime: number;
 }
 
-// Maximum websites per batch query to prevent excessive scans
+// Maximum websites per batch query against the RAW history table, where breadth
+// genuinely drives scan cost. Truncation here is a deliberate cost ceiling — but it
+// must always be logged, never silent (see truncateWebsiteIds).
 const MAX_BATCH_WEBSITES = 25;
+
+/**
+ * Apply a hard cap, logging whenever it actually drops anything. Silent truncation is
+ * how a 25-check ceiling hid behind a 50-check status page for months.
+ */
+const truncateWebsiteIds = (ids: string[], limit: number, context: string): string[] => {
+  const { ids: capped, notice } = capWebsiteIds(ids, limit);
+  if (notice) {
+    logger.warn(
+      `[${context}] Truncating ${notice.requested} website ids to ${notice.limit}; the remainder will report no data`,
+      notice
+    );
+  }
+  return capped;
+};
 
 // Batch query for stats across multiple websites in a single query (cost optimized)
 export const getCheckStatsBatch = async (
@@ -1912,7 +1930,7 @@ export const getCheckStatsBatch = async (
   }
 
   // Limit to prevent excessive scans
-  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+  const limitedIds = truncateWebsiteIds(websiteIds, MAX_BATCH_WEBSITES, 'getCheckStatsBatch');
 
   // This is the raw-table fallback path — cap its lookback far below the 90-day primary
   // (daily-summaries) path so a check missing from summaries can't trigger a 90-day scan.
@@ -2758,7 +2776,7 @@ export const getCheckHistoryDailySummaryBatch = async (
   }
 
   // Limit to prevent excessive scans
-  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+  const limitedIds = truncateWebsiteIds(websiteIds, MAX_BATCH_WEBSITES, 'getCheckHistoryDailySummaryBatch');
 
   try {
     const query = `
@@ -3228,7 +3246,7 @@ export const getUptimeFromDailySummaries = async (
 ): Promise<BatchCheckStats[]> => {
   if (!websiteIds.length) return [];
 
-  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+  const limitedIds = truncateWebsiteIds(websiteIds, MAX_SUMMARY_WEBSITES, 'getUptimeFromDailySummaries');
   const minStartDate = Date.now() - MAX_STATS_LOOKBACK_MS;
   const effectiveStart = Math.max(startDate > 0 ? startDate : 0, minStartDate);
   const effectiveEnd = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
@@ -3254,14 +3272,22 @@ export const getUptimeFromDailySummaries = async (
       GROUP BY website_id
     `;
 
-    const params = {
-      websiteIds: limitedIds,
-      userId,
-      startDate: new Date(effectiveStart),
-      endDate: new Date(effectiveEnd),
-    };
-
-    const [rows] = await bigquery.query({ query, params });
+    // Chunked, not truncated: every requested id must get an answer.
+    const rowChunks = await Promise.all(
+      chunkIds(limitedIds, SUMMARY_QUERY_CHUNK).map(async (idChunk) => {
+        const [chunkRows] = await bigquery.query({
+          query,
+          params: {
+            websiteIds: idChunk,
+            userId,
+            startDate: new Date(effectiveStart),
+            endDate: new Date(effectiveEnd),
+          },
+        });
+        return chunkRows;
+      })
+    );
+    const rows = rowChunks.flat();
 
     const results = rows.map((row: Record<string, unknown>) => {
       const totalChecks = Number(row.total_checks) || 0;
@@ -3341,7 +3367,7 @@ export const getPreAggregatedDailySummaryBatch = async (
 ): Promise<Map<string, BatchDailySummary[]>> => {
   if (!websiteIds.length) return new Map();
 
-  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+  const limitedIds = truncateWebsiteIds(websiteIds, MAX_SUMMARY_WEBSITES, 'getPreAggregatedDailySummaryBatch');
 
   try {
     await ensureDailySummaryTableSchema();
@@ -3357,14 +3383,22 @@ export const getPreAggregatedDailySummaryBatch = async (
       ORDER BY website_id, day ASC
     `;
 
-    const params = {
-      websiteIds: limitedIds,
-      userId,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
-    };
-
-    const [rows] = await bigquery.query({ query, params });
+    // Chunked, not truncated: a status page showing 40 checks must get 40 histories back.
+    const rowChunks = await Promise.all(
+      chunkIds(limitedIds, SUMMARY_QUERY_CHUNK).map(async (idChunk) => {
+        const [chunkRows] = await bigquery.query({
+          query,
+          params: {
+            websiteIds: idChunk,
+            userId,
+            startDate: new Date(startDate),
+            endDate: new Date(endDate),
+          },
+        });
+        return chunkRows;
+      })
+    );
+    const rows = rowChunks.flat();
 
     const resultMap = new Map<string, BatchDailySummary[]>();
 

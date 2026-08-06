@@ -474,8 +474,13 @@ export const getCheckStatsBatchBigQuery = onCall({
   // Only user-level limit since this is a batch operation
   enforceBigQueryStatsRateLimit(uid);
 
-  // Limit to prevent abuse
-  const MAX_BATCH_SIZE = 25;
+  // Limit to prevent abuse. This has to cover a whole account, not a page of it —
+  // truncating here silently computed account-wide uptime from a subset and presented
+  // it as the total. The underlying daily-summary query chunks, so breadth is cheap.
+  const MAX_BATCH_SIZE = 500;
+  if (websiteIds.length > MAX_BATCH_SIZE) {
+    logger.warn(`getCheckStatsBatchBigQuery: truncating ${websiteIds.length} ids to ${MAX_BATCH_SIZE}`);
+  }
   const limitedIds = websiteIds.slice(0, MAX_BATCH_SIZE);
 
   try {
