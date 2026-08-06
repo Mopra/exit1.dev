@@ -7,7 +7,7 @@ import { normalizeEventList } from "./webhook-events";
 import { BigQueryCheckHistoryRow, CheckStatsResult } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 import { CONFIG, TIER_LIMITS } from "./config";
-import { getUserTier } from "./init";
+import { getUserTier, getMaxChecksForUser } from "./init";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { CheckRegion } from "./check-region";
 import { hasScope, API_SCOPES, type ApiScope } from "./api-scopes";
@@ -703,8 +703,8 @@ async function handleCreateCheck(
     return;
   }
 
-  // Tier-based max checks
-  const maxChecks = CONFIG.getMaxChecksForTier(userTier);
+  // Tier-based max checks (honours the legacy Free cap)
+  const maxChecks = await getMaxChecksForUser(userId, userTier);
   if (stats.checkCount >= maxChecks) {
     stats = await initializeUserCheckStats(userId);
     if (stats.checkCount >= maxChecks) {
@@ -1961,13 +1961,17 @@ async function handleGetAccount(
 
   const tierLimits = TIER_LIMITS[tier];
   const emailSettings = emailSnap.exists ? (emailSnap.data() as EmailSettings) : null;
+  // Report the effective cap, not the flat tier cap — this endpoint is what the
+  // MCP server and agents plan against, so advertising 5 to a grandfathered
+  // user makes them stop short of slots they actually have.
+  const maxChecks = await getMaxChecksForUser(userId, tier);
 
   res.json({
     data: {
       tier,
       scopes,
       limits: {
-        maxChecks: CONFIG.getMaxChecksForTier(tier),
+        maxChecks,
         minCheckIntervalMinutes: tierLimits.minCheckIntervalMinutes,
         maxWebhooks: CONFIG.getMaxWebhooksForTier(tier),
         maxApiKeys: CONFIG.getMaxApiKeysForTier(tier),

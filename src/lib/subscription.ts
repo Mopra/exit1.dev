@@ -133,7 +133,31 @@ export function getMaxStatusPagesForTier(tier: TierKey): number {
   return TIER_LIMITS_MIRROR[tier]?.maxStatusPages ?? 1
 }
 
-export function getMaxChecksForTier(tier: TierKey): number {
+/**
+ * Free dropped from 10 checks to 5 in the Indie restructure. Users who signed up
+ * before this cutoff keep the old cap of 10 — see LEGACY_FREE_CHECKS_CUTOFF_MS
+ * in `functions/src/config.ts`, which must stay in sync with this value. The
+ * backend is authoritative; this mirror only decides what the UI offers.
+ */
+export const LEGACY_FREE_CHECKS_CUTOFF_MS = Date.parse("2026-07-30T00:00:00Z")
+export const LEGACY_FREE_MAX_CHECKS = 10
+
+/** True when a Clerk signup date predates the Free check-cap cut. */
+export function isLegacyFreeChecks(clerkCreatedAt: Date | null | undefined): boolean {
+  if (!clerkCreatedAt) return false
+  const ms = clerkCreatedAt.getTime()
+  return Number.isFinite(ms) && ms < LEGACY_FREE_CHECKS_CUTOFF_MS
+}
+
+export type CheckLimitOverrides = {
+  /** Signed up before the Free cap was cut — keeps the old 10-check ceiling. */
+  legacyFreeChecks?: boolean
+}
+
+export function getMaxChecksForTier(tier: TierKey, overrides?: CheckLimitOverrides): number {
+  if (tier === "free" && overrides?.legacyFreeChecks) {
+    return Math.max(TIER_LIMITS_MIRROR.free.maxChecks, LEGACY_FREE_MAX_CHECKS)
+  }
   return TIER_LIMITS_MIRROR[tier]?.maxChecks ?? TIER_LIMITS_MIRROR.free.maxChecks
 }
 
@@ -162,9 +186,13 @@ type CountableDimension = "maxChecks" | "maxWebhooks" | "maxStatusPages"
 export function nextTierWithMore(
   tier: TierKey,
   dimension: CountableDimension,
+  effectiveCurrent?: number,
 ): { tier: TierKey; name: string; max: number } | null {
   const limits = TIER_LIMITS_MIRROR[tier] ?? TIER_LIMITS_MIRROR.free
-  const current = limits[dimension]
+  // `effectiveCurrent` lets callers pass a per-user cap that beats the flat tier
+  // row — without it, a grandfathered Free user (10 checks) gets pitched Indie,
+  // whose 10 checks are no upgrade at all.
+  const current = effectiveCurrent ?? limits[dimension]
   const start = TIER_LADDER.indexOf(tier)
   for (const candidate of TIER_LADDER.slice(start + 1)) {
     const max = TIER_LIMITS_MIRROR[candidate][dimension]

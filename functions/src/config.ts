@@ -135,6 +135,31 @@ export const TIER_LIMITS = {
 // Centralised so `getNextCheckAtMs` doesn't need to reach into TIER_LIMITS.
 const MIN_INTERVAL_FLOOR_MINUTES = 0.25;
 
+// --- Free-tier check grandfathering -----------------------------------------
+//
+// Free dropped from 10 checks to 5 in the Indie restructure (c80880a, deployed
+// 2026-07-29) with no migration, so ~91 existing free users were left holding
+// more checks than the new cap allows. Their checks kept running (nothing
+// prunes on a non-event), but every *action* gate refused them — including
+// re-enabling a check they already owned.
+//
+// Anyone who signed up before the cutoff keeps the old cap of 10; everyone
+// after gets 5. Keyed on the Clerk signup timestamp rather than a metadata
+// flag so there is no backfill to run and no per-user Clerk write, and so the
+// grandfather set can never accidentally grow.
+//
+// The resolved boolean is cached *stickily* on the user doc by
+// `getLegacyFreeChecks()` in init.ts — see the note there on why it must never
+// be recomputed once written.
+export const LEGACY_FREE_MAX_CHECKS = 10;
+export const LEGACY_FREE_CHECKS_CUTOFF_MS = Date.parse('2026-07-30T00:00:00Z');
+
+/** Per-user entitlement overrides layered on top of the flat tier limits. */
+export type CheckLimitOverrides = {
+  /** Signed up before the Free cap was cut — keeps the old 10-check ceiling. */
+  legacyFreeChecks?: boolean;
+};
+
 // Configuration for cost optimization
 export const CONFIG = {
   // Scheduler function resource configuration
@@ -734,8 +759,16 @@ export const CONFIG = {
     return TIER_LIMITS[tier].smsMonthly;
   },
 
-  // Get max checks allowed for a given tier
-  getMaxChecksForTier(tier: Tier): number {
+  // Get max checks allowed for a given tier.
+  //
+  // `overrides.legacyFreeChecks` lifts Free back to its pre-restructure cap of
+  // 10 for users who signed up before the cut. It deliberately only applies to
+  // Free — every paid tier already allows 10 or more, so a grandfathered user
+  // who upgrades just gets the paid cap.
+  getMaxChecksForTier(tier: Tier, overrides?: CheckLimitOverrides): number {
+    if (tier === 'free' && overrides?.legacyFreeChecks) {
+      return Math.max(TIER_LIMITS.free.maxChecks, LEGACY_FREE_MAX_CHECKS);
+    }
     return TIER_LIMITS[tier].maxChecks;
   },
 

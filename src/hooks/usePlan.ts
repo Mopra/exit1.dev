@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useSubscription } from "@clerk/clerk-react/experimental";
 import { useUser } from "@clerk/clerk-react";
-import { resolvePlanKey } from "@/lib/subscription";
+import { getMaxChecksForTier, isLegacyFreeChecks, resolvePlanKey } from "@/lib/subscription";
 import { useAdminTierPreview } from "./useAdminTierPreview";
 
 export type Tier = "free" | "indie" | "nano" | "pro";
@@ -100,6 +100,22 @@ export function usePlan() {
     return realTier;
   }, [isAdmin, previewTier, realTier]);
 
+  // Grandfathered Free check cap. Derived from the Clerk signup date rather than
+  // a metadata flag so it needs no backfill and matches what the backend
+  // independently resolves in `getLegacyFreeChecks()`. Admin tier previews land
+  // on the real cap for whichever tier is being previewed, which is what you
+  // want when checking how Free looks.
+  const legacyFreeChecks = useMemo(
+    () => isLegacyFreeChecks(user?.createdAt),
+    [user?.createdAt]
+  );
+
+  /** Effective check ceiling for this user — always prefer this over the tier cap. */
+  const maxChecks = useMemo(
+    () => getMaxChecksForTier(tier, { legacyFreeChecks }),
+    [tier, legacyFreeChecks]
+  );
+
   const paid = tier !== "free";
   // `nano` = "Nano-or-better entitlements" for back-compat with old useNanoPlan
   // call sites (status page builder, domain intel, maintenance mode). Indie is
@@ -117,6 +133,8 @@ export function usePlan() {
     realTier,
     subscribedPlanKey,
     isFounders,
+    legacyFreeChecks,
+    maxChecks,
     // Back-compat booleans:
     paid,
     nano,

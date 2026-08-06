@@ -1,7 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import * as crypto from "crypto";
-import { firestore, getUserTier, getUserTierLive } from "./init";
+import { firestore, getUserTier, getUserTierLive, getMaxChecksForUser } from "./init";
 import { CONFIG, TIER_LIMITS } from "./config";
 import { syncAdminStatus } from "./deploy-mode";
 import { Website, DomainExpiry } from "./types";
@@ -2357,8 +2357,8 @@ export const addCheck = onCall({
     // Use live lookup to avoid stale cache after upgrade
     const userTier = await getUserTierLive(uid);
 
-    // Enforce tier-based maximum checks per user
-    const maxChecks = CONFIG.getMaxChecksForTier(userTier);
+    // Enforce tier-based maximum checks per user (honours the legacy Free cap)
+    const maxChecks = await getMaxChecksForUser(uid, userTier);
     if (stats.checkCount >= maxChecks) {
       // Safety check: re-initialize from actual Firestore data in case stats are stale
       // (e.g., checks were deleted without updating user_check_stats)
@@ -2817,7 +2817,7 @@ export const bulkAddChecks = onCall({
     const userTier = await getUserTierLive(uid);
 
     // Check total capacity (current + new must not exceed tier limit)
-    const maxChecks = CONFIG.getMaxChecksForTier(userTier);
+    const maxChecks = await getMaxChecksForUser(uid, userTier);
     if (stats.checkCount + items.length > maxChecks) {
       // Safety check: re-initialize from actual Firestore data in case stats are stale
       stats = await initializeUserCheckStats(uid);
@@ -3455,7 +3455,13 @@ export const deleteWebsite = onCall({
 export const toggleCheckStatus = onCall({
   cors: true,
   maxInstances: 10,
-  secrets: [RESEND_API_KEY, RESEND_FROM], // Needed for handleCheckDisabled email notifications
+  // RESEND_*: handleCheckDisabled email notifications.
+  // CLERK_*: getMaxChecksForUser needs the Clerk signup date to resolve the
+  // grandfathered Free cap. Without these bound, the re-enable gate silently
+  // fell back to the reduced cap of 5 and returned 429 to users who should have
+  // had 10 — note getUserTier() alone does NOT surface the gap, because it
+  // serves the cached Firestore tier when Clerk is unreachable.
+  secrets: [RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const { id, disabled, reason } = request.data || {};
   const uid = request.auth?.uid;
@@ -3487,9 +3493,12 @@ export const toggleCheckStatus = onCall({
     updateData.disabledAt = now;
     updateData.disabledReason = disabledReason;
   } else {
-    // When enabling, enforce tier-based check limit
+    // When enabling, enforce tier-based check limit. Must use the *effective*
+    // cap: a grandfathered Free user whose checks were all disabled (e.g. by
+    // handlePlanDowngrade) would otherwise be stranded at 5 with no way to
+    // recover the slots they already owned.
     const userTier = await getUserTier(uid);
-    const maxChecks = CONFIG.getMaxChecksForTier(userTier);
+    const maxChecks = await getMaxChecksForUser(uid, userTier);
     const enabledChecksSnap = await firestore.collection("checks")
       .where("userId", "==", uid)
       .where("disabled", "==", false)

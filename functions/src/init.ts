@@ -5,6 +5,7 @@ import { getAuth } from "firebase-admin/auth";
 import { onCall } from "firebase-functions/v2/https";
 import { createClerkClient } from '@clerk/backend';
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
+import { CONFIG, LEGACY_FREE_CHECKS_CUTOFF_MS } from "./config";
 
 // Initialize Firebase Admin
 initializeApp({
@@ -335,6 +336,124 @@ export const getUserTierLive = async (uid: string): Promise<UserTier> => {
     }
     return 'free';
   }
+};
+
+/**
+ * Fetch a user's Clerk signup timestamp, trying prod then dev. Returns null when
+ * the user can't be resolved in either instance (or Clerk is unreachable) — the
+ * caller must treat null as "unknown", never as "new user".
+ */
+async function fetchClerkCreatedAt(uid: string): Promise<number | null> {
+  // Build clients from the declared secret params rather than reusing
+  // getClerkClient(), which snapshots process.env at module load. Same approach
+  // as fetchTierFromClerk — it is the one that reliably sees Gen2 secrets.
+  const secretKeys = [
+    safeSecretValue(CLERK_SECRET_KEY_PROD),
+    safeSecretValue(CLERK_SECRET_KEY_DEV),
+  ].filter((k): k is string => !!k);
+
+  for (const secretKey of secretKeys) {
+    try {
+      const user = await createClerkClient({ secretKey }).users.getUser(uid);
+      const createdAt = Number(user.createdAt);
+      if (Number.isFinite(createdAt) && createdAt > 0) return createdAt;
+    } catch {
+      // 404 in this instance — try the next one.
+    }
+  }
+  return null;
+}
+
+/**
+ * True when the user owns at least one check created before the grandfather
+ * cutoff. Used only as positive evidence of an early signup when the Clerk
+ * signup date can't be read — a check cannot predate the account that owns it.
+ */
+async function hasCheckPredatingCutoff(uid: string): Promise<boolean> {
+  try {
+    const snap = await firestore.collection('checks')
+      .where('userId', '==', uid)
+      .where('createdAt', '<', LEGACY_FREE_CHECKS_CUTOFF_MS)
+      .limit(1)
+      .get();
+    return !snap.empty;
+  } catch (e) {
+    logger.warn(`hasCheckPredatingCutoff: query failed for ${uid}`, e);
+    return false;
+  }
+}
+
+/**
+ * True when this user predates the Free-tier check-cap cut and therefore keeps
+ * the old ceiling of 10 (see LEGACY_FREE_CHECKS_CUTOFF_MS in config.ts).
+ *
+ * Resolved from the Clerk signup date exactly ONCE and then cached stickily on
+ * `users/{uid}.legacyFreeChecks`. Two rules make this safe:
+ *
+ *   1. Once the field is a boolean we never recompute it. A user's signup date
+ *      cannot change, so a recompute could only ever produce the same answer or
+ *      a wrong one.
+ *   2. An unresolvable Clerk lookup returns false WITHOUT writing, so a Clerk
+ *      outage degrades to "cap of 5 for this one call" and retries next time,
+ *      instead of permanently burning someone's grandfathered slots.
+ *
+ * Unlike the tier cache this has no TTL — it is immutable history, not state.
+ */
+export const getLegacyFreeChecks = async (uid: string): Promise<boolean> => {
+  const userRef = firestore.collection('users').doc(uid);
+
+  try {
+    const snap = await userRef.get();
+    if (snap.exists) {
+      const cached = (snap.data() || {}).legacyFreeChecks;
+      if (typeof cached === 'boolean') return cached;
+    }
+
+    const createdAt = await fetchClerkCreatedAt(uid);
+    if (createdAt === null) {
+      // Clerk unreachable, or — the case that actually bit us — the calling
+      // function never declared CLERK_SECRET_KEY_*, so there is no key to use
+      // and retrying will never help. Fall back to Firestore evidence: a check
+      // created before the cutoff proves the account existed before the cutoff,
+      // since a check cannot predate its owner. This can only ever prove
+      // `true`, never `false`, so it cannot over-grant to a new signup.
+      const predates = await hasCheckPredatingCutoff(uid);
+      if (predates) {
+        await userRef.set({ legacyFreeChecks: true }, { merge: true });
+        logger.info(`getLegacyFreeChecks: ${uid} → true via pre-cutoff check (no Clerk signup date)`);
+        return true;
+      }
+      // Absence of an old check proves nothing (they may have signed up early and
+      // created checks later), so stay retryable rather than persisting false.
+      logger.warn(`getLegacyFreeChecks: no Clerk signup date and no pre-cutoff check for ${uid} — not persisting, will retry`);
+      return false;
+    }
+
+    const legacy = createdAt < LEGACY_FREE_CHECKS_CUTOFF_MS;
+    await userRef.set({ legacyFreeChecks: legacy }, { merge: true });
+    logger.info(`getLegacyFreeChecks: resolved ${uid} → ${legacy}`, {
+      clerkCreatedAt: createdAt,
+      cutoff: LEGACY_FREE_CHECKS_CUTOFF_MS,
+    });
+    return legacy;
+  } catch (error) {
+    logger.warn(`getLegacyFreeChecks: failed for ${uid}, assuming not legacy`, error);
+    return false;
+  }
+};
+
+/**
+ * Resolve a user's effective check ceiling: their tier cap, lifted to the
+ * legacy Free cap when they predate the restructure. Use this instead of
+ * `CONFIG.getMaxChecksForTier(tier)` at every gate that can *refuse* a user.
+ *
+ * Skips the entitlement lookup entirely for paid tiers, where the override
+ * cannot apply — so the extra read only ever lands on Free users.
+ */
+export const getMaxChecksForUser = async (uid: string, tier: UserTier): Promise<number> => {
+  if (tier !== 'free') return CONFIG.getMaxChecksForTier(tier);
+  const legacyFreeChecks = await getLegacyFreeChecks(uid);
+  return CONFIG.getMaxChecksForTier(tier, { legacyFreeChecks });
 };
 
 /**

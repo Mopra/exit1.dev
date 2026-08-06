@@ -49,7 +49,7 @@ const Checks: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const [pendingCheck, setPendingCheck] = useState<{ name: string; url: string } | null>(null);
-  const { nano, pro, tier } = usePlan();
+  const { nano, pro, tier, maxChecks, legacyFreeChecks } = usePlan();
   const [isExporting, setIsExporting] = useState(false);
   const { preferences, loading: preferencesLoading, updateSorting } = useUserPreferences(userId);
   // Local state for immediate UI updates - Firestore is only for persistence
@@ -138,11 +138,15 @@ const Checks: React.FC = () => {
     checks.some((check) => (check.folder ?? '').trim().length > 0)
   ), [checks]);
 
-  // Per-tier check cap — mirrors TIER_LIMITS[tier].maxChecks (Free 5, Indie 10,
-  // Nano 100, Pro 1000). Must not be a paid/free boolean: that reported 10 to
-  // Free users the backend caps at 5, and never showed Nano/Pro their real cap.
-  const maxChecks = getMaxChecksForTier(tier);
-  const nextCheckTier = nextTierWithMore(tier, 'maxChecks');
+  // Per-user check cap, from usePlan() — mirrors TIER_LIMITS[tier].maxChecks
+  // (Free 5, Indie 10, Nano 100, Pro 1000) but lifts Free to 10 for users
+  // grandfathered from before the cap was cut. Must not be a paid/free boolean:
+  // that reported 10 to Free users the backend caps at 5, and never showed
+  // Nano/Pro their real cap.
+  //
+  // Feed the effective cap to nextTierWithMore too, or a grandfathered Free user
+  // gets pitched Indie's 10 checks as an upgrade over the 10 they already have.
+  const nextCheckTier = nextTierWithMore(tier, 'maxChecks', maxChecks);
   const atCheckLimit = checks.length >= maxChecks;
   const isGrandfathered = checks.length > maxChecks;
   const hasDowngradedChecks = React.useMemo(() =>
@@ -665,7 +669,11 @@ const Checks: React.FC = () => {
         <div className="px-2 sm:px-4 md:px-6 pt-3">
           <UpgradeBanner message={isGrandfathered
             ? `Your ${TIER_DISPLAY_NAME[tier]} plan now includes ${maxChecks} checks. Your existing ${checks.length} checks will keep running${nextCheckTier ? `, but upgrade to ${nextCheckTier.name} to add more` : ''}.`
-            : `You've reached the ${TIER_DISPLAY_NAME[tier]} plan limit of ${maxChecks} checks.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
+            : legacyFreeChecks
+              // Explain the mismatch before they compare against the pricing
+              // page and think their account is broken.
+              ? `You've reached your limit of ${maxChecks} checks — your account keeps the original Free limit, while new Free accounts get ${getMaxChecksForTier('free')}.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
+              : `You've reached the ${TIER_DISPLAY_NAME[tier]} plan limit of ${maxChecks} checks.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
           } />
         </div>
       )}
