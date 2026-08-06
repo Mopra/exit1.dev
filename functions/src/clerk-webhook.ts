@@ -7,6 +7,8 @@ import { createClerkClient } from '@clerk/backend';
 import { BigQuery } from '@google-cloud/bigquery';
 import {
   RESEND_API_KEY,
+  DAY3_API_KEY,
+  getDay3ApiKey,
   CLERK_WEBHOOK_SECRET,
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
@@ -21,17 +23,30 @@ import {
   backfillCheckUserTier,
 } from "./plan-enforcement";
 import {
-  buildPropertiesForUser,
-  formatSignupDate,
   registerResendSchema,
   RESEND_RATE_LIMIT_MS,
-  sleep,
   syncContactTopics,
   triggerResendEvent,
   upsertContactProperties,
+} from "./resend-sync";
+import {
+  buildPropertiesForUser,
+  formatSignupDate,
+  sleep,
   type OnboardingAnswers,
   type UserTier,
-} from "./resend-sync";
+} from "./contact-model";
+import { syncContactToProviders } from "./contact-sync";
+import {
+  batchUpsertDay3Contacts,
+  chunkForDay3,
+  dedupeByEmail,
+  getDay3ContactCount,
+  upsertDay3Contact,
+  type Day3ContactInput,
+} from "./day3-sync";
+import { DAY3_BATCH_SIZE } from "./day3-config";
+import { requireAdmin } from "./require-admin";
 
 // Generic Clerk webhook payload — we handle multiple event types
 interface ClerkWebhookPayload {
@@ -167,12 +182,15 @@ async function fetchClerkUserEitherInstance(userId: string): Promise<{
   return { email: null, firstName: null, lastName: null, signupDate: null };
 }
 
-// Push just the plan_tier property to a user's Resend contact. Used by the
-// subscription webhook after a tier change.
-async function pushTierPropertyToResend(userId: string, tier: UserTier): Promise<void> {
-  const apiKey = getResendApiKey();
-  if (!apiKey) {
-    logger.info('Resend API key not configured; skipping plan_tier sync', { userId });
+// Push just the plan_tier property to a user's contact on both providers. Used
+// by the subscription webhook after a tier change. In Day3 this is all that's
+// needed for tier segmentation — its segments are live filters on plan_tier,
+// so there is no membership sync to do.
+async function pushTierProperty(userId: string, tier: UserTier): Promise<void> {
+  const resendApiKey = getResendApiKey();
+  const day3ApiKey = getDay3ApiKey();
+  if (!resendApiKey && !day3ApiKey) {
+    logger.info('No email provider configured; skipping plan_tier sync', { userId });
     return;
   }
 
@@ -182,33 +200,37 @@ async function pushTierPropertyToResend(userId: string, tier: UserTier): Promise
     return;
   }
 
-  const resend = new Resend(apiKey);
-  const result = await upsertContactProperties(
-    resend,
+  const { resend, day3 } = await syncContactToProviders({
     email,
-    { plan_tier: tier },
-    { firstName, lastName },
-  );
+    firstName,
+    lastName,
+    properties: { plan_tier: tier },
+    resendApiKey,
+    day3ApiKey,
+    userId,
+  });
 
-  if (!result.success) {
-    logger.warn('plan_tier property push to Resend failed', {
-      userId,
-      email,
-      error: result.error,
-    });
-  } else {
+  if (resend.success) {
     logger.info('Pushed plan_tier property to Resend', { userId, email, tier });
-    try {
-      await firestore.collection('users').doc(userId).set(
-        { resendPropertiesSyncedAt: Date.now() },
-        { merge: true },
-      );
-    } catch (e) {
-      logger.debug('Failed to stamp resendPropertiesSyncedAt', {
-        userId,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
+  }
+  if (day3.success) {
+    logger.info('Pushed plan_tier property to Day3', { userId, email, tier });
+  }
+
+  // Stamp each provider independently so a failure on one doesn't make the
+  // other's backfill skip this user.
+  const stamps: Record<string, number> = {};
+  if (resend.success) stamps.resendPropertiesSyncedAt = Date.now();
+  if (day3.success) stamps.day3SyncedAt = Date.now();
+  if (Object.keys(stamps).length === 0) return;
+
+  try {
+    await firestore.collection('users').doc(userId).set(stamps, { merge: true });
+  } catch (e) {
+    logger.debug('Failed to stamp contact sync timestamps', {
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
@@ -219,7 +241,7 @@ async function pushTierPropertyToResend(userId: string, tier: UserTier): Promise
  *   - subscription.* → syncs tier from Clerk billing to Firestore + Resend plan_tier property
  */
 export const clerkWebhook = onRequest({
-  secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [RESEND_API_KEY, DAY3_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
   cors: false,
 }, async (req, res) => {
   // Only accept POST requests
@@ -314,13 +336,13 @@ export const clerkWebhook = onRequest({
         previousTier,
       });
 
-      // Push the new tier to Resend as a contact property. Best-effort — failures
-      // here should not block tier enforcement downstream.
+      // Push the new tier to both email providers as a contact property.
+      // Best-effort — failures here should not block tier enforcement downstream.
       if (newTier !== previousTier) {
         try {
-          await pushTierPropertyToResend(userId, newTier);
+          await pushTierProperty(userId, newTier);
         } catch (e) {
-          logger.warn('Failed to push plan_tier property to Resend', {
+          logger.warn('Failed to push plan_tier property to email providers', {
             userId,
             error: e instanceof Error ? e.message : String(e),
           });
@@ -416,6 +438,41 @@ export const clerkWebhook = onRequest({
     signupProperties,
   );
 
+  // Mirror the new contact into Day3. Independent of the Resend result — a
+  // Resend outage must not leave Day3 missing the user. Day3 topics default to
+  // subscribed, so there's no topic write to make here.
+  const day3ApiKey = getDay3ApiKey();
+  let day3Ok = false;
+  if (day3ApiKey) {
+    try {
+      const day3Result = await upsertDay3Contact(day3ApiKey, {
+        email: primaryEmail.email_address,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        attributes: signupProperties,
+      });
+      day3Ok = day3Result.success;
+      if (!day3Result.success) {
+        logger.warn('Failed to add contact to Day3', {
+          email: primaryEmail.email_address,
+          userId: user.id,
+          error: day3Result.error,
+        });
+      } else {
+        logger.info('Contact added to Day3', {
+          email: primaryEmail.email_address,
+          userId: user.id,
+        });
+      }
+    } catch (e) {
+      logger.warn('Exception adding contact to Day3', {
+        email: primaryEmail.email_address,
+        userId: user.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   // Opt new users into every topic. Resend topic defaults already cover this
   // for new contacts, but explicit records give the future preference center
   // real data to render.
@@ -466,14 +523,31 @@ export const clerkWebhook = onRequest({
       }
     }
 
-    // Stamp the sync timestamp so the bulk resync skips this user for 30 days.
+    // Stamp the sync timestamps so the bulk resyncs skip this user for 30 days.
+    // Per-provider so one provider failing doesn't suppress the other's backfill.
     try {
       await firestore.collection('users').doc(user.id).set(
-        { resendPropertiesSyncedAt: Date.now() },
+        {
+          resendPropertiesSyncedAt: Date.now(),
+          ...(day3Ok ? { day3SyncedAt: Date.now() } : {}),
+        },
         { merge: true },
       );
     } catch (e) {
-      logger.debug('Failed to stamp resendPropertiesSyncedAt on user.created', {
+      logger.debug('Failed to stamp contact sync timestamps on user.created', {
+        userId: user.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  } else if (day3Ok) {
+    // Resend failed but Day3 landed — still record the Day3 stamp.
+    try {
+      await firestore.collection('users').doc(user.id).set(
+        { day3SyncedAt: Date.now() },
+        { merge: true },
+      );
+    } catch (e) {
+      logger.debug('Failed to stamp day3SyncedAt on user.created', {
         userId: user.id,
         error: e instanceof Error ? e.message : String(e),
       });
@@ -933,12 +1007,17 @@ interface CachedUserInfo {
   onboarding: OnboardingAnswers | null;
   hasOnboarding: boolean;
   resendPropertiesSyncedAt: number | null;
+  day3SyncedAt: number | null;
 }
 
 // Users synced within this window are skipped by the bulk resync unless the
 // caller passes force:true. Picked as a compromise: long enough that routine
 // re-runs finish in seconds, short enough that monthly cadence catches drift.
 export const RESEND_SYNC_FRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Same rationale for Day3. Tracked separately from the Resend stamp so a
+// failure on one provider never makes the other's backfill skip a user.
+export const DAY3_SYNC_FRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 function normalizeUserDoc(data: FirebaseFirestore.DocumentData | undefined): CachedUserInfo {
   let tier: UserTier = 'free';
@@ -954,9 +1033,15 @@ function normalizeUserDoc(data: FirebaseFirestore.DocumentData | undefined): Cac
   const resendPropertiesSyncedAt =
     typeof syncedRaw === 'number' && Number.isFinite(syncedRaw) ? syncedRaw : null;
 
+  const day3Raw = data?.day3SyncedAt;
+  const day3SyncedAt =
+    typeof day3Raw === 'number' && Number.isFinite(day3Raw) ? day3Raw : null;
+
   const onb = data?.onboarding;
   if (!onb || typeof onb !== 'object') {
-    return { tier, onboarding: null, hasOnboarding: false, resendPropertiesSyncedAt };
+    return {
+      tier, onboarding: null, hasOnboarding: false, resendPropertiesSyncedAt, day3SyncedAt,
+    };
   }
 
   const o = onb as { sources?: unknown; useCases?: unknown; teamSize?: unknown };
@@ -969,6 +1054,7 @@ function normalizeUserDoc(data: FirebaseFirestore.DocumentData | undefined): Cac
     },
     hasOnboarding: true,
     resendPropertiesSyncedAt,
+    day3SyncedAt,
   };
 }
 
@@ -993,7 +1079,13 @@ async function loadUserInfoBatch(userIds: string[]): Promise<Map<string, CachedU
       count: userIds.length,
     });
     for (const uid of userIds) {
-      map.set(uid, { tier: 'free', onboarding: null, hasOnboarding: false, resendPropertiesSyncedAt: null });
+      map.set(uid, {
+        tier: 'free',
+        onboarding: null,
+        hasOnboarding: false,
+        resendPropertiesSyncedAt: null,
+        day3SyncedAt: null,
+      });
     }
   }
 
@@ -1204,6 +1296,7 @@ export const resyncResendProperties = onCall({
           onboarding: null,
           hasOnboarding: false,
           resendPropertiesSyncedAt: null,
+          day3SyncedAt: null,
         };
 
         // Skip users whose properties were pushed recently. The subscription
@@ -1328,6 +1421,299 @@ export const resyncResendProperties = onCall({
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Resend property resync failed';
     logger.error('Resend property resync failed', { error: message });
+    throw new HttpsError('internal', message);
+  }
+});
+
+// Per-invocation user cap for the Day3 backfill. Much higher than the Resend
+// equivalent because Day3 moves 1,000 contacts per request instead of one every
+// 600ms — Clerk pagination (100/page) is the real bottleneck here, not Day3.
+const DEFAULT_DAY3_BACKFILL_SIZE = 2000;
+const MAX_DAY3_BACKFILL_SIZE = 5000;
+
+/**
+ * Admin function to backfill every Clerk user into the Day3 audience with the
+ * full property set — the Day3 counterpart to resyncResendProperties.
+ *
+ * Resumable: processes up to `batchSize` users per invocation, then returns
+ * { done, nextOffset }. The client loops until done.
+ *
+ * Notes specific to Day3:
+ *   - Contacts go in via /contacts/batch (1,000 per request, one rate-limit
+ *     unit). Never loop single creates for an import.
+ *   - Payloads are de-duplicated case-insensitively: two emails differing only
+ *     in case count as a duplicate and reject the *entire* request.
+ *   - `upsert` is passed in the body, not the query string, so re-runs update
+ *     existing contacts instead of failing them as contact_already_exists.
+ *   - A 200 does not mean every row landed — per-row failures come back in
+ *     rowFailures and are reported, not swallowed.
+ *   - Signup dates land in the signup_date attribute only. Day3 ignores
+ *     created_at, so contact creation dates are always the import date.
+ */
+export const backfillDay3Contacts = onCall({
+  cors: true,
+  timeoutSeconds: 540,
+  secrets: [DAY3_API_KEY, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+  await requireAdmin(uid);
+
+  const {
+    instance = 'prod',
+    dryRun = false,
+    startOffset = 0,
+    batchSize: rawBatchSize,
+    force = false,
+    runId: rawRunId,
+  } = (request.data || {}) as {
+    instance?: string;
+    dryRun?: boolean;
+    startOffset?: number;
+    batchSize?: number;
+    force?: boolean;
+    runId?: string;
+  };
+
+  if (instance !== 'prod' && instance !== 'dev') {
+    throw new HttpsError('invalid-argument', 'Instance must be "prod" or "dev"');
+  }
+
+  const normalizedOffset = Math.max(0, Math.floor(Number(startOffset) || 0));
+  const normalizedBatchSize = Math.min(
+    MAX_DAY3_BACKFILL_SIZE,
+    Math.max(1, Math.floor(Number(rawBatchSize) || DEFAULT_DAY3_BACKFILL_SIZE)),
+  );
+
+  // Idempotency keys must be stable across our internal 5xx retries but
+  // different across deliberate re-runs — Day3 replays a 24h-old response for a
+  // repeated key, which would silently skip fresh data. The client passes one
+  // runId for the whole loop.
+  const runId = typeof rawRunId === 'string' && rawRunId.trim()
+    ? rawRunId.trim().slice(0, 40)
+    : `r${Date.now()}`;
+
+  let secretKey: string | null = null;
+  try {
+    secretKey = (instance === 'prod'
+      ? CLERK_SECRET_KEY_PROD.value()
+      : CLERK_SECRET_KEY_DEV.value()
+    )?.trim() || null;
+  } catch {
+    secretKey = (instance === 'prod'
+      ? process.env.CLERK_SECRET_KEY_PROD
+      : process.env.CLERK_SECRET_KEY_DEV
+    )?.trim() || null;
+  }
+
+  if (!secretKey) {
+    throw new HttpsError('failed-precondition', `Clerk ${instance} secret key not configured`);
+  }
+
+  const day3ApiKey = getDay3ApiKey();
+  if (!day3ApiKey) {
+    throw new HttpsError('failed-precondition', 'Day3 API key not configured');
+  }
+
+  const clerk = createClerkClient({ secretKey });
+
+  const stats = {
+    batchTotal: 0,
+    created: 0,
+    updated: 0,
+    rowFailures: 0,
+    skippedNoEmail: 0,
+    skippedFresh: 0,
+    dedupedAway: 0,
+    withOnboarding: 0,
+    dryRun,
+    force,
+    runId,
+    startOffset: normalizedOffset,
+    batchSize: normalizedBatchSize,
+  };
+  const errors: Array<{ email: string; error: string }> = [];
+
+  try {
+    const onboardingByUser = await loadLatestOnboardingFromBigQuery();
+    if (normalizedOffset === 0) {
+      logger.info(`Day3 backfill: loaded ${onboardingByUser.size} onboarding responses from BigQuery`);
+    }
+
+    // Collect this invocation's users first, then push them to Day3 in
+    // 1,000-contact chunks. emailToUserId lets us stamp only the rows that
+    // actually landed.
+    const pending: Day3ContactInput[] = [];
+    const emailToUserId = new Map<string, string>();
+
+    const targetTotal = normalizedOffset + normalizedBatchSize;
+    let offset = normalizedOffset;
+    let reachedEnd = false;
+    const pageSize = 100;
+    const freshCutoff = Date.now() - DAY3_SYNC_FRESH_WINDOW_MS;
+
+    while (offset < targetTotal && !reachedEnd) {
+      const remaining = targetTotal - offset;
+      const limit = Math.min(pageSize, remaining);
+      const response = await clerk.users.getUserList({ limit, offset });
+      const users = response.data;
+
+      if (users.length === 0) {
+        reachedEnd = true;
+        break;
+      }
+
+      const userInfoMap = await loadUserInfoBatch(users.map((u) => u.id));
+
+      for (const user of users) {
+        stats.batchTotal++;
+
+        const primaryEmail = user.emailAddresses.find(
+          (e) => e.id === user.primaryEmailAddressId
+        );
+        if (!primaryEmail) {
+          stats.skippedNoEmail++;
+          continue;
+        }
+        const email = primaryEmail.emailAddress;
+
+        const info = userInfoMap.get(user.id) ?? {
+          tier: 'free' as UserTier,
+          onboarding: null,
+          hasOnboarding: false,
+          resendPropertiesSyncedAt: null,
+          day3SyncedAt: null,
+        };
+
+        if (!force && !dryRun && info.day3SyncedAt && info.day3SyncedAt >= freshCutoff) {
+          stats.skippedFresh++;
+          continue;
+        }
+
+        const onboarding = onboardingByUser.get(user.id) ?? info.onboarding;
+        if (onboarding) stats.withOnboarding++;
+
+        pending.push({
+          email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          attributes: buildPropertiesForUser({
+            signupDate: formatSignupDate(user.createdAt),
+            tier: info.tier,
+            onboarding,
+          }),
+        });
+        emailToUserId.set(email.trim().toLowerCase(), user.id);
+      }
+
+      offset += users.length;
+      if (users.length < limit) reachedEnd = true;
+    }
+
+    // Case-insensitive dedupe before chunking — a duplicate inside one payload
+    // rejects the whole request, and Clerk can hold two users whose emails
+    // differ only in case.
+    const deduped = dedupeByEmail(pending);
+    stats.dedupedAway = pending.length - deduped.length;
+    if (stats.dedupedAway > 0) {
+      logger.warn('Day3 backfill de-duplicated contacts by lowercased email', {
+        dropped: stats.dedupedAway,
+      });
+    }
+
+    const syncedUserIds: string[] = [];
+
+    if (!dryRun) {
+      const chunks = chunkForDay3(deduped, DAY3_BATCH_SIZE);
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const outcome = await batchUpsertDay3Contacts(
+          day3ApiKey,
+          chunk,
+          `day3-backfill-${runId}-${normalizedOffset}-${i}`,
+        );
+
+        if (!outcome.ok) {
+          const code = outcome.requestError?.code || 'unknown';
+          const message = outcome.requestError?.message || 'unknown error';
+
+          // Out of subscriber headroom: the batch is rejected whole and never
+          // partially applied, so the run can simply be repeated after
+          // upgrading. Don't retry and don't split to sneak under the cap.
+          if (code === 'plan_limit_reached') {
+            throw new HttpsError(
+              'resource-exhausted',
+              `Day3 rejected the import: the account is out of subscriber headroom (${message}). `
+              + 'Upgrade the Day3 plan, then re-run this backfill — nothing was partially applied.',
+            );
+          }
+
+          throw new HttpsError('internal', `Day3 batch failed (${code}): ${message}`);
+        }
+
+        stats.created += outcome.created;
+        stats.updated += outcome.updated;
+        stats.rowFailures += outcome.rowFailures.length;
+
+        const failedEmails = new Set(outcome.rowFailures.map((f) => f.email));
+        for (const failure of outcome.rowFailures) {
+          errors.push({ email: failure.email, error: `${failure.code}: ${failure.message}` });
+        }
+
+        for (const contact of chunk) {
+          const key = contact.email.trim().toLowerCase();
+          if (failedEmails.has(key)) continue;
+          const userId = emailToUserId.get(key);
+          if (userId) syncedUserIds.push(userId);
+        }
+      }
+
+      // Stamp day3SyncedAt for everything that landed. Firestore caps a batch
+      // at 500 writes, so commit in chunks.
+      const STAMP_CHUNK = 400;
+      const now = Date.now();
+      for (let i = 0; i < syncedUserIds.length; i += STAMP_CHUNK) {
+        const slice = syncedUserIds.slice(i, i + STAMP_CHUNK);
+        const batch = firestore.batch();
+        for (const userId of slice) {
+          batch.set(
+            firestore.collection('users').doc(userId),
+            { day3SyncedAt: now },
+            { merge: true },
+          );
+        }
+        try {
+          await batch.commit();
+        } catch (e) {
+          logger.warn('Day3 backfill: stamp commit failed; those users stay retriable', {
+            error: e instanceof Error ? e.message : String(e),
+            count: slice.length,
+          });
+        }
+      }
+    }
+
+    const done = reachedEnd;
+    const audienceCount = await getDay3ContactCount(day3ApiKey);
+
+    logger.info('Day3 backfill batch completed', {
+      ...stats, done, nextOffset: offset, day3Total: audienceCount.total,
+    });
+
+    return {
+      success: true,
+      done,
+      nextOffset: offset,
+      stats,
+      day3Total: audienceCount.total,
+      errors: errors.slice(0, 20),
+    };
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    const message = err instanceof Error ? err.message : 'Day3 backfill failed';
+    logger.error('Day3 backfill failed', { error: message });
     throw new HttpsError('internal', message);
   }
 });

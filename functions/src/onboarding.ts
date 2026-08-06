@@ -2,15 +2,17 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
 import { createClerkClient } from "@clerk/backend";
-import { Resend } from "resend";
 import { firestore, getUserTier } from "./init";
-import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./env";
 import {
-  buildPropertiesForUser,
-  formatSignupDate,
-  triggerResendEvent,
-  upsertContactProperties,
-} from "./resend-sync";
+  CLERK_SECRET_KEY_DEV,
+  CLERK_SECRET_KEY_PROD,
+  RESEND_API_KEY,
+  DAY3_API_KEY,
+  getDay3ApiKey,
+} from "./env";
+import { triggerResendEvent } from "./resend-sync";
+import { buildPropertiesForUser, formatSignupDate } from "./contact-model";
+import { syncContactToProviders } from "./contact-sync";
 import { requireAdmin } from "./require-admin";
 
 const bigquery = new BigQuery({ projectId: "exit1-dev" });
@@ -203,7 +205,7 @@ export const submitOnboardingResponse = onCall(
   {
     cors: true,
     maxInstances: 5,
-    secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY],
+    secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY, DAY3_API_KEY],
   },
   async (request) => {
   const uid = request.auth?.uid;
@@ -306,12 +308,12 @@ export const submitOnboardingResponse = onCall(
     });
   }
 
-  // Push the new properties to Resend. Best-effort — never block the user on
+  // Push the new properties to both email providers. Best-effort — never block the user on
   // marketing-CRM sync failures.
   try {
-    await syncOnboardingToResend(uid, { sources, useCases, teamSize });
+    await syncOnboardingToEmailProviders(uid, { sources, useCases, teamSize });
   } catch (e) {
-    logger.warn("Failed to sync onboarding properties to Resend", {
+    logger.warn("Failed to sync onboarding properties to email providers", {
       uid,
       error: (e as Error)?.message ?? String(e),
     });
@@ -390,7 +392,7 @@ export async function stampOnboardingMetadataOnClerk(
   return null;
 }
 
-async function syncOnboardingToResend(
+async function syncOnboardingToEmailProviders(
   uid: string,
   onboarding: { sources: string[]; useCases: string[]; teamSize: string | null },
 ): Promise<void> {
@@ -401,8 +403,9 @@ async function syncOnboardingToResend(
       return process.env.RESEND_API_KEY?.trim();
     }
   })();
-  if (!resendKey) {
-    logger.info("Resend API key not configured; skipping onboarding property sync", { uid });
+  const day3Key = getDay3ApiKey();
+  if (!resendKey && !day3Key) {
+    logger.info("No email provider configured; skipping onboarding property sync", { uid });
     return;
   }
 
@@ -433,7 +436,7 @@ async function syncOnboardingToResend(
     lastName = user.lastName ?? null;
     signupDate = formatSignupDate(user.createdAt);
   } catch (e) {
-    logger.warn("Failed to fetch Clerk user during Resend onboarding sync", {
+    logger.warn("Failed to fetch Clerk user during onboarding contact sync", {
       uid,
       error: (e as Error)?.message ?? String(e),
     });
@@ -441,7 +444,7 @@ async function syncOnboardingToResend(
   }
 
   if (!email) {
-    logger.warn("No email found for Clerk user during Resend onboarding sync", { uid });
+    logger.warn("No email found for Clerk user during onboarding contact sync", { uid });
     return;
   }
 
@@ -452,53 +455,62 @@ async function syncOnboardingToResend(
     onboarding,
   });
 
-  const resend = new Resend(resendKey);
-  const result = await upsertContactProperties(resend, email, properties, {
+  const { resend, day3 } = await syncContactToProviders({
+    email,
     firstName,
     lastName,
+    properties,
+    resendApiKey: resendKey,
+    day3ApiKey: day3Key,
+    userId: uid,
   });
 
-  if (!result.success) {
-    logger.warn("Resend onboarding property sync failed", {
-      uid,
-      email,
-      error: result.error,
-    });
-  } else {
+  if (resend.success) {
     logger.info("Synced onboarding properties to Resend", { uid, email });
 
-    // Fire the user.onboarding_completed automation event. Best-effort —
-    // failures here must not roll back the onboarding marker the user just
-    // wrote, so we only log.
-    const eventResult = await triggerResendEvent(
-      resendKey,
-      email,
-      "user.onboarding_completed",
-      {
-        userId: uid,
-        teamSize: onboarding.teamSize,
-        sources: onboarding.sources,
-        useCases: onboarding.useCases,
-      },
-    );
-    if (!eventResult.success) {
-      logger.warn("Failed to trigger Resend user.onboarding_completed event", {
-        uid,
+    // Fire the user.onboarding_completed automation event. Resend-only: Day3
+    // has no events API in v1. Best-effort — failures here must not roll back
+    // the onboarding marker the user just wrote, so we only log.
+    if (resendKey) {
+      const eventResult = await triggerResendEvent(
+        resendKey,
         email,
-        error: eventResult.error,
-      });
-    }
-    try {
-      await firestore.collection("users").doc(uid).set(
-        { resendPropertiesSyncedAt: Date.now() },
-        { merge: true },
+        "user.onboarding_completed",
+        {
+          userId: uid,
+          teamSize: onboarding.teamSize,
+          sources: onboarding.sources,
+          useCases: onboarding.useCases,
+        },
       );
-    } catch (e) {
-      logger.debug("Failed to stamp resendPropertiesSyncedAt on onboarding submit", {
-        uid,
-        error: (e as Error)?.message ?? String(e),
-      });
+      if (!eventResult.success) {
+        logger.warn("Failed to trigger Resend user.onboarding_completed event", {
+          uid,
+          email,
+          error: eventResult.error,
+        });
+      }
     }
+  }
+
+  if (day3.success) {
+    logger.info("Synced onboarding properties to Day3", { uid, email });
+  }
+
+  // Per-provider stamps so one provider failing doesn't suppress the other's
+  // backfill.
+  const stamps: Record<string, number> = {};
+  if (resend.success) stamps.resendPropertiesSyncedAt = Date.now();
+  if (day3.success) stamps.day3SyncedAt = Date.now();
+  if (Object.keys(stamps).length === 0) return;
+
+  try {
+    await firestore.collection("users").doc(uid).set(stamps, { merge: true });
+  } catch (e) {
+    logger.debug("Failed to stamp contact sync timestamps on onboarding submit", {
+      uid,
+      error: (e as Error)?.message ?? String(e),
+    });
   }
 }
 

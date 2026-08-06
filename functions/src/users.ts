@@ -2,10 +2,17 @@ import { onCall } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { FieldPath } from "firebase-admin/firestore";
 import { firestore, getUserEmailFromClerk, getUserTier } from "./init";
-import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./env";
+import {
+  CLERK_SECRET_KEY_DEV,
+  CLERK_SECRET_KEY_PROD,
+  RESEND_API_KEY,
+  DAY3_API_KEY,
+  getDay3ApiKey,
+} from "./env";
 import { createClerkClient } from '@clerk/backend';
 import { CONFIG } from "./config";
 import { triggerResendEvent } from "./resend-sync";
+import { deleteContactFromDay3 } from "./contact-sync";
 import { requireAdmin } from "./require-admin";
 
 // Simple in-memory cache for user data
@@ -131,7 +138,7 @@ async function deleteAllUserData(userId: string): Promise<{
 
 // Callable function to delete user account and all associated data
 export const deleteUserAccount = onCall({
-  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY],
+  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY, DAY3_API_KEY],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -174,6 +181,13 @@ export const deleteUserAccount = onCall({
       }
     } else if (!userEmail) {
       logger.info("Skipped user.deleted event — email not resolvable", { uid });
+    }
+
+    // Erase the Day3 contact so a deleted user can't receive marketing
+    // campaigns. Day3-only on purpose: Resend's existing behaviour leaves the
+    // contact in place, and this migration doesn't change that.
+    if (userEmail) {
+      await deleteContactFromDay3(getDay3ApiKey(), userEmail, uid);
     }
 
     // Delete Clerk user via admin API (bypasses Commerce/billing restrictions

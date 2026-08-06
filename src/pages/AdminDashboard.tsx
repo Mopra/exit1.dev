@@ -29,6 +29,7 @@ import {
   TrendingUp,
   BarChart3,
   Layers,
+  Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -53,6 +54,9 @@ const AdminDashboard: React.FC = () => {
   const [tierLogs, setTierLogs] = useState<SyncLogEntry[]>([]);
   const [onboardingBackfillLoading, setOnboardingBackfillLoading] = useState(false);
   const [onboardingBackfillLogs, setOnboardingBackfillLogs] = useState<SyncLogEntry[]>([]);
+  const [day3Loading, setDay3Loading] = useState(false);
+  const [day3Logs, setDay3Logs] = useState<SyncLogEntry[]>([]);
+  const [day3Force, setDay3Force] = useState(false);
 
   const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
@@ -79,6 +83,109 @@ const AdminDashboard: React.FC = () => {
     },
     [],
   );
+
+  const addDay3Log = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
+    setDay3Logs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
+  }, []);
+
+  const handleBackfillDay3 = useCallback(async (dryRun: boolean) => {
+    setDay3Loading(true);
+    setDay3Logs([]);
+    const mode = dryRun ? 'DRY RUN' : 'LIVE';
+    // One runId for the whole loop: Day3 replays a 24h-old response for a
+    // repeated Idempotency-Key, so a fresh run needs fresh keys.
+    const runId = `${Date.now().toString(36)}`;
+    addDay3Log(`Starting ${mode} Day3 backfill (force: ${day3Force}, runId: ${runId})...`);
+
+    type BatchResponse = {
+      success: boolean;
+      done: boolean;
+      nextOffset: number;
+      day3Total: number | null;
+      stats: {
+        batchTotal: number;
+        created: number;
+        updated: number;
+        rowFailures: number;
+        skippedNoEmail: number;
+        skippedFresh: number;
+        dedupedAway: number;
+        withOnboarding: number;
+      };
+      errors?: Array<{ email: string; error: string }>;
+    };
+
+    const agg = {
+      total: 0, created: 0, updated: 0, rowFailures: 0,
+      skippedNoEmail: 0, skippedFresh: 0, dedupedAway: 0, withOnboarding: 0,
+    };
+
+    try {
+      const fn = httpsCallable(functions, 'backfillDay3Contacts', { timeout: 540000 });
+      let offset = 0;
+      let batchNum = 0;
+      let day3Total: number | null = null;
+
+      for (;;) {
+        batchNum++;
+        addDay3Log(`Batch ${batchNum} starting at offset ${offset}...`);
+        const result = await fn({
+          instance: 'prod',
+          dryRun,
+          force: day3Force,
+          startOffset: offset,
+          runId,
+        });
+        const data = result.data as BatchResponse;
+
+        agg.total += data.stats.batchTotal;
+        agg.created += data.stats.created;
+        agg.updated += data.stats.updated;
+        agg.rowFailures += data.stats.rowFailures;
+        agg.skippedNoEmail += data.stats.skippedNoEmail;
+        agg.skippedFresh += data.stats.skippedFresh;
+        agg.dedupedAway += data.stats.dedupedAway;
+        agg.withOnboarding += data.stats.withOnboarding;
+        day3Total = data.day3Total;
+
+        addDay3Log(
+          `Batch ${batchNum}: processed ${data.stats.batchTotal}, created ${data.stats.created}, `
+          + `updated ${data.stats.updated}, row failures ${data.stats.rowFailures}`,
+          data.stats.rowFailures > 0 ? 'error' : 'info',
+        );
+        data.errors?.forEach((e) => addDay3Log(`  ${e.email}: ${e.error}`, 'error'));
+
+        if (data.done) break;
+        offset = data.nextOffset;
+      }
+
+      addDay3Log(`Clerk users processed: ${agg.total}`, 'info');
+      addDay3Log(`Created: ${agg.created}, updated: ${agg.updated}`, 'success');
+      if (agg.withOnboarding > 0) addDay3Log(`With onboarding answers: ${agg.withOnboarding}`, 'info');
+      if (agg.skippedFresh > 0) addDay3Log(`Skipped (synced < 30 days ago): ${agg.skippedFresh}`, 'info');
+      if (agg.skippedNoEmail > 0) addDay3Log(`Skipped (no primary email): ${agg.skippedNoEmail}`, 'info');
+      if (agg.dedupedAway > 0) {
+        addDay3Log(`De-duplicated by lowercased email: ${agg.dedupedAway}`, 'info');
+      }
+      if (agg.rowFailures > 0) addDay3Log(`Row failures: ${agg.rowFailures}`, 'error');
+      if (day3Total !== null) addDay3Log(`Day3 audience now holds ${day3Total} contacts`, 'success');
+
+      toast.success(`Day3 ${mode} complete: ${agg.created} created, ${agg.updated} updated`);
+    } catch (err) {
+      const e = err as { message?: string; code?: string };
+      const message = e?.message || 'Unknown error';
+      addDay3Log(`Day3 backfill failed: ${message}`, 'error');
+      if (e?.code === 'functions/resource-exhausted') {
+        addDay3Log(
+          'Nothing was partially applied — upgrade the Day3 plan and re-run this backfill.',
+          'info',
+        );
+      }
+      toast.error(`Day3 backfill failed: ${message}`);
+    } finally {
+      setDay3Loading(false);
+    }
+  }, [addDay3Log, day3Force]);
 
   const handleSyncToResend = useCallback(async (dryRun: boolean) => {
     setSyncLoading(true);
@@ -855,6 +962,64 @@ const AdminDashboard: React.FC = () => {
                     </Button>
                   </div>
                   <LogConsole logs={propertyLogs} />
+                </CardContent>
+              </div>
+            </GlowCard>
+
+            {/* Backfill Day3 Contacts */}
+            <GlowCard className="p-0 lg:col-span-2">
+              <div className="m-1">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Send className="h-4 w-4" />
+                    Backfill Day3 Contacts
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Imports every Clerk user into the Day3 audience with the full attribute set,
+                    1,000 contacts per request. Safe to re-run — existing contacts are upserted, and
+                    users synced within the last 30 days are skipped unless{' '}
+                    <span className="font-mono">Force</span> is checked. Day3 segments are live
+                    filters on <span className="font-mono">plan_tier</span>, so there is no
+                    membership sync to run afterwards. Note that Day3 ignores{' '}
+                    <span className="font-mono">created_at</span>: original signup dates survive only
+                    in the <span className="font-mono">signup_date</span> attribute.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="day3-force"
+                      checked={day3Force}
+                      onCheckedChange={(v) => setDay3Force(v === true)}
+                      disabled={day3Loading}
+                    />
+                    <label htmlFor="day3-force" className="text-xs cursor-pointer select-none">
+                      Force (ignore 30-day skip cache; re-sync every user)
+                    </label>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleBackfillDay3(true)}
+                      variant="outline"
+                      size="sm"
+                      disabled={day3Loading}
+                      className="cursor-pointer"
+                    >
+                      {day3Loading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Dry Run
+                    </Button>
+                    <Button
+                      onClick={() => handleBackfillDay3(false)}
+                      variant="default"
+                      size="sm"
+                      disabled={day3Loading}
+                      className="cursor-pointer"
+                    >
+                      {day3Loading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Backfill Day3
+                    </Button>
+                  </div>
+                  <LogConsole logs={day3Logs} />
                 </CardContent>
               </div>
             </GlowCard>

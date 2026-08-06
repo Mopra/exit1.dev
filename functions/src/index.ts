@@ -193,12 +193,13 @@ export {
   toggleHeartbeatDefer,
 } from './deploy-mode';
 
-// Clerk webhook and Resend Audience sync
+// Clerk webhook and email-platform contact sync (Resend + Day3)
 export {
   clerkWebhook,
   syncClerkUsersToResend,
   syncSegmentsToResend,
   resyncResendProperties,
+  backfillDay3Contacts,
 } from './clerk-webhook';
 
 // Plan enforcement (downgrade handler)

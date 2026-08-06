@@ -7,6 +7,9 @@ export const CLERK_WEBHOOK_SECRET = defineSecret('CLERK_WEBHOOK_SECRET');
 // `firebase functions:secrets:set RESEND_WEBHOOK_SECRET` after creating the
 // webhook in the Resend dashboard (Webhooks → endpoint → Signing Secret).
 export const RESEND_WEBHOOK_SECRET = defineSecret('RESEND_WEBHOOK_SECRET');
+// Day3 (go.day3.app) — the email platform we're migrating to. During the
+// dual-write period every contact write goes to both Resend and Day3.
+export const DAY3_API_KEY = defineSecret('DAY3_API_KEY');
 export const CLERK_SECRET_KEY_PROD = defineSecret('CLERK_SECRET_KEY_PROD');
 export const CLERK_SECRET_KEY_DEV = defineSecret('CLERK_SECRET_KEY_DEV');
 export const CLERK_SECRET_KEY = defineSecret('CLERK_SECRET_KEY');
@@ -38,6 +41,17 @@ export const getResendCredentials = () => {
     apiKey,
     fromAddress: fromAddress || 'Exit1.dev <alerts@updates.exit1.dev>',
   };
+};
+
+export const getDay3ApiKey = (): string | undefined => {
+  const sanitize = (value?: string | null) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+  try {
+    return sanitize(DAY3_API_KEY.value());
+  } catch {
+    return sanitize(process.env.DAY3_API_KEY);
+  }
 };
 
 export const getTwilioCredentials = () => {

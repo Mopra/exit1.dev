@@ -1,5 +1,14 @@
+// ============================================================================
+// RESEND ADAPTER
+//
+// Resend-specific contact/topic/event plumbing. The provider-neutral half of
+// this (property definitions, onboarding option sets, buildPropertiesForUser)
+// lives in contact-model.ts and is shared with the Day3 adapter.
+// ============================================================================
+
 import * as logger from "firebase-functions/logger";
 import { Resend } from "resend";
+import { PROPERTY_DEFS, sleep } from "./contact-model";
 
 // Topic IDs — Resend audience topics created manually in the Resend dashboard.
 // All topics default to opt_in in Resend; we still explicitly opt new users in
@@ -14,109 +23,9 @@ export const RESEND_TOPICS = {
 
 export const RESEND_TOPIC_IDS: string[] = Object.values(RESEND_TOPICS);
 
-// Onboarding option sets — kept in sync with onboarding.ts validation.
-// Each option becomes its own boolean-valued string property in Resend so the
-// marketing manager can filter precisely (e.g. "users whose source includes Reddit").
-export const SOURCE_KEYS = [
-  "google",
-  "reddit",
-  "ai_assistant",
-  "twitter",
-  "product_hunt",
-  "hacker_news",
-  "friend",
-  "blog",
-  "other",
-] as const;
-
-export const USE_CASE_KEYS = [
-  "infrastructure",
-  "ecommerce",
-  "client_sites",
-  "saas",
-  "personal",
-  "agency",
-  "other",
-] as const;
-
-export type UserTier = "free" | "indie" | "nano" | "pro";
-
-interface PropertyDef {
-  key: string;
-  type: "string" | "number";
-  fallbackValue: string | number | null;
-}
-
-// Single source of truth for every custom property we register in Resend.
-// Adding a new property? Add it here and re-run the resync — registration is idempotent.
-export const PROPERTY_DEFS: PropertyDef[] = [
-  { key: "signup_date", type: "string", fallbackValue: "" },
-  { key: "plan_tier", type: "string", fallbackValue: "free" },
-  { key: "team_size", type: "string", fallbackValue: "" },
-  ...SOURCE_KEYS.map((k) => ({
-    key: `source_${k}`,
-    type: "string" as const,
-    fallbackValue: "false",
-  })),
-  ...USE_CASE_KEYS.map((k) => ({
-    key: `use_case_${k}`,
-    type: "string" as const,
-    fallbackValue: "false",
-  })),
-];
-
-export interface OnboardingAnswers {
-  sources: string[];
-  useCases: string[];
-  teamSize: string | null;
-}
-
-export interface ContactPropertiesInput {
-  signupDate?: string | null;
-  tier: UserTier;
-  onboarding?: OnboardingAnswers | null;
-}
-
 // Resend rate limit is 2 req/sec. Every API call that hits Resend should flow
 // through this so we don't get 429s during backfills.
 export const RESEND_RATE_LIMIT_MS = 600;
-
-export const sleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-/**
- * Produce the full property map for a user. Values that can't be derived are
- * omitted so Resend falls back to the property's fallbackValue instead of us
- * writing an incorrect default (e.g. overwriting a real team_size with "").
- */
-export function buildPropertiesForUser(
-  input: ContactPropertiesInput,
-): Record<string, string> {
-  const props: Record<string, string> = {
-    plan_tier: input.tier,
-  };
-
-  if (input.signupDate) {
-    props.signup_date = input.signupDate;
-  }
-
-  const onboarding = input.onboarding;
-  if (onboarding) {
-    if (onboarding.teamSize) {
-      props.team_size = onboarding.teamSize;
-    }
-    const sourceSet = new Set(onboarding.sources);
-    for (const key of SOURCE_KEYS) {
-      props[`source_${key}`] = sourceSet.has(key) ? "true" : "false";
-    }
-    const useCaseSet = new Set(onboarding.useCases);
-    for (const key of USE_CASE_KEYS) {
-      props[`use_case_${key}`] = useCaseSet.has(key) ? "true" : "false";
-    }
-  }
-
-  return props;
-}
 
 /**
  * Idempotently register every property in PROPERTY_DEFS. Resend returns an
@@ -337,12 +246,3 @@ export async function triggerResendEvent(
   }
 }
 
-/**
- * Format a Clerk createdAt timestamp (milliseconds) as an ISO date (YYYY-MM-DD).
- * Resend properties are string-typed; dropping the time component keeps filters
- * in the Resend UI readable.
- */
-export function formatSignupDate(createdAt: number | null | undefined): string | null {
-  if (!createdAt || !Number.isFinite(createdAt)) return null;
-  return new Date(createdAt).toISOString().slice(0, 10);
-}
