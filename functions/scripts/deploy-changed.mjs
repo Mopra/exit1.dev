@@ -105,8 +105,20 @@ const allSrcFiles = git(['ls-files', 'functions/src'])
   .filter((p) => /\.tsx?$/.test(p) && !p.includes('/__tests__/'))
   .map((p) => path.join(REPO_ROOT, p));
 
+// A module can be pulled in three ways here, and missing any one of them makes the
+// graph under-report — which deploys stale code while reporting success. Dynamic
+// import() is the easy one to forget because it carries no `from` keyword: several
+// modules defer heavy deps (bigquery, deploy-mode) that way to keep cold starts lean,
+// and status-pages.ts reaches bigquery.ts *only* like that. That gap is why the
+// August 2026 status-page history fix landed in bigquery.ts but never reached
+// getStatusPage{Heartbeat,Snapshot,Uptime} — they kept serving the old 25-check cap.
+const IMPORT_PATTERNS = [
+  /\bfrom\s*['"](\.[^'"]+)['"]/g, // static import / re-export
+  /\bimport\s*\(\s*['"](\.[^'"]+)['"]\s*\)/g, // dynamic import()
+  /\brequire\s*\(\s*['"](\.[^'"]+)['"]\s*\)/g, // CJS require
+];
+
 const reverseDeps = new Map();
-const importRe = /\bfrom\s*['"](\.[^'"]+)['"]/g;
 for (const file of allSrcFiles) {
   let txt;
   try {
@@ -114,11 +126,13 @@ for (const file of allSrcFiles) {
   } catch {
     continue;
   }
-  for (const m of txt.matchAll(importRe)) {
-    const target = resolveImport(file, m[1]);
-    if (!target) continue;
-    if (!reverseDeps.has(target)) reverseDeps.set(target, new Set());
-    reverseDeps.get(target).add(file);
+  for (const importRe of IMPORT_PATTERNS) {
+    for (const m of txt.matchAll(importRe)) {
+      const target = resolveImport(file, m[1]);
+      if (!target) continue;
+      if (!reverseDeps.has(target)) reverseDeps.set(target, new Set());
+      reverseDeps.get(target).add(file);
+    }
   }
 }
 
