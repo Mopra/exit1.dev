@@ -1,6 +1,9 @@
 // P1–P5 importance scale shared by the check form, bulk edit, and list badges.
 // Integrations map this to notification priority (Pushover pages P1 at
-// Emergency, P4–P5 stay quiet). P3 keeps the integration's own default.
+// Emergency, P4–P5 stay quiet). An explicit severity — P3 included — overrides
+// the integration's default and hard-caps every alert the check emits;
+// recoveries are capped at Normal on top of that, so an all-clear never
+// bypasses quiet hours. Leaving severity unset is what keeps the default.
 
 export type Severity = 1 | 2 | 3 | 4 | 5;
 

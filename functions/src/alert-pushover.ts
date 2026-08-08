@@ -110,9 +110,16 @@ export function buildPushoverUrl(creds: PushoverCredentials): string {
 // dev site as "don't wake me" (P4/P5) on a single integration. The mapped
 // level is a HARD CAP for every alert the check emits — a P3 check never
 // sends anything above Normal (no quiet-hours bypass), including SSL/domain
-// expiry and DNS events. Non-critical events (recoveries, warnings) are
-// additionally capped at High: a recovery at Emergency would page the user
-// until acked for a site that's back up.
+// expiry and DNS events. Non-critical events are capped further still:
+// - Warnings (ssl_warning, domain_expiring, dns_record_changed) cap at High.
+//   They're not an outage, but "cert expires in 3 days" is still worth a
+//   quiet-hours bypass on a P1 check.
+// - Recoveries (website_up, domain_renewed) cap at NORMAL. An all-clear is
+//   good news; waking someone for it is the one thing they didn't ask for by
+//   setting P1. (Capping recoveries at High shipped originally only to stop
+//   Emergency's repeat-until-ack on a site that's already back — but it left
+//   a P1 check sending *louder* recoveries than the same integration with no
+//   severity set, which reads as a bug to users.)
 //
 // Severity unset (null/undefined — the "use default priority" state) keeps
 // the legacy default-based mapping:
@@ -133,9 +140,12 @@ export function mapEventToPushoverPriority(
     event === 'domain_expired' ||
     event === 'dns_record_missing' ||
     event === 'dns_resolution_failed';
+  const isRecovery = event === 'website_up' || event === 'domain_renewed';
   if (severity != null) {
     const base = (3 - severity) as PushoverPriority;
-    return isCritical ? base : (Math.min(base, 1) as PushoverPriority);
+    if (isCritical) return base;
+    // Recoveries never bypass quiet hours; warnings still may.
+    return Math.min(base, isRecovery ? 0 : 1) as PushoverPriority;
   }
   if (isCritical) {
     return defaultPriority < 1 ? 1 : defaultPriority;
