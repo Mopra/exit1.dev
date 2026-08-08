@@ -245,11 +245,21 @@ if (targets.length === ALL_FNS.length && !OPT.all && !OPT.yes) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Before deploying anything the CLI loads every function in the codebase to work out the
+// backend spec, and it allows 10s for that. This codebase is well past what fits in the
+// budget, so the deploy dies with "User code failed to load. Cannot determine backend
+// specification. Timeout after 10000" — which reads like a code fault and isn't one.
+// Respect an explicit override; otherwise give discovery room to finish.
+const deployEnv = {
+  ...process.env,
+  FUNCTIONS_DISCOVERY_TIMEOUT: process.env.FUNCTIONS_DISCOVERY_TIMEOUT ?? '180',
+};
+
 for (let i = 0; i < batches.length; i++) {
   const only = batches[i].map((fn) => `functions:${fn}`).join(',');
   console.log(`\n▶ Batch ${i + 1}/${batches.length}: ${batches[i].join(', ')}`);
   try {
-    execSync(`firebase deploy --only ${only}`, { cwd: FUNCTIONS_DIR, stdio: 'inherit', shell: true });
+    execSync(`firebase deploy --only ${only}`, { cwd: FUNCTIONS_DIR, stdio: 'inherit', shell: true, env: deployEnv });
   } catch (err) {
     console.error(`\n✖ Batch ${i + 1} failed (exit ${err.status ?? '?'}). Re-run to retry remaining batches.`);
     process.exit(err.status ?? 1);
