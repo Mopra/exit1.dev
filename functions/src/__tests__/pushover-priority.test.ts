@@ -68,14 +68,40 @@ test("P4/P5 stay below Normal for outages — no quiet-hours bypass", () => {
   assert.equal(mapEventToPushoverPriority("website_down", 2, 5), -2);
 });
 
-test("severity unset keeps the legacy mapping: critical floored at High, rest capped at High", () => {
+test("severity unset: critical floored at High, warnings capped at High, recoveries at Normal", () => {
   assert.equal(mapEventToPushoverPriority("website_down", 0), 1);
   assert.equal(mapEventToPushoverPriority("website_down", 2), 2);
-  assert.equal(mapEventToPushoverPriority("website_up", 2), 1);
+  assert.equal(mapEventToPushoverPriority("ssl_warning", 2), 1);
+  // An Emergency default means "page me for outages", not "wake me on the
+  // all-clear" — the same complaint the severity path had.
+  assert.equal(mapEventToPushoverPriority("website_up", 2), 0);
+  assert.equal(mapEventToPushoverPriority("website_up", 1), 0);
+  // A deliberately quiet integration still recovers quietly.
   assert.equal(mapEventToPushoverPriority("website_up", -1), -1);
+  assert.equal(mapEventToPushoverPriority("website_up", 0), 0);
   // null (cleared back to "use default priority") behaves like undefined.
   assert.equal(mapEventToPushoverPriority("website_down", 0, null), 1);
-  assert.equal(mapEventToPushoverPriority("website_up", 2, null), 1);
+  assert.equal(mapEventToPushoverPriority("website_up", 2, null), 0);
+});
+
+// The one rule the whole mapping has to satisfy, both paths, every input.
+test("only criticals reach Emergency; recoveries never bypass quiet hours", () => {
+  const all = ["website_down", "website_error", "website_up", "ssl_error", "ssl_warning", "domain_expired", "domain_expiring", "domain_renewed", "dns_record_missing", "dns_resolution_failed", "dns_record_changed"] as const;
+  const critical = ["website_down", "website_error", "ssl_error", "domain_expired", "dns_record_missing", "dns_resolution_failed"];
+  const recovery = ["website_up", "domain_renewed"];
+  for (const event of all) {
+    for (const defaultPriority of [-2, -1, 0, 1, 2] as const) {
+      for (const severity of [undefined, null, 1, 2, 3, 4, 5] as const) {
+        const p = mapEventToPushoverPriority(event, defaultPriority, severity);
+        if (!critical.includes(event)) {
+          assert.ok(p < 2, `${event} reached Emergency (sev=${severity}, default=${defaultPriority})`);
+        }
+        if (recovery.includes(event)) {
+          assert.ok(p <= 0, `${event} bypassed quiet hours at ${p} (sev=${severity}, default=${defaultPriority})`);
+        }
+      }
+    }
+  }
 });
 
 test("all critical event types respect severity", () => {

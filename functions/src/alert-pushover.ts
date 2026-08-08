@@ -127,7 +127,13 @@ export function buildPushoverUrl(creds: PushoverCredentials): string {
 //   High so users who never made an explicit choice don't sleep through
 //   them — uptime tools are useless otherwise. They use the user's default
 //   if it's already High or Emergency.
-// - Non-critical events follow the user's default, capped at High.
+// - Warnings follow the user's default, capped at High.
+// - Recoveries follow the user's default, capped at Normal — same reasoning
+//   as the severity path. Someone picking an Emergency default is saying
+//   "page me for outages", not "wake me when it comes back".
+//
+// So, across both paths: only a critical event can reach Emergency, only a
+// critical or a warning can bypass quiet hours, and a recovery never does.
 export function mapEventToPushoverPriority(
   event: WebhookEvent,
   defaultPriority: PushoverPriority,
@@ -150,7 +156,7 @@ export function mapEventToPushoverPriority(
   if (isCritical) {
     return defaultPriority < 1 ? 1 : defaultPriority;
   }
-  return defaultPriority > 1 ? 1 : defaultPriority;
+  return Math.min(defaultPriority, isRecovery ? 0 : 1) as PushoverPriority;
 }
 
 // Pushover caps title at 250 chars and message body at 1024 chars (UTF-8).
