@@ -5,6 +5,12 @@ import { Resend } from 'resend';
 import { CONFIG } from './config';
 import { getResendCredentials } from './env';
 import { firestore } from './init';
+import {
+  SmsTier,
+  decideSmsTier,
+  isConclusiveCachedTier,
+  isTierDriftUnderstated,
+} from './sms-tier';
 
 // ============================================================================
 // DATE FORMATTING
@@ -309,6 +315,7 @@ export function getEmailRecipientsForCheck(settings: EmailSettings, checkId: str
 // ============================================================================
 
 const adminStatusCache = new Map<string, { value: boolean; expiresAt: number }>();
+const userDocTierCache = new Map<string, { value: string | null; expiresAt: number }>();
 
 export const getCachedAdminStatus = async (userId: string): Promise<boolean> => {
   const now = Date.now();
@@ -330,20 +337,58 @@ export const getCachedAdminStatus = async (userId: string): Promise<boolean> => 
 };
 
 /**
+ * Read `users/{uid}.tier` — the authoritative tier — with the same TTL as the
+ * admin cache. Returns null when the doc or field is missing/unreadable, which
+ * callers must treat as "unknown", never as "free".
+ */
+const getCachedUserDocTier = async (userId: string): Promise<string | null> => {
+  const now = Date.now();
+  const cached = userDocTierCache.get(userId);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  try {
+    const snap = await firestore.collection('users').doc(userId).get();
+    const raw = snap.exists ? (snap.data() as { tier?: unknown }).tier : undefined;
+    const value = typeof raw === 'string' ? raw : null;
+    userDocTierCache.set(userId, { value, expiresAt: now + ADMIN_STATUS_CACHE_TTL_MS });
+    return value;
+  } catch (error) {
+    logger.warn(`Failed to read user-doc tier for ${userId}`, error);
+    return null;
+  }
+};
+
+/**
  * Resolve the SMS-eligibility tier for a check. SMS alerts are enabled for
  * tiers whose TIER_LIMITS.smsAlerts flag is true — currently Pro only.
- * Admins are treated as Pro. Indie, Nano, Free, and legacy stale values get 'free'.
- * Legacy values: 'premium' → nano (no SMS), 'scale'/'agency' → pro (SMS enabled).
+ * Admins are treated as Pro.
+ *
+ * The decision itself lives in ./sms-tier as pure logic (see that module for why
+ * a non-Pro `check.userTier` must not be trusted). This wrapper only supplies
+ * the two cached reads it needs.
  */
-export const resolveSmsTier = async (
-  website: Website,
-): Promise<'free' | 'indie' | 'nano' | 'pro'> => {
-  const raw = website.userTier as unknown;
-  if (raw === 'pro' || raw === 'agency' || raw === 'scale') return 'pro';
-  if (raw === 'nano' || raw === 'premium') return 'nano';
-  if (raw === 'indie') return 'indie';
+export const resolveSmsTier = async (website: Website): Promise<SmsTier> => {
+  // Fast path: 'pro' on the check doc settles it, no reads required. This keeps
+  // the overwhelmingly common case free of extra Firestore traffic.
+  if (isConclusiveCachedTier(website.userTier)) return 'pro';
+
+  // Cached value is non-Pro or unrecognised — inconclusive. Verify against the
+  // user doc before denying SMS, so a stale check doc cannot suppress a paying
+  // user's alerts. Both reads are cached for ADMIN_STATUS_CACHE_TTL_MS.
+  const userDocTier = await getCachedUserDocTier(website.userId);
+
+  if (isTierDriftUnderstated(website.userTier, userDocTier)) {
+    logger.warn(
+      `resolveSmsTier: stale userTier on check ${website.id} ` +
+      `(check=${String(website.userTier)}, user doc=${String(userDocTier)}) — ` +
+      `using the user doc so SMS is not silently suppressed`
+    );
+  }
+
   const isAdmin = await getCachedAdminStatus(website.userId);
-  return isAdmin ? 'pro' : 'free';
+  return decideSmsTier(website.userTier, userDocTier, isAdmin);
 };
 
 // ============================================================================

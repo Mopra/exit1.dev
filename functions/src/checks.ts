@@ -1595,17 +1595,31 @@ export async function processOneCheck(
     const regionMissing = !check.checkRegion;
     const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "vps-eu-1";
 
-    // Trust the denormalised tier on the check doc when it's already a
-    // current-lineup paid tier — downgrades explicitly backfill via
-    // `backfillCheckUserTier` (see /PRICING.md → "Downgrade handling"), so
-    // stale paid values can't linger. Free/missing/legacy ('premium'/'scale'/
-    // 'agency') fall through to a live lookup so upgrades and retired tier
-    // values are healed rather than trusted.
+    // Only 'pro' — the top of the ladder — is trusted outright, because it can
+    // never under-state a user's entitlements. Every other value (including the
+    // paid tiers 'indie'/'nano') falls through to a lookup.
+    //
+    // This used to trust any current-lineup paid tier, on the reasoning that
+    // downgrades backfill via `backfillCheckUserTier`. But that only covers
+    // DOWNgrades and subscription-webhook UPgrades. A paid→paid upgrade granted
+    // through Clerk publicMetadata (`lifetimeNano`, `admin` — see init.ts
+    // fetchTierFromClerk) fires no subscription webhook at all, so the backfill
+    // never ran and checks created during the user's Nano era stayed stamped
+    // 'nano' forever. SMS is the only Pro-exclusive feature gated off this
+    // field, so those checks silently dropped every SMS alert while email kept
+    // working. Falling through heals the drift on the next probe.
+    //
+    // Cost is negligible: getEffectiveTierForUser is memoised per scheduler run
+    // (one entry per user), and getUserTier itself is TTL-cached on the user doc.
     const cached = check.userTier;
     const effectiveTier =
-      cached === "indie" || cached === "nano" || cached === "pro"
+      cached === "pro"
         ? cached
         : await getEffectiveTierForUser(check.userId);
+    // Capture drift BEFORE mutating `check`, otherwise the hasChanges comparison
+    // below reads the value we just overwrote and can never be true — which is
+    // why a stale tier on an otherwise-stable check was never written back.
+    const tierDrifted = (cached ?? null) !== (effectiveTier ?? null);
     check.userTier = effectiveTier as Website["userTier"];
 
     const targetLat = checkResult.targetLatitude ?? check.targetLatitude;
@@ -1635,7 +1649,7 @@ export async function processOneCheck(
       check.status !== status ||
       regionMissing ||
       currentRegion !== desiredRegion ||
-      (check.userTier ?? null) !== (effectiveTier ?? null) ||
+      tierDrifted ||
       check.lastStatusCode !== checkResult.statusCode ||
       Math.abs((check.responseTime || 0) - responseTime) > 100 ||
       (check.detailedStatus || null) !== (checkResult.detailedStatus || null) ||
