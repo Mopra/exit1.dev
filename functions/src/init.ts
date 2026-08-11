@@ -265,6 +265,70 @@ async function fetchTierFromClerk(uid: string): Promise<{ tier: UserTier; planKe
   return { tier: 'free', planKey: null };
 }
 
+/**
+ * Persist a freshly-resolved tier to the user doc AND re-denormalise it onto the
+ * user's check docs whenever it actually changed.
+ *
+ * This is the single choke point every tier resolution passes through, which is
+ * why the check-doc sync belongs here rather than only in the Clerk webhook.
+ * `clerkWebhook` backfills on subscription events — but a Pro grant made through
+ * Clerk publicMetadata (`lifetimeNano`, `admin` — see fetchTierFromClerk above)
+ * produces NO subscription event, so nothing backfilled and check docs kept the
+ * user's previous tier indefinitely. That silently disabled SMS (the only
+ * Pro-exclusive feature gated off `check.userTier`) for every affected check
+ * while email, which has no tier gate, kept firing.
+ *
+ * Anchoring the sync to the resolved tier covers every grant path —
+ * subscription, metadata, admin flag, manual edit — including any future one,
+ * rather than enumerating them.
+ *
+ * Deliberately UPGRADE-ONLY, for two reasons:
+ *   1. Downgrades already have a dedicated path (clerkWebhook →
+ *      enforceTierCeiling / handlePlanDowngrade), which does far more than
+ *      stamp a tier — it prunes checks, webhooks, status pages and API keys.
+ *      Duplicating just the stamp here would fight that.
+ *   2. fetchTierFromClerk RETURNS 'free' on total failure rather than throwing
+ *      (see its final return). Syncing downward would let a Clerk outage
+ *      mass-stamp 'free' across every check doc in the fleet. Restricting to
+ *      upgrades makes a spurious 'free' a no-op here.
+ *
+ * The backfill is awaited rather than fire-and-forget: a floating promise can be
+ * frozen with the instance before it lands. It only runs on an actual upgrade,
+ * so the hot path is unaffected, and a failure is swallowed — tier resolution
+ * must never fail because a cache sync did.
+ */
+const persistTierAndSyncChecks = async (
+  userRef: FirebaseFirestore.DocumentReference,
+  uid: string,
+  fresh: { tier: UserTier; planKey: string | null },
+  previousTier: UserTier | null,
+): Promise<void> => {
+  await userRef.set(
+    { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
+    { merge: true },
+  );
+
+  // Unknown previous tier is not treated as an upgrade — we cannot tell a real
+  // grant from a failed read, and guessing wrong writes the wrong tier fleet-wide.
+  if (previousTier === null) return;
+  if (TIER_RANK[fresh.tier] <= TIER_RANK[previousTier]) return;
+
+  try {
+    // Dynamic import: plan-enforcement imports from this module, so a static
+    // import here would be a cycle.
+    const { backfillCheckUserTier } = await import('./plan-enforcement.js');
+    const updated = await backfillCheckUserTier(uid, fresh.tier);
+    if (updated > 0) {
+      logger.info(
+        `Tier upgrade for ${uid}: ${previousTier} → ${fresh.tier} — ` +
+        `re-denormalised userTier onto ${updated} check(s)`,
+      );
+    }
+  } catch (e) {
+    logger.warn(`Failed to sync userTier onto checks for ${uid} after tier change`, e);
+  }
+};
+
 // Helper function to get user tier (cached in Firestore, falls back safely to free)
 export const getUserTier = async (uid: string): Promise<UserTier> => {
   const userRef = firestore.collection('users').doc(uid);
@@ -284,10 +348,7 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
       if (cachedTier) {
         try {
           const fresh = await fetchTierFromClerk(uid);
-          await userRef.set(
-            { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
-            { merge: true },
-          );
+          await persistTierAndSyncChecks(userRef, uid, fresh, cachedTier);
           return fresh.tier;
         } catch (e) {
           logger.warn(`Tier refresh failed for ${uid}, using cached tier: ${cachedTier}`, e);
@@ -297,10 +358,10 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
     }
 
     const fresh = await fetchTierFromClerk(uid);
-    await userRef.set(
-      { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
-      { merge: true },
-    );
+    // No cached tier to compare against — pass null so the sync runs. It is
+    // idempotent (docs already holding the value are skipped), and this is the
+    // path a user takes at most once.
+    await persistTierAndSyncChecks(userRef, uid, fresh, null);
     return fresh.tier;
   } catch (error) {
     logger.warn(`Error getting user tier for ${uid}, defaulting to free:`, error);
@@ -314,11 +375,22 @@ export const getUserTierLive = async (uid: string): Promise<UserTier> => {
   const userRef = firestore.collection('users').doc(uid);
 
   try {
+    // Read the cached tier first so the check-doc sync can tell whether this
+    // resolution actually changed anything.
+    let previousTier: UserTier | null = null;
+    try {
+      const snap = await userRef.get();
+      if (snap.exists) {
+        const data = snap.data() || {};
+        previousTier = normalizeTier((data as { tier?: unknown }).tier);
+      }
+    } catch {
+      // Leave null — persistTierAndSyncChecks treats unknown as "do not sync"
+      // rather than guessing at an upgrade.
+    }
+
     const fresh = await fetchTierFromClerk(uid);
-    await userRef.set(
-      { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
-      { merge: true },
-    );
+    await persistTierAndSyncChecks(userRef, uid, fresh, previousTier);
     return fresh.tier;
   } catch (error) {
     logger.warn(`Live tier lookup failed for ${uid}, falling back to cached tier`, error);
