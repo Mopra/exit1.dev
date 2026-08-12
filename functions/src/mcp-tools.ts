@@ -6,6 +6,16 @@
  * URL validation and duplicate detection all live in `public-api.ts`, and
  * routing MCP through the same door means the tool surface can never drift from
  * the API's rules. The cost is one extra internal hop per call.
+ *
+ * KEEP IN SYNC with `src/tools.ts` in github.com/Mopra/exit1.dev.mcp — the same
+ * catalog for the stdio (API-key) npm package. Two separate builds in two
+ * separate repos, so the definitions are deliberately duplicated. The only real
+ * difference is auth: that one sends X-Api-Key, this one an OAuth bearer token.
+ *
+ * A CI job in that repo (`npm run check:catalog`, daily and on every push) reads
+ * this file from GitHub and fails on tool-name or inputSchema drift. If you add
+ * or change a tool here, mirror it there — otherwise a prompt that works against
+ * one transport errors against the other.
  */
 
 import { randomUUID } from "crypto";
