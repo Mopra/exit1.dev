@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { AlertTriangle, Bell, Bot, Check, ListChecks, Loader2, PenLine, ShieldCheck, Trash2 } from "lucide-react";
 
 import { apiClient } from "@/api/client";
+import { trackEvent } from "@/lib/analytics";
 import type { McpAuthorizationRequest } from "@/api/types";
 import {
   Alert,
@@ -101,6 +102,14 @@ export default function Authorize() {
       if (cancelled) return;
       if (result.success && result.data) {
         setRequest(result.data);
+        // A client actually reached the consent screen. Paired with
+        // mcp_authorize_decided below, this isolates consent-screen drop-off
+        // from every earlier step — someone who gets here and walks away is
+        // balking at the scopes, not failing to find the feature.
+        trackEvent("mcp_authorize_viewed", {
+          client: result.data.clientName,
+          scopes: result.data.scopes.join(" "),
+        });
       } else {
         setLoadError(result.error || "Failed to load the authorization request.");
       }
@@ -116,6 +125,13 @@ export default function Authorize() {
     setSubmitError(null);
 
     const result = await apiClient.decideMcpAuthorization(requestId, approved);
+    if (result.success) {
+      // Fire before the hard navigation below, which tears down the page.
+      trackEvent("mcp_authorize_decided", {
+        approved,
+        client: request?.clientName ?? "unknown",
+      });
+    }
     if (result.success && result.data?.redirectTo) {
       // Render the hand-off panel *before* navigating. The target is the AI
       // tool's own loopback callback server, and if that has already given up
