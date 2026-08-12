@@ -17,6 +17,7 @@ import { apiClient } from "@/api/client";
 import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
 import { PageContainer, PageHeader } from "@/components/layout";
 import { usePlan } from "@/hooks/usePlan";
+import { nextTierWithMore } from "@/lib/subscription";
 import { DowngradeBanner, FeatureGate, UpgradeBanner } from "@/components/ui";
 import ChecksTableShell from "@/components/check/ChecksTableShell";
 import {
@@ -63,8 +64,6 @@ import { copyToClipboard } from "@/utils/clipboard";
 
 const dateFmt = (ts?: number | null) => (ts ? new Date(ts).toLocaleString() : "—");
 
-const MAX_API_KEYS = 5;
-
 const SCOPE_OPTIONS = [
   { value: "checks:read", label: "Read", description: "List and view checks, history, and stats" },
   { value: "checks:write", label: "Write", description: "Create, update, and toggle checks" },
@@ -78,8 +77,10 @@ const SCOPE_OPTIONS = [
 ] as const;
 
 export default function ApiKeys() {
-  // API keys (and therefore MCP) are available on every paid tier from Indie up.
-  const { tier, pro, paid: hasApiAccess, isLoading: nanoLoading } = usePlan();
+  // API keys (and therefore MCP) are available on EVERY tier, Free included —
+  // Free mints one. Read `apiAccess`/`maxApiKeys` off the tier row rather than
+  // `paid`, which used to stand in for this and locked Free out entirely.
+  const { tier, apiAccess: hasApiAccess, maxApiKeys, isLoading: nanoLoading } = usePlan();
   const [keys, setKeys] = React.useState<ApiKey[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -176,8 +177,9 @@ export default function ApiKeys() {
     else toast.error("Copy failed");
   }
 
-  const atLimit = keys.length >= MAX_API_KEYS;
+  const atLimit = keys.length >= maxApiKeys;
   const hasDowngradedKeys = keys.some((k) => k.disabledReason === 'plan_downgrade');
+  const nextApiKeyTier = nextTierWithMore(tier, 'maxApiKeys', maxApiKeys);
 
   return (
     <PageContainer>
@@ -187,11 +189,11 @@ export default function ApiKeys() {
         icon={KeyRound}
         actions={
           <div className="flex items-center gap-2">
-            {pro && (
+            {hasApiAccess && (
               <Button
                 onClick={() => setCreateOpen(true)}
                 className="gap-2 cursor-pointer"
-                title={atLimit ? `Limit of ${MAX_API_KEYS} API keys reached` : undefined}
+                title={atLimit ? `Limit of ${maxApiKeys} API keys reached` : undefined}
                 disabled={atLimit}
               >
                 <Plus className="w-4 h-4" />
@@ -202,22 +204,29 @@ export default function ApiKeys() {
         }
       />
 
+      {/* Every tier can mint API keys today, so this gate is inert — kept so a
+          future tier without `apiAccess` degrades to an upsell rather than a
+          create button that 403s. */}
       <FeatureGate
         enabled={!nanoLoading && !hasApiAccess && !hasDowngradedKeys}
         requiredTier="indie"
         currentTier={tier}
         title="API Keys"
-        description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Indie or higher to create API keys."
+        description="API keys let you integrate Exit1 monitoring into your own tools and dashboards."
         ctaLabel="Upgrade"
       >
         <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
-          {hasDowngradedKeys && !pro && (
-            <DowngradeBanner message="All API keys were disabled after downgrading. API keys require a Pro subscription." />
+          {hasDowngradedKeys && (
+            <DowngradeBanner message={`Some API keys were disabled after downgrading — your plan includes ${maxApiKeys} ${maxApiKeys === 1 ? 'key' : 'keys'}.`} />
           )}
 
           {atLimit && !hasDowngradedKeys && (
             <UpgradeBanner
-              message={`You've reached the maximum of ${MAX_API_KEYS} API keys. Revoke and delete unused keys to create new ones.`}
+              message={
+                nextApiKeyTier
+                  ? `You've reached the maximum of ${maxApiKeys} API ${maxApiKeys === 1 ? 'key' : 'keys'}. Upgrade to ${nextApiKeyTier.name} for up to ${nextApiKeyTier.max}, or revoke a key to free a slot.`
+                  : `You've reached the maximum of ${maxApiKeys} API keys. Revoke and delete unused keys to create new ones.`
+              }
               ctaLabel="View billing"
               ctaHref="/billing"
             />
@@ -362,7 +371,7 @@ export default function ApiKeys() {
             <CardContent className="space-y-4 pb-4 px-0">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="text-sm text-muted-foreground">
-                  {keys.length} / {MAX_API_KEYS} {keys.length === 1 ? 'key' : 'keys'}
+                  {keys.length} / {maxApiKeys} {keys.length === 1 ? 'key' : 'keys'}
                 </div>
               </div>
 
@@ -383,7 +392,7 @@ export default function ApiKeys() {
                           </div>
                         )}
                       </div>
-                      {!loading && pro && (
+                      {!loading && hasApiAccess && (
                         <Button
                           size="sm"
                           onClick={() => setCreateOpen(true)}

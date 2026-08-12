@@ -10,10 +10,9 @@ import { getTierVisual } from '@/lib/tier-visual';
 
 export function UsageWidget() {
   const { usage, loading } = useUsage();
-  // SMS is Pro-only (TIER_LIMITS.smsAlerts), and the email-limit upsell only
-  // makes sense for users who aren't already paying — so these are two separate
-  // questions, not one `nano` boolean.
-  const { tier, isFounders, paid, pro, isLoading: nanoLoading } = usePlan();
+  // SMS availability and "should we upsell" are two separate questions: the
+  // first is the smsAlerts entitlement, the second is whether they already pay.
+  const { tier, isFounders, paid, smsAlerts, isLoading: nanoLoading } = usePlan();
   const tierVisual = getTierVisual(tier, isFounders);
   const [isExpanded, setIsExpanded] = useState(false);
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
@@ -85,7 +84,7 @@ export function UsageWidget() {
                 {emailMonthly?.count}/{emailMonthly?.max}
               </span>
             </span>
-            {pro && smsMonthly && (
+            {smsAlerts && smsMonthly && (
               <span className="flex items-center gap-1.5">
                 <MessageSquare className="w-3.5 h-3.5" />
                 <span className={cn(
@@ -167,7 +166,7 @@ export function UsageWidget() {
               </div>
 
               {/* SMS usage - show actual usage on Pro, locked below it */}
-              {pro && smsMonthly ? (
+              {smsAlerts && smsMonthly ? (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-1.5 text-muted-foreground">

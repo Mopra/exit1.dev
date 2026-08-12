@@ -52,7 +52,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const DomainIntelligence: React.FC = () => {
   const { userId } = useAuth();
-  const { tier, nano, isLoading: tierLoading } = usePlan();
+  const { tier, domainIntel, isLoading: tierLoading } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const [searchQuery, setSearchQuery] = useState('');
   const [rateLimitNoticeDismissed, setRateLimitNoticeDismissed] = useLocalStorage('domain-intel-rate-limit-notice-dismissed', false);
@@ -179,7 +179,7 @@ const DomainIntelligence: React.FC = () => {
   }
   
   // Non-Nano users see upgrade prompt
-  if (!nano) {
+  if (!domainIntel) {
     return (
       <PageContainer>
         <PageHeader

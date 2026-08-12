@@ -5,6 +5,12 @@ import type { UserTier } from "./init";
 import { CONFIG } from "./config";
 import { FieldValue } from "firebase-admin/firestore";
 
+/**
+ * Shard a check falls back to when its tier does not include region pinning.
+ * Mirrors the `?? "vps-eu-1"` default used across checks.ts / public-api.ts.
+ */
+const DEFAULT_CHECK_REGION = "vps-eu-1";
+
 type EnforcementResult = {
   elapsed: number;
   checksDisabled: number;
@@ -107,6 +113,37 @@ async function disableSlaAndCustomDomain(userId: string): Promise<{ statusPagesU
 }
 
 /**
+ * Strip persisted branding and custom layouts from a user's status pages when
+ * they land on a tier without `statusPageBuilder`.
+ *
+ * The builder is gated in the UI at save time, but the saved document outlives
+ * the subscription — without this, a downgraded page keeps rendering its custom
+ * logo and colours forever. Idempotent: pages with nothing to strip are skipped.
+ */
+async function stripStatusPageBranding(userId: string): Promise<number> {
+  const snap = await firestore.collection('status_pages').where('userId', '==', userId).get();
+  const batcher = createBatcher();
+  let stripped = 0;
+
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    const updates: Record<string, unknown> = {};
+    if (data.branding) updates.branding = null;
+    if (data.customLayout) updates.customLayout = null;
+    // 'custom' layout is builder-only; collapse to the simplest preset, which
+    // is the same fallback the save path uses for unentitled tiers.
+    if (data.layout === 'custom') updates.layout = 'grid-2';
+    if (Object.keys(updates).length > 0) {
+      batcher.add(doc.ref, updates);
+      stripped++;
+    }
+  }
+
+  await batcher.commit('stripStatusPageBranding', userId);
+  return stripped;
+}
+
+/**
  * Prune the oldest checks when a user's cap shrinks. Oldest-first (by
  * createdAt). Disables — does not delete — so history and BigQuery retention
  * behave normally.
@@ -205,14 +242,23 @@ async function disableSmsSettings(userId: string): Promise<boolean> {
 
 /**
  * Handle plan downgrade from any paid tier → Free.
- * Disables all resources that exceed Free tier limits and resets check intervals.
- * Idempotent — safe to call multiple times (e.g., webhook retry).
+ *
+ * Brings every resource under the Free ceiling and strips Free-ineligible
+ * per-check state. Idempotent — safe to call multiple times (e.g. webhook retry).
+ *
+ * **Prunes, it does not blank.** This used to disable every check the user
+ * owned, which was defensible when Free allowed 5 monitors but is not now that
+ * it allows 50: a lapsed card would take a user's entire monitoring offline
+ * even though the Free plan covers most of it. Checks, webhooks, API keys and
+ * status pages are each pruned oldest-first to the Free cap, matching what
+ * `enforceTierCeiling` does for every other tier.
  */
 export async function handlePlanDowngrade(userId: string): Promise<EnforcementResult> {
   const startMs = Date.now();
   logger.info(`[plan-enforcement] Starting downgrade enforcement (→ free) for ${userId}`);
 
-  const freeTierMinInterval = CONFIG.getMinCheckIntervalMinutesForTier('free');
+  const freeLimits = CONFIG.getTierLimits('free');
+  const freeTierMinInterval = freeLimits.minCheckIntervalMinutes;
 
   // Collect all queries in parallel
   const [checksSnap, apiKeysSnap, webhooksSnap, statusPagesSnap, smsSettingsSnap] = await Promise.all([
@@ -225,16 +271,36 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
 
   const batcher = createBatcher();
 
-  // Step 1: Disable all checks, reset frequency to Free tier minimum
+  // Step 1: Clamp every check to the Free interval floor, strip Free-ineligible
+  // state, and disable only the overflow beyond the Free check cap.
+  //
+  // Overflow is chosen oldest-first among checks that are *currently enabled*,
+  // so re-running this after a partial failure can never cascade into disabling
+  // more than the cap requires.
+  const enabledChecks = checksSnap.docs
+    .filter((d) => d.data().disabled !== true)
+    .map((d) => ({ doc: d, createdAt: Number(d.data().createdAt) || 0 }))
+    .sort((a, b) => a.createdAt - b.createdAt); // oldest first
+  const overflowIds = new Set(
+    enabledChecks
+      .slice(0, Math.max(0, enabledChecks.length - freeLimits.maxChecks))
+      .map(({ doc }) => doc.id),
+  );
+
   let checksDisabled = 0;
+  let checksClamped = 0;
   for (const doc of checksSnap.docs) {
     const data = doc.data();
-    const updates: Record<string, unknown> = {
-      disabled: true,
-      disabledReason: "plan_downgrade",
-      disabledAt: Date.now(),
-      userTier: "free",
-    };
+    const updates: Record<string, unknown> = {};
+
+    if (data.userTier !== "free") updates.userTier = "free";
+
+    if (overflowIds.has(doc.id)) {
+      updates.disabled = true;
+      updates.disabledReason = "plan_downgrade";
+      updates.disabledAt = Date.now();
+      checksDisabled++;
+    }
 
     // Clamp frequency to Free tier minimum
     const currentFreq = Number(data.checkFrequency) || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
@@ -265,40 +331,51 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
       updates["domainExpiry.enabled"] = false;
     }
 
-    batcher.add(doc.ref, updates);
-    checksDisabled++;
+    // Region pinning is not a Free entitlement — reset the EFFECTIVE shard.
+    // `checkRegionOverride` is left intact so re-upgrading restores the choice;
+    // see the matching note in enforceTierCeiling.
+    if (!freeLimits.regionChoice && data.checkRegion && data.checkRegion !== DEFAULT_CHECK_REGION) {
+      updates.checkRegion = DEFAULT_CHECK_REGION;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      batcher.add(doc.ref, updates);
+      if (!overflowIds.has(doc.id)) checksClamped++;
+    }
   }
 
-  // Step 2: Disable all API keys
+  // Step 2: Prune API keys to the Free cap (Free mints 1), oldest-first.
   let apiKeysDisabled = 0;
-  for (const doc of apiKeysSnap.docs) {
-    const data = doc.data();
-    if (data.enabled !== false) {
-      batcher.add(doc.ref, {
-        enabled: false,
-        disabledReason: "plan_downgrade",
-      });
-      apiKeysDisabled++;
-    }
+  const enabledKeys = apiKeysSnap.docs
+    .filter((d) => d.data().enabled !== false)
+    .map((d) => ({ doc: d, createdAt: Number(d.data().createdAt) || 0 }))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  for (const { doc } of enabledKeys.slice(0, Math.max(0, enabledKeys.length - freeLimits.maxApiKeys))) {
+    batcher.add(doc.ref, {
+      enabled: false,
+      disabledReason: "plan_downgrade",
+    });
+    apiKeysDisabled++;
   }
 
-  // Step 3: Disable all webhooks
+  // Step 3: Prune webhooks to the Free cap, oldest-first.
   let webhooksDisabled = 0;
-  for (const doc of webhooksSnap.docs) {
-    const data = doc.data();
-    if (data.enabled !== false) {
-      batcher.add(doc.ref, {
-        enabled: false,
-        disabledReason: "plan_downgrade",
-      });
-      webhooksDisabled++;
-    }
+  const enabledWebhooks = webhooksSnap.docs
+    .filter((d) => d.data().enabled !== false)
+    .map((d) => ({ doc: d, createdAt: Number(d.data().createdAt) || 0 }))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  for (const { doc } of enabledWebhooks.slice(0, Math.max(0, enabledWebhooks.length - freeLimits.maxWebhooks))) {
+    batcher.add(doc.ref, {
+      enabled: false,
+      disabledReason: "plan_downgrade",
+    });
+    webhooksDisabled++;
   }
 
-  // Step 4: Disable all status pages beyond the Free cap of 1.
-  // Free allows 1 status page — disable the rest, keep the newest enabled (by createdAt desc).
+  // Step 4: Disable all status pages beyond the Free cap.
+  // Keep the newest N enabled (by createdAt desc), disable the rest.
   let statusPagesDisabled = 0;
-  const freeStatusCap = CONFIG.getTierLimits('free').maxStatusPages;
+  const freeStatusCap = freeLimits.maxStatusPages;
   const enabledStatus = statusPagesSnap.docs.filter((d) => d.data().enabled !== false);
   const sortedEnabled = enabledStatus
     .map((d) => ({ doc: d, createdAt: Number(d.data().createdAt) || 0 }))
@@ -337,10 +414,18 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
 
   const totalBatches = await batcher.commit('downgrade→free', userId);
 
+  // Free has no status page builder — clear persisted branding / custom layouts
+  // so a downgraded page stops rendering entitlements the plan no longer covers.
+  // Runs on its own batcher, after the main commit, so a failure here cannot
+  // roll back the ceiling work above.
+  if (!freeLimits.statusPageBuilder) {
+    await stripStatusPageBranding(userId);
+  }
+
   const result: EnforcementResult = {
     elapsed: Date.now() - startMs,
     checksDisabled,
-    checksClamped: 0,
+    checksClamped,
     apiKeysDisabled,
     webhooksDisabled,
     statusPagesDisabled,
@@ -380,10 +465,12 @@ async function pruneApiKeysToLimit(userId: string, maxAllowed: number): Promise<
 /**
  * True when moving `from` → `to` tightens ANY limit, so enforcement must run.
  *
- * Rank alone is not sufficient: Indie probes at 15s and Nano at 2min, so the
- * rank-upgrade Indie→Nano still has to clamp check intervals. Comparing the
- * TIER_LIMITS rows dimension-by-dimension catches every such case, and lets a
- * genuine all-round upgrade (free→pro) skip the enforcement queries entirely.
+ * Comparing the TIER_LIMITS rows dimension-by-dimension rather than trusting
+ * tier rank. The ladder is monotonic today, so rank *would* be sufficient — but
+ * it was not before the 2026-08-12 restructure (Indie probed at 15s while the
+ * more expensive Nano probed at 2min), and a dimension-wise comparison stays
+ * correct through any future repricing without anyone having to remember this.
+ * It also lets a genuine all-round upgrade skip the enforcement queries.
  */
 export function ceilingTightens(from: UserTier, to: UserTier): boolean {
   const a = CONFIG.getTierLimits(from);
@@ -397,12 +484,17 @@ export function ceilingTightens(from: UserTier, to: UserTier): boolean {
   // Interval is a floor, so a LARGER minimum is the tighter one.
   if (b.minCheckIntervalMinutes > a.minCheckIntervalMinutes) return true;
 
-  // Feature flags: losing a flag tightens.
+  // Feature flags: losing a flag tightens. Every flag listed here must have a
+  // corresponding strip/reset step in `enforceTierCeiling` — a flag that leaves
+  // persisted state behind but isn't listed means the state survives the
+  // downgrade silently.
   if (a.smsAlerts && !b.smsAlerts) return true;
   if (a.maintenanceMode && !b.maintenanceMode) return true;
   if (a.domainIntel && !b.domainIntel) return true;
   if (a.slaReporting && !b.slaReporting) return true;
   if (a.customStatusDomain && !b.customStatusDomain) return true;
+  if (a.statusPageBuilder && !b.statusPageBuilder) return true;
+  if (a.regionChoice && !b.regionChoice) return true;
 
   return false;
 }
@@ -414,19 +506,20 @@ export type CeilingResult = {
   statusPagesPruned: number;
   apiKeysDisabled: number;
   smsDisabled: boolean;
+  brandingStripped: number;
+  regionsReset: number;
 };
 
 /**
  * Bring every resource a user owns under the ceiling of `newTier`, reading the
  * limits straight from TIER_LIMITS. Idempotent — safe to re-run on webhook retry.
  *
- * Call this on ANY tier change, not just rank downgrades. The plan ladder is not
- * monotonic on check interval: Indie (15s) probes faster than Nano (2min), so an
- * Indie→Nano move is a rank *upgrade* that still has to clamp intervals. Driving
- * everything off TIER_LIMITS keeps that correct without per-transition handlers.
+ * Call this on ANY tier change, not just rank downgrades. Driving everything off
+ * TIER_LIMITS rather than per-transition handlers is what keeps it correct when
+ * the plan lineup is repriced.
  *
  * `newTier === 'free'` is special-cased by the caller — see handlePlanDowngrade,
- * which disables all checks outright rather than pruning to the Free cap.
+ * which does the same work plus the Free-only bookkeeping (`downgradedAt`).
  */
 export async function enforceTierCeiling(userId: string, newTier: UserTier): Promise<CeilingResult> {
   logger.info(`[plan-enforcement] Enforcing ${newTier} ceiling for ${userId}`);
@@ -437,6 +530,7 @@ export async function enforceTierCeiling(userId: string, newTier: UserTier): Pro
   const checksSnap = await firestore.collection('checks').where('userId', '==', userId).get();
   const clampBatcher = createBatcher();
   let checksClamped = 0;
+  let regionsReset = 0;
   for (const doc of checksSnap.docs) {
     const data = doc.data();
     const currentFreq = Number(data.checkFrequency) || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
@@ -455,6 +549,14 @@ export async function enforceTierCeiling(userId: string, newTier: UserTier): Pro
     }
     if (!limits.domainIntel && data.domainExpiry?.enabled) {
       updates['domainExpiry.enabled'] = false;
+    }
+    // Region pinning: reset the EFFECTIVE shard only. `checkRegionOverride`
+    // (the user's stored preference) is deliberately left alone so re-upgrading
+    // restores their choice — the runner shards on `checkRegion`, and checks.ts
+    // recomputes it from the override under the new tier's `regionChoice`.
+    if (!limits.regionChoice && data.checkRegion && data.checkRegion !== DEFAULT_CHECK_REGION) {
+      updates.checkRegion = DEFAULT_CHECK_REGION;
+      regionsReset++;
     }
 
     if (Object.keys(updates).length > 0) {
@@ -475,8 +577,12 @@ export async function enforceTierCeiling(userId: string, newTier: UserTier): Pro
   if (!limits.slaReporting || !limits.customStatusDomain) {
     await disableSlaAndCustomDomain(userId);
   }
+  const brandingStripped = limits.statusPageBuilder ? 0 : await stripStatusPageBranding(userId);
 
-  const result = { checksClamped, checksPruned, webhooksPruned, statusPagesPruned, apiKeysDisabled, smsDisabled };
+  const result = {
+    checksClamped, checksPruned, webhooksPruned, statusPagesPruned,
+    apiKeysDisabled, smsDisabled, brandingStripped, regionsReset,
+  };
   logger.info(`[plan-enforcement] ${newTier} ceiling enforcement complete for ${userId}`, result);
   return result;
 }
@@ -508,9 +614,10 @@ export async function handleProToNanoDowngrade(userId: string): Promise<CeilingR
 export async function handleProToFreeDowngrade(userId: string): Promise<EnforcementResult> {
   logger.info(`[plan-enforcement] Starting Pro→Free enforcement for ${userId}`);
   await disableSlaAndCustomDomain(userId);
-  // handlePlanDowngrade already: disables all checks (clamps to 5 min),
-  // disables all API keys, disables all webhooks, disables SMS, and prunes
-  // status pages down to 1. That covers Pro→Free.
+  // handlePlanDowngrade already: clamps every check to the Free interval floor
+  // and prunes checks / API keys / webhooks / status pages to the Free caps,
+  // resets pinned regions, disables SMS, and strips status-page branding.
+  // That covers Pro→Free.
   const result = await handlePlanDowngrade(userId);
   logger.info(`[plan-enforcement] Pro→Free enforcement complete for ${userId}`, result);
   return result;

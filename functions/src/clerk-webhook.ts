@@ -350,17 +350,19 @@ export const clerkWebhook = onRequest({
       }
 
       // Enforcement is driven by whether the target tier's limits are tighter in
-      // ANY dimension — not by rank. The ladder is non-monotonic on check
-      // interval (Indie probes at 15s, Nano at 2min), so the rank-upgrade
-      // Indie→Nano still has to clamp intervals. See ceilingTightens().
+      // ANY dimension — not by rank. The ladder is monotonic today so rank would
+      // agree, but a dimension-wise comparison stays correct through a
+      // repricing without anyone having to remember to revisit this.
+      // See ceilingTightens().
       const needsEnforcement = newTier !== previousTier && ceilingTightens(previousTier, newTier);
 
       if (needsEnforcement) {
         logger.info(`[plan-enforcement] Tightening ceiling for ${userId}: ${previousTier} → ${newTier}`);
         try {
           if (newTier === 'free') {
-            // Free is special-cased: all checks are disabled outright rather
-            // than pruned down to the Free cap.
+            // Free is special-cased only for the extra bookkeeping
+            // (`downgradedAt`, Pro-only state teardown) — it prunes to the Free
+            // cap like every other tier, it does not blank the account.
             if (previousTier === 'pro') {
               await handleProToFreeDowngrade(userId);
             } else {

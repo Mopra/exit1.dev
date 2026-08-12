@@ -43,6 +43,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/utils/clipboard";
+import { trackEvent } from "@/lib/analytics";
 
 // The hosted endpoint and npm package are the contract with MCP clients. Keep
 // these in sync with mcp/README.md and functions/src/mcp-oauth.ts.
@@ -97,16 +98,25 @@ function CodeBlock({
   code,
   className,
   copyLabel = "Copy",
+  track,
 }: {
   code: string;
   className?: string;
   copyLabel?: string;
+  /**
+   * Identifies which snippet was copied. Copying a setup command is the
+   * strongest intent signal we get short of a completed OAuth grant, and it is
+   * the step where the funnel most likely leaks — a user who copies but never
+   * connects hit a problem in their client, not on this page.
+   */
+  track?: { transport: string; client: string };
 }) {
   const [copied, setCopied] = React.useState(false);
 
   async function onCopy() {
     const ok = await copyToClipboard(code);
     setCopied(ok);
+    if (ok && track) trackEvent("mcp_setup_copied", track);
     window.setTimeout(() => setCopied(false), 900);
   }
 
@@ -471,11 +481,18 @@ function ConnectionsCard() {
 }
 
 export default function Mcp() {
-  // API keys (the stdio path) follow API access and need a paid plan. The hosted
-  // OAuth path is intentionally not gated: it IS the signup flow for agent-first
-  // users, and everything an agent can do is still bounded by the tier limits the
-  // REST API enforces on every call.
-  const { tier, paid: hasApiAccess, isLoading } = usePlan();
+  // The stdio path needs an API key, which every tier can mint (Free included).
+  // The hosted OAuth path is intentionally not gated either: it IS the signup
+  // flow for agent-first users, and everything an agent can do is still bounded
+  // by the tier limits the REST API enforces on every call.
+  const { tier, apiAccess: hasApiAccess, isLoading } = usePlan();
+
+  // Top of the MCP funnel. Without this we can only see completed grants, which
+  // cannot distinguish "nobody finds this page" from "people find it and bounce"
+  // — two different problems with two different fixes.
+  React.useEffect(() => {
+    trackEvent("mcp_page_viewed", { tier });
+  }, [tier]);
 
   return (
     <PageContainer>
@@ -520,7 +537,11 @@ export default function Mcp() {
                 {REMOTE_CLIENTS.map((c) => (
                   <TabsContent key={c.id} value={c.id} className="space-y-3">
                     <div className="text-sm text-muted-foreground">{c.hint}</div>
-                    <CodeBlock code={c.code} copyLabel={c.copyLabel} />
+                    <CodeBlock
+                      code={c.code}
+                      copyLabel={c.copyLabel}
+                      track={{ transport: "hosted", client: c.id }}
+                    />
                   </TabsContent>
                 ))}
               </Tabs>
@@ -544,7 +565,11 @@ export default function Mcp() {
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-3">
-              <CodeBlock code={SETUP_PROMPT} copyLabel="Copy prompt" />
+              <CodeBlock
+                code={SETUP_PROMPT}
+                copyLabel="Copy prompt"
+                track={{ transport: "prompt", client: "setup_monitoring" }}
+              />
               <div className="text-xs text-muted-foreground">
                 Once connected, the same playbook is available as a built-in prompt —{" "}
                 <code className={INLINE_CODE}>/exit1:setup_monitoring</code> in Claude Code.
@@ -610,8 +635,8 @@ export default function Mcp() {
                 enabled={!isLoading && !hasApiAccess}
                 requiredTier="indie"
                 currentTier={tier}
-                title="API keys need a paid plan"
-                description="The local setup authenticates with a Public API key, so it follows the same plans as the API. The hosted setup above works without one."
+                title="API keys are unavailable on your plan"
+                description="The local setup authenticates with a Public API key. The hosted setup above works without one."
                 ctaLabel="Upgrade"
               >
                 <div className="space-y-4">
@@ -643,7 +668,11 @@ export default function Mcp() {
                     {LOCAL_CLIENTS.map((c) => (
                       <TabsContent key={c.id} value={c.id} className="space-y-3">
                         <div className="text-sm text-muted-foreground">{c.hint}</div>
-                        <CodeBlock code={c.code} copyLabel={c.copyLabel} />
+                        <CodeBlock
+                          code={c.code}
+                          copyLabel={c.copyLabel}
+                          track={{ transport: "stdio", client: c.id }}
+                        />
                       </TabsContent>
                     ))}
                   </Tabs>

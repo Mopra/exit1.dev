@@ -195,7 +195,7 @@ interface CheckTableProps {
   /**
    * Minimum check interval (seconds) allowed for the user's tier. Used to filter
    * intervals in BulkEditModal. Required: a paid/free fallback here silently gave
-   * Indie (15s) the Free floor of 300s.
+   * every paid tier the Free floor of 300s.
    */
   minIntervalSeconds: number;
   groupBy?: 'none' | 'folder';

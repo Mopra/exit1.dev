@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/Button"
 const Layout = ({ children }: { children: React.ReactNode }) => {
   useTierSync()
   const { isSignedIn, userId } = useAuth();
-  const { tier, isFounders, nano, isLoading } = usePlan();
+  const { tier, isFounders, smsAlerts, isLoading } = usePlan();
   const { isAdmin } = useAdmin();
   const { checks } = useChecks(userId ?? null, () => {}, { realtime: true });
   const tierVisual = getTierVisual(tier, isFounders);
@@ -81,8 +81,10 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
               {/* Center: global search */}
               <div className="flex-1 flex justify-center min-w-0 px-2">
+                {/* The only `paidOnly` search entry is SMS, which is Pro-only —
+                    so `isPaid` here is the smsAlerts entitlement, not "is paying". */}
                 {isSignedIn && (
-                  <GlobalSearch checks={checks} isAdmin={isAdmin} isPaid={nano} />
+                  <GlobalSearch checks={checks} isAdmin={isAdmin} isPaid={smsAlerts} />
                 )}
               </div>
 

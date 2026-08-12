@@ -2,13 +2,13 @@
 
 > Real-time website and API monitoring platform with multi-region checks, SSL tracking, domain intelligence, and intelligent alerting. Built with React 19 + Firebase Cloud Functions (Gen2). Source-available under a custom All Rights Reserved license — view for reference and education only.
 
-Exit1 monitors websites and APIs from 3 global regions (US, Europe, Asia) every 2 minutes. When something goes down, users get notified via email, SMS, or webhook with smart throttling to prevent alert fatigue. The app is behind authentication (Clerk) so only the repo is publicly browsable.
+Exit1 monitors websites and APIs from 3 global regions (US, Europe, Asia) as often as every 15 seconds. When something goes down, users get notified via email, SMS, or webhook with smart throttling to prevent alert fatigue. The app is behind authentication (Clerk) so only the repo is publicly browsable.
 
 Key capabilities: HTTP/HTTPS/TCP/UDP monitoring, SSL certificate expiration alerts, domain registration expiry tracking (RDAP), response validation (status codes, JSONPath, text matching), public status pages, BigQuery-powered analytics, and a REST API for programmatic access.
 
 Agent-native onboarding: a hosted MCP server at https://app.exit1.dev/mcp/v1 lets a developer set up monitoring entirely from Claude Code, Cursor or any MCP client. The AI reads their repo to find what should be monitored, creates the checks, configures alerts, and sends a real test alert — no dashboard visit required. Auth is OAuth 2.1 with dynamic client registration; sign-up happens inline in the browser during the flow. See Docs/agent-onboarding.md.
 
-Tier-based pricing: Free (5 checks, 5-min intervals, 60-day retention), Indie ($4, 10 checks, 15-sec intervals, API + MCP), Nano ($9, 100 checks, 2-min intervals, domain intelligence) and Pro ($24, 1,000 checks, 15-sec intervals, 3-year retention, SMS, CSV export, all alert channels). See PRICING.md for the canonical matrix.
+Tier-based pricing, monotonic on every dimension: Free ($0, 50 checks, 5-min intervals, 60-day retention), Indie ($4, 100 checks, 1-min intervals, branded status page, 90-day retention), Nano ($9, 250 checks, 30-sec intervals, domain intelligence, region pinning, 1-year retention) and Pro ($24, 1,000 checks, 15-sec intervals, 3-year retention, SMS, CSV export, all alert channels). API and MCP access are on every tier including Free — they are one entitlement, not two, and neither is paid-only. The real-time Live page is also on every tier. See PRICING.md for the canonical matrix.
 
 ## Source Code
 

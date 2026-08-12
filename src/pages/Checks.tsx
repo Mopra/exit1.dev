@@ -23,7 +23,6 @@ import type { Website } from '../types';
 import { usePlan } from "@/hooks/usePlan";
 import {
   TIER_DISPLAY_NAME,
-  getMaxChecksForTier,
   getMinCheckIntervalSecondsForTier,
   nextTierWithMore,
 } from "@/lib/subscription";
@@ -49,7 +48,7 @@ const Checks: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const [pendingCheck, setPendingCheck] = useState<{ name: string; url: string } | null>(null);
-  const { nano, pro, tier, maxChecks, legacyFreeChecks } = usePlan();
+  const { nano, pro, tier, maxChecks } = usePlan();
   const [isExporting, setIsExporting] = useState(false);
   const { preferences, loading: preferencesLoading, updateSorting } = useUserPreferences(userId);
   // Local state for immediate UI updates - Firestore is only for persistence
@@ -139,25 +138,23 @@ const Checks: React.FC = () => {
   ), [checks]);
 
   // Per-user check cap, from usePlan() — mirrors TIER_LIMITS[tier].maxChecks
-  // (Free 5, Indie 10, Nano 100, Pro 1000) but lifts Free to 10 for users
-  // grandfathered from before the cap was cut. Must not be a paid/free boolean:
-  // that reported 10 to Free users the backend caps at 5, and never showed
-  // Nano/Pro their real cap.
+  // (Free 50, Indie 100, Nano 250, Pro 1000). Must not be a paid/free boolean:
+  // that class of gate reported the wrong number to three of the four tiers.
   //
-  // Feed the effective cap to nextTierWithMore too, or a grandfathered Free user
-  // gets pitched Indie's 10 checks as an upgrade over the 10 they already have.
+  // Pass the effective cap so the upsell can never name a tier that isn't
+  // actually an increase over what this user already has.
   const nextCheckTier = nextTierWithMore(tier, 'maxChecks', maxChecks);
   const atCheckLimit = checks.length >= maxChecks;
   const isGrandfathered = checks.length > maxChecks;
   const hasDowngradedChecks = React.useMemo(() =>
     checks.some((c) => c.disabledReason === 'plan_downgrade'),
   [checks]);
-  // A drop to Free disables every check outright (handlePlanDowngrade); a drop to
-  // any other tier only prunes past the new cap (enforceTierCeiling). Indie hits
-  // the second path, so "downgraded to Free" is the wrong story to tell it.
+  // Every downgrade now prunes to the target cap rather than blanking the
+  // account — handlePlanDowngrade stopped disabling all checks when Free moved
+  // to 50. The Free branch differs only in also mentioning the interval reset.
   // `disabledReason` is cleared on re-enable, so this banner self-clears.
   const downgradeMessage = tier === 'free'
-    ? `Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to ${maxChecks} checks.`
+    ? `Your plan was downgraded to Free. Checks beyond your ${maxChecks} were disabled and intervals reset to 5 minutes — nothing was deleted.`
     : `Some checks were disabled when your plan changed. You can re-enable up to ${maxChecks} checks on ${TIER_DISPLAY_NAME[tier]}.`;
 
   // Wrapper for debounced folder updates that matches the expected signature
@@ -669,11 +666,7 @@ const Checks: React.FC = () => {
         <div className="px-2 sm:px-4 md:px-6 pt-3">
           <UpgradeBanner message={isGrandfathered
             ? `Your ${TIER_DISPLAY_NAME[tier]} plan now includes ${maxChecks} checks. Your existing ${checks.length} checks will keep running${nextCheckTier ? `, but upgrade to ${nextCheckTier.name} to add more` : ''}.`
-            : legacyFreeChecks
-              // Explain the mismatch before they compare against the pricing
-              // page and think their account is broken.
-              ? `You've reached your limit of ${maxChecks} checks — your account keeps the original Free limit, while new Free accounts get ${getMaxChecksForTier('free')}.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
-              : `You've reached the ${TIER_DISPLAY_NAME[tier]} plan limit of ${maxChecks} checks.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
+            : `You've reached the ${TIER_DISPLAY_NAME[tier]} plan limit of ${maxChecks} checks.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
           } />
         </div>
       )}

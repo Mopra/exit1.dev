@@ -334,11 +334,13 @@ export default function CheckForm({
   const userEditedName = useRef(false);
 
   // Get user's subscription tier for check interval limits
-  const { tier, pro, paid } = usePlan();
+  const { tier, paid, regionChoice } = usePlan();
   const { isAdmin } = useAdmin();
   const minCheckIntervalSeconds = getMinCheckIntervalSecondsForTier(tier);
-  // Region selection is gated to Pro. Everyone else is locked to vps-eu-1.
-  const canPickRegion = pro;
+  // Region pinning is Nano and up (TIER_LIMITS.regionChoice). Everyone else is
+  // locked to vps-eu-1 — this used to read `pro`, which hid the picker from the
+  // Nano users the entitlement moved down to.
+  const canPickRegion = regionChoice;
 
   const form = useForm<CheckFormData>({
     resolver: zodResolver(formSchema),

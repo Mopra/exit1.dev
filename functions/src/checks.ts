@@ -3470,11 +3470,10 @@ export const toggleCheckStatus = onCall({
   cors: true,
   maxInstances: 10,
   // RESEND_*: handleCheckDisabled email notifications.
-  // CLERK_*: getMaxChecksForUser needs the Clerk signup date to resolve the
-  // grandfathered Free cap. Without these bound, the re-enable gate silently
-  // fell back to the reduced cap of 5 and returned 429 to users who should have
-  // had 10 — note getUserTier() alone does NOT surface the gap, because it
-  // serves the cached Firestore tier when Clerk is unreachable.
+  // CLERK_*: the re-enable gate compares against the user's tier cap, so
+  // getUserTier() must be able to fall back to a live Clerk lookup. Without
+  // these bound it silently serves a stale cached tier and can 429 a user who
+  // is entitled to the slot.
   secrets: [RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const { id, disabled, reason } = request.data || {};

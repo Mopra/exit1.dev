@@ -51,8 +51,11 @@ export const createApiKey = onCall({
   const userTier = await getUserTierLive(uid);
   const maxKeys = CONFIG.getMaxApiKeysForTier(userTier);
 
+  // Unreachable today — every tier mints at least one key (Free included, since
+  // MCP access follows API access). Kept so a future tier with maxApiKeys: 0
+  // fails with an explanation rather than a confusing "maximum of 0" message.
   if (maxKeys === 0) {
-    throw new HttpsError("permission-denied", "API keys require an Indie subscription or higher. Upgrade to create API keys.");
+    throw new HttpsError("permission-denied", "API keys are not available on your plan. Upgrade to create API keys.");
   }
 
   const existing = await firestore
@@ -60,7 +63,12 @@ export const createApiKey = onCall({
     .where('userId', '==', uid)
     .get();
   if (existing.size >= maxKeys) {
-    throw new HttpsError("resource-exhausted", `You have reached the maximum of ${maxKeys} API keys for your plan.`);
+    const nextTier = CONFIG.nextTierWithMore(userTier, 'maxApiKeys');
+    const upsell = nextTier ? ` Upgrade to ${nextTier.name} for up to ${nextTier.max}.` : '';
+    throw new HttpsError(
+      "resource-exhausted",
+      `You have reached the maximum of ${maxKeys} API key${maxKeys === 1 ? '' : 's'} for your plan.${upsell}`,
+    );
   }
 
   const { name = '' , scopes = [] } = request.data || {};

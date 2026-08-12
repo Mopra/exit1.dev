@@ -54,7 +54,7 @@ import { usePlan } from '../hooks/usePlan';
 import { toast } from 'sonner';
 import type { StatusPage, StatusPageDisplay, StatusPageFont, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
 import { buildFolderList, normalizeFolder } from '../lib/folder-utils';
-import { getMaxStatusPagesForTier, nextTierWithMore } from '../lib/subscription';
+import { getMaxStatusPagesForTier, nextTierWithFlag, nextTierWithMore } from '../lib/subscription';
 
 // Server-side render endpoints (functions/src/status-pages.ts → MAX_CHECKS)
 // silently trim a status page to its first 50 resolved checks to bound the
@@ -124,7 +124,7 @@ const Status: React.FC = () => {
   const log = useCallback((msg: string) => {
     void msg;
   }, []);
-  const { tier, nano } = usePlan();
+  const { tier, statusPageBuilder } = usePlan();
   const { checks: rawChecks, loading: checksLoading } = useChecks(userId ?? null, log);
   // Domain-only checks have no uptime data — they make no sense on a status page.
   const checks = useMemo(() => rawChecks.filter((c) => c.type !== 'domain'), [rawChecks]);
@@ -163,12 +163,16 @@ const Status: React.FC = () => {
   // Free: 1, Indie: 1, Nano: 5, Pro: 50.
   const maxStatusPages = getMaxStatusPagesForTier(tier);
   const atTierLimit = statusPages.length >= maxStatusPages;
-  const atFreeLimit = !nano && atTierLimit;
+  const atFreeLimit = !statusPageBuilder && atTierLimit;
   // Name the real next tier and its real cap. "Unlimited status pages" was never
   // true — Nano allows 5 — and Indie sees this same upsell at its 1-page cap.
   const nextStatusPageTier = nextTierWithMore(tier, 'maxStatusPages');
+  // Cheapest tier that unlocks branding + the custom layout. Indie carries the
+  // builder now, so this must not be hardcoded to "Nano".
+  const builderTier = nextTierWithFlag(tier, 'statusPageBuilder');
+  const builderTierName = builderTier?.name ?? 'Indie';
   const statusPageUpsell = nextStatusPageTier
-    ? `Upgrade to ${nextStatusPageTier.name} for up to ${nextStatusPageTier.max} status pages and custom branding.`
+    ? `Upgrade to ${nextStatusPageTier.name} for up to ${nextStatusPageTier.max} status pages${builderTier ? ' and custom branding' : ''}.`
     : 'You have the highest status-page allowance available.';
   const canCreateStatusPage = !atTierLimit;
   const hasDowngradedPages = statusPages.some((p) => p.disabledReason === 'plan_downgrade');
@@ -406,10 +410,11 @@ const Status: React.FC = () => {
     };
     const hasBranding = Object.values(branding).some((value) => Boolean(value));
 
-    // Tier gate: free users (statusPageBuilder=false) cannot persist branding
-    // or a custom layout — strip these fields client-side to match the intent
-    // of TIER_LIMITS[tier].statusPageBuilder. The effective layout for free
-    // tier collapses to the simplest preset ('grid-2').
+    // Tier gate: tiers without `statusPageBuilder` (today: Free) cannot persist
+    // branding or a custom layout — strip these fields client-side to match the
+    // intent of TIER_LIMITS[tier].statusPageBuilder. The effective layout for an
+    // unentitled tier collapses to the simplest preset ('grid-2'), which is the
+    // same fallback `stripStatusPageBranding` applies on downgrade.
     //
     // TODO(phase-D): mirror this enforcement server-side. Today saves go
     // through raw Firestore writes (addDoc/updateDoc) — the firestore.rules
@@ -418,9 +423,9 @@ const Status: React.FC = () => {
     // via the client SDK. Fix by either (a) moving the save through a
     // `saveStatusPage` callable that checks tier, or (b) tightening
     // firestore.rules against a plan claim.
-    const effectiveBranding = nano ? branding : null;
-    const effectiveLayout: StatusPageLayout = nano ? formLayout : (formLayout === 'custom' ? 'grid-2' : formLayout);
-    const effectiveCustomLayout = nano && effectiveLayout === 'custom' ? formCustomLayout : null;
+    const effectiveBranding = statusPageBuilder ? branding : null;
+    const effectiveLayout: StatusPageLayout = statusPageBuilder ? formLayout : (formLayout === 'custom' ? 'grid-2' : formLayout);
+    const effectiveCustomLayout = statusPageBuilder && effectiveLayout === 'custom' ? formCustomLayout : null;
 
     // Store individual check selections + folder paths separately
     // The backend dynamically resolves folder paths to include current folder contents
@@ -438,7 +443,7 @@ const Status: React.FC = () => {
       folderPaths: Array.from(formFolderPaths),
       layout: effectiveLayout,
       groupByFolder: formGroupByFolder,
-      branding: nano && hasBranding ? effectiveBranding : null,
+      branding: statusPageBuilder && hasBranding ? effectiveBranding : null,
       customLayout: effectiveCustomLayout,
       display,
       showPoweredBy: formShowPoweredBy,
@@ -587,7 +592,7 @@ const Status: React.FC = () => {
   const accentColorPreview =
     normalizedAccentColor && normalizedAccentColor.startsWith('#') ? normalizedAccentColor : '#000000';
   const isUploading = logoUploading || faviconUploading;
-  const brandingDisabled = !nano;
+  const brandingDisabled = !statusPageBuilder;
   const handleBrandUpload = async (kind: BrandAssetKind, file: File) => {
     if (!userId) {
       toast.error('You must be signed in to upload assets.');
@@ -666,8 +671,8 @@ const Status: React.FC = () => {
       />
 
       <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 space-y-4">
-        {hasDowngradedPages && !nano && (
-          <DowngradeBanner message="Status pages require a Nano subscription. Upgrade to re-enable your status pages." />
+        {hasDowngradedPages && (
+          <DowngradeBanner message={`Some status pages were disabled after downgrading — your plan includes ${maxStatusPages}. Upgrade to re-enable the rest.`} />
         )}
         <ChecksTableShell
           minWidthClassName="min-w-0"
@@ -1126,28 +1131,28 @@ const Status: React.FC = () => {
                         ))}
                         <div
                           className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
-                            nano
-                              ? `cursor-pointer ${formLayout === 'custom' ? 'bg-primary/5 border-primary/30' : 'border-tier-nano/40 hover:border-tier-nano/60'}`
-                              : 'border-tier-nano/30'
+                            statusPageBuilder
+                              ? `cursor-pointer ${formLayout === 'custom' ? 'bg-primary/5 border-primary/30' : 'border-tier-indie/40 hover:border-tier-indie/60'}`
+                              : 'border-tier-indie/30'
                           }`}
                         >
                           <label
-                            htmlFor={nano ? "status-layout-custom" : undefined}
-                            className={`flex items-center gap-3 flex-1 ${nano ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
-                            onClick={nano ? undefined : (e) => e.preventDefault()}
+                            htmlFor={statusPageBuilder ? "status-layout-custom" : undefined}
+                            className={`flex items-center gap-3 flex-1 ${statusPageBuilder ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
+                            onClick={statusPageBuilder ? undefined : (e) => e.preventDefault()}
                           >
-                            <RadioGroupItem id="status-layout-custom" value="custom" disabled={!nano} />
+                            <RadioGroupItem id="status-layout-custom" value="custom" disabled={!statusPageBuilder} />
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs font-medium">Custom</span>
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide bg-tier-nano/15 text-tier-nano">
-                                  Nano
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide bg-tier-indie/15 text-tier-indie">
+                                  {builderTierName}
                                 </Badge>
                               </div>
                               <div className="text-[10px] text-muted-foreground">Drag and drop widgets</div>
                             </div>
                           </label>
-                          {!nano && (
+                          {!statusPageBuilder && (
                             <Button asChild size="sm" className="cursor-pointer shrink-0 h-7 text-xs">
                               <Link to="/billing">Upgrade</Link>
                             </Button>
@@ -1219,11 +1224,11 @@ const Status: React.FC = () => {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Branding</div>
-                          {!nano && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide">Nano</Badge>
+                          {!statusPageBuilder && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide">{builderTierName}</Badge>
                           )}
                         </div>
-                        {!nano && (
+                        {!statusPageBuilder && (
                           <Button asChild size="sm" className="cursor-pointer h-7 text-xs">
                             <Link to="/billing">Upgrade</Link>
                           </Button>
@@ -1371,7 +1376,7 @@ const Status: React.FC = () => {
                     </div>
 
                     {/* Powered by attribution */}
-                    {nano && (
+                    {statusPageBuilder && (
                       <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
                         <div className="flex items-center justify-between">
                           <div>

@@ -20,6 +20,7 @@ import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useDebounce } from '../hooks/useDebounce';
 import { usePlan } from '../hooks/usePlan';
+import { formatRetentionForTier, nextTierWithMore } from '../lib/subscription';
 import { LogDetailsSheet } from '../components/logs/LogDetailsSheet';
 import { ColumnControls, type ColumnConfig } from '../components/logs/ColumnControls';
 import { LogsSkeleton } from '../components/logs/LogsSkeleton';
@@ -1208,12 +1209,16 @@ const LogsBigQuery: React.FC = () => {
           <Info className="h-4 w-4 text-primary" />
           <AlertDescription className="text-sm text-foreground pr-8">
             {(() => {
-              const retentionLabel = tier === 'pro' ? '3 years' : '60 days';
+              // Retention is per-tier (Free 60d, Indie 90d, Nano 1yr, Pro 3yr) —
+              // read it from the tier row rather than a pro/not-pro ternary.
+              const retentionLabel = formatRetentionForTier(tier);
+              const nextRetentionTier = nextTierWithMore(tier, 'retentionDays');
               return (
                 <>
                   We retain log data for {retentionLabel}.{' '}
                   Data older than {retentionLabel} is automatically removed.
-                  {tier !== 'pro' && ' Upgrade to Pro for 3 years of data retention.'}
+                  {nextRetentionTier &&
+                    ` Upgrade to ${nextRetentionTier.name} for ${formatRetentionForTier(nextRetentionTier.tier)} of data retention.`}
                 </>
               );
             })()}

@@ -31,6 +31,8 @@ import {
   Plus,
 } from 'lucide-react';
 import type { NotificationUsage } from '../../lib/notification-shared';
+import { usePlan } from '../../hooks/usePlan';
+import { formatEmailBudgetForTier } from '../../lib/subscription';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -178,6 +180,10 @@ const ExpandedPanel = memo(function ExpandedPanel({
 }: ExpandedPanelProps) {
   const [newEmail, setNewEmail] = useState('');
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+  // Quote the caller's real budget instead of a hardcoded Free/Nano pair. The
+  // old copy was wrong for Indie and Pro, and went stale the moment the budgets
+  // moved.
+  const { tier } = usePlan();
 
   const handleAddEmail = () => {
     const trimmed = newEmail.trim();
@@ -371,8 +377,8 @@ const ExpandedPanel = memo(function ExpandedPanel({
               <ul className="list-disc pl-4 space-y-2">
                 <li>We email only when a check flips states, so steady checks stay quiet.</li>
                 <li>Down/up alerts can resend roughly a minute after the last one.</li>
-                <li>Hourly caps: Free = 10 emails/hour, Nano = 100 emails/hour.</li>
-                <li>Monthly caps: Free = 10 emails/month, Nano = 1000 emails/month.</li>
+                <li>Your plan's caps: {formatEmailBudgetForTier(tier)}.</li>
+                <li>The hourly cap always covers every monitor on your plan at once, so a full outage is never truncated.</li>
                 <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
               </ul>
             </div>

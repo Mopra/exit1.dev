@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Radio, ArrowLeft, ExternalLink, Sparkles } from 'lucide-react';
+import { Radio, ArrowLeft, ExternalLink } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import { Button, CheckSelect } from '../components/ui';
-import { usePlan } from '../hooks/usePlan';
-import { useAdmin } from '../hooks/useAdmin';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/Select';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
@@ -69,25 +67,13 @@ const LiveCheck: React.FC = () => {
   const { userId } = useAuth();
   const { checkId = '' } = useParams<{ checkId: string }>();
   const navigate = useNavigate();
-  const { tier } = usePlan();
-  const { isAdmin } = useAdmin();
-  const gated = !isAdmin && tier === 'free';
-
-  // Casual-tamper guard: if a user opens DevTools and deletes the upgrade
-  // overlay, this poll forces a re-mount on the next tick by bumping the
-  // overlay's React key. Not a real security boundary (anyone with
-  // DevTools can also kill this interval) — just raises the bar so a
-  // right-click → Delete element bounce-back keeps them honest.
-  const [tamperKey, setTamperKey] = useState(0);
-  useEffect(() => {
-    if (!gated) return;
-    const id = setInterval(() => {
-      if (!document.querySelector('[data-live-gate]')) {
-        setTamperKey((k) => k + 1);
-      }
-    }, 500);
-    return () => clearInterval(id);
-  }, [gated]);
+  // The Live page is deliberately available on every plan, Free included.
+  // Real-time probe streaming is the thing competitors don't have; putting it
+  // behind a paywall hid the strongest reason to pick exit1 from exactly the
+  // people still deciding. `gated` is kept as a named constant rather than
+  // deleting the branches, so re-gating is a one-line change if that ever
+  // becomes the right call.
+  const gated = false;
 
   const { checks: firestoreChecks } = useChecks(userId ?? null, () => {});
   const {
@@ -560,35 +546,6 @@ const LiveCheck: React.FC = () => {
           </div>
         )}
         </div>
-        {gated && (
-          <div
-            key={tamperKey}
-            data-live-gate=""
-            className="pointer-events-auto absolute inset-0 z-10 flex items-start justify-center px-4 pt-16 sm:pt-24 bg-gradient-to-b from-background/30 via-background/60 to-background/85"
-          >
-            <div className="w-full max-w-md rounded-xl border border-primary/20 bg-gradient-to-br from-primary/10 via-primary/5 to-background/90 backdrop-blur-md p-8 text-center space-y-5 shadow-2xl">
-              <div className="flex justify-center">
-                <div className="rounded-full bg-primary/10 p-3">
-                  <Sparkles className="h-6 w-6 text-primary" />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-lg font-semibold text-foreground">Upgrade to Nano for live</h3>
-                <p className="text-sm text-foreground/85">
-                  You're peeking at the live probe view. Upgrade to Nano to watch checks update in real time, zoom into incidents, and export raw probe data.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <Button asChild className="cursor-pointer">
-                  <Link to="/billing">Upgrade to Nano</Link>
-                </Button>
-                <Button asChild variant="outline" className="cursor-pointer">
-                  <Link to="/billing">See plans</Link>
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </PageContainer>
   );

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useSubscription } from "@clerk/clerk-react/experimental";
 import { useUser } from "@clerk/clerk-react";
-import { getMaxChecksForTier, isLegacyFreeChecks, resolvePlanKey } from "@/lib/subscription";
+import { getTierLimits, resolvePlanKey } from "@/lib/subscription";
 import { useAdminTierPreview } from "./useAdminTierPreview";
 
 export type Tier = "free" | "indie" | "nano" | "pro";
@@ -100,26 +100,20 @@ export function usePlan() {
     return realTier;
   }, [isAdmin, previewTier, realTier]);
 
-  // Grandfathered Free check cap. Derived from the Clerk signup date rather than
-  // a metadata flag so it needs no backfill and matches what the backend
-  // independently resolves in `getLegacyFreeChecks()`. Admin tier previews land
-  // on the real cap for whichever tier is being previewed, which is what you
-  // want when checking how Free looks.
-  const legacyFreeChecks = useMemo(
-    () => isLegacyFreeChecks(user?.createdAt),
-    [user?.createdAt]
-  );
+  /**
+   * The full limit row for the effective tier. Every entitlement below is
+   * derived from this rather than from a tier comparison, so a repricing only
+   * has to touch `TIER_LIMITS_MIRROR`.
+   */
+  const limits = useMemo(() => getTierLimits(tier), [tier]);
 
   /** Effective check ceiling for this user — always prefer this over the tier cap. */
-  const maxChecks = useMemo(
-    () => getMaxChecksForTier(tier, { legacyFreeChecks }),
-    [tier, legacyFreeChecks]
-  );
+  const maxChecks = limits.maxChecks;
 
   const paid = tier !== "free";
-  // `nano` = "Nano-or-better entitlements" for back-compat with old useNanoPlan
-  // call sites (status page builder, domain intel, maintenance mode). Indie is
-  // deliberately excluded — it is cheaper than Nano and lacks those features.
+  // `nano` = "Nano-or-better entitlements". Kept for back-compat with old
+  // useNanoPlan call sites, but prefer the named entitlement flags below —
+  // `nano` conflates three separate features and silently mis-gates Indie.
   const nano = tier === "nano" || tier === "pro";
   const pro = tier === "pro";
   const indie = tier === "indie";
@@ -133,8 +127,20 @@ export function usePlan() {
     realTier,
     subscribedPlanKey,
     isFounders,
-    legacyFreeChecks,
     maxChecks,
+    limits,
+    // Named entitlements — read these, not the tier booleans. `apiAccess` in
+    // particular is NOT `paid`: Free mints one API key (and therefore has MCP).
+    apiAccess: limits.apiAccess,
+    maxApiKeys: limits.maxApiKeys,
+    statusPageBuilder: limits.statusPageBuilder,
+    domainIntel: limits.domainIntel,
+    maintenanceMode: limits.maintenanceMode,
+    smsAlerts: limits.smsAlerts,
+    csvExport: limits.csvExport,
+    allAlertChannels: limits.allAlertChannels,
+    regionChoice: limits.regionChoice,
+    retentionDays: limits.retentionDays,
     // Back-compat booleans:
     paid,
     nano,

@@ -599,17 +599,20 @@ export const sendLimitReachedEmail = async (
     const { resend, fromAddress } = getResendClient();
     const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
     const billingUrl = `${baseUrl}/billing`;
-    const isFreeTier = tier === 'free';
     const channelLabel = channel === 'email' ? 'email' : 'SMS';
 
     const subject = `Your monthly ${channelLabel} notification limit has been reached`;
 
-    const upgradeCta = isFreeTier
+    // Resolve the actual cheapest upgrade for THIS channel and tier. This was
+    // hardcoded to "Nano / 1,000 emails / 20 SMS", which was wrong for Indie
+    // users and went stale the moment the budgets moved.
+    const nextTier = CONFIG.nextTierWithMore(tier, channel === 'email' ? 'emailMonthly' : 'smsMonthly');
+    const upgradeCta = nextTier
       ? `<div style="margin:16px 0;padding:16px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
             <p style="margin:0 0 8px 0;color:#e2e8f0;font-weight:500">Need more notifications?</p>
-            <p style="margin:0 0 12px 0;color:#94a3b8">Upgrade to the <strong style="color:#e2e8f0">Nano plan</strong> and get up to <strong style="color:#e2e8f0">${channel === 'email' ? '1,000 emails' : '20 SMS'}</strong> per month, plus faster check intervals, more checks, and webhooks.</p>
+            <p style="margin:0 0 12px 0;color:#94a3b8">Upgrade to the <strong style="color:#e2e8f0">${nextTier.name} plan</strong> and get up to <strong style="color:#e2e8f0">${nextTier.max.toLocaleString()} ${channel === 'email' ? 'emails' : 'SMS'}</strong> per month, plus faster check intervals, more monitors, and more webhooks.</p>
             <div style="text-align:center">
-              <a href="${billingUrl}" style="display:inline-block;padding:12px 24px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:12px;font-weight:500">Upgrade to Nano</a>
+              <a href="${billingUrl}" style="display:inline-block;padding:12px 24px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:12px;font-weight:500">Upgrade to ${nextTier.name}</a>
             </div>
           </div>`
       : '';

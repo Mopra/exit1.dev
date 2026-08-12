@@ -14,7 +14,7 @@ Exit1.dev continuously monitors your web services and alerts you instantly when 
 
 Instead of discovering outages through customer complaints or manually tracking SSL renewals in spreadsheets, Exit1.dev provides:
 
-- **Instant Detection** — Know within seconds when services go down (15-second intervals on Indie and Pro)
+- **Instant Detection** — Know within seconds when services go down (15-second intervals on Pro, 30-second on Nano)
 - **Live Probe Streaming** — Watch checks update in real time on a dedicated WebSocket-driven Live page with scrolling charts, raw-probe tables, and per-stage phase breakdowns
 - **Proactive Alerts** — Get warned before SSL certificates expire or domains lapse
 - **Silent-Failure Detection** — Catch cron jobs and background workers that stop running via push-based heartbeats
@@ -31,7 +31,7 @@ Instead of discovering outages through customer complaints or manually tracking 
 
 | Problem | How Exit1.dev Helps |
 |---------|---------------------|
-| **Undetected Downtime** | Sub-minute monitoring (15s on Indie and Pro) with multi-channel alerts (email, SMS, Slack, Discord, Teams, webhooks) |
+| **Undetected Downtime** | Sub-minute monitoring (15s on Pro, 30s on Nano) with multi-channel alerts (email, SMS, Slack, Discord, Teams, webhooks) |
 | **Silent Cron / Worker Failures** | Push-based heartbeat monitors alert when a scheduled task stops pinging |
 | **DNS Hijacking & Drift** | DNS record monitoring with baseline comparison catches unauthorized record changes |
 | **SSL Certificate Surprises** | Automatic expiration tracking with advance warnings |
@@ -66,7 +66,7 @@ Instead of discovering outages through customer complaints or manually tracking 
 Exit1.dev supports nine distinct check types, all running on the same VPS-powered execution engine.
 
 **HTTP / HTTPS Health Checks**
-- Endpoint monitoring with configurable intervals (15s on Indie and Pro, 2min on Nano, 5min on Free)
+- Endpoint monitoring with configurable intervals (15s on Pro, 30s on Nano, 1min on Indie, 5min on Free)
 - Support for all HTTP methods: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
 - Custom headers and request bodies for API testing
 - Response validation with JSONPath expressions and text containment checks
@@ -95,7 +95,7 @@ Exit1.dev supports nine distinct check types, all running on the same VPS-powere
 - User-accepted baseline per record type; alerts fire on drift (changed, added, missing records)
 - Auto-accept stabilises the baseline after consecutive stable checks
 - Uses public resolvers (8.8.8.8, 1.1.1.1) for consistency across regions
-- 1-minute intervals on Pro, 5-minute on Indie and Nano, unavailable on Free
+- 1-minute intervals on Pro, 5-minute on Indie and Nano, unavailable on Free (DNS queries cost far more than an HTTP probe, so the general check interval does not carry over)
 - Full change history (FIFO-capped at 50 entries) with per-change diff
 - DNS-specific event types: `dns_record_changed`, `dns_record_missing`, `dns_resolution_failed`
 - Timeouts treated as unknown (not drift) to prevent false positives
@@ -136,7 +136,7 @@ Exit1.dev supports nine distinct check types, all running on the same VPS-powere
 - Continuous worker pool with 500ms dispatcher tick — no batch queuing, no head-of-line blocking
 - Semaphore-limited concurrency for independent per-check execution, with a post-restart concurrency ramp to avoid overwhelming downstream resolvers
 - High-concurrency execution with 128 UV threads for parallel DNS, TLS, and network operations
-- Sub-minute check support (15-second intervals on Indie and Pro) with adaptive timeouts capped at 70% of check interval (flat 30s budget for sub-minute checks)
+- Sub-minute check support (15-second intervals on Pro, 30-second on Nano) with adaptive timeouts capped at 70% of check interval (flat 30s budget for sub-minute checks)
 - Graceful shutdown handling (SIGTERM/SIGINT) with deploy-mode baseline grace
 - Legacy `us-central1` / `asia-southeast1` Cloud Functions schedulers have been retired — all execution now runs on the VPS pool
 
@@ -216,7 +216,7 @@ The same WebSocket transport is now the **runtime source of truth for live check
 - New users land on the first check in their list
 
 **Tier Gating**
-- Free tier sees a blurred preview with an upgrade overlay; available from Nano upward
+- Available on **every plan, Free included** — real-time probe streaming is the clearest thing exit1 has that competitors don't, so paywalling it hid the strongest reason to choose it from exactly the people still deciding. (It was previously a blurred preview with an upgrade overlay below Nano.)
 - All paid tiers stream live with no rate-limit on the WebSocket transport
 
 ### SSL Certificate Management
@@ -340,13 +340,13 @@ Share uptime status with customers and stakeholders:
 - Public or private visibility options
 - Custom domain support with SSL (Pro tier)
 - Branding customization (logo, favicon, colors)
-- Optional "Powered by exit1.dev" footer (removable on Indie/Nano/Pro)
+- Optional "Powered by exit1.dev" footer (removable on any tier with the status page builder — Indie and up)
 - Folder-based dynamic check inclusion
 - **Drag-and-drop layout editor** — Customize widget placement and sizing on a 12-column grid
 - Multiple widget types: timeline, text, uptime, incidents, downtime, map, status
 - 90-day heartbeat calendar (online / offline / unknown per day)
 - Real-time updates — no manual maintenance
-- Per-tier status-page limits: 1 (Free), 1 (Indie), 5 (Nano), 50 (Pro)
+- Per-tier status-page limits: 1 (Free), 1 (Indie), 5 (Nano), 50 (Pro). The builder (branding, layout, widgets) is Indie and up.
 
 ### Public Uptime Monitors
 
@@ -425,7 +425,7 @@ The logs make the alerting layer's decisions legible, so you can always see *why
 
 ### Developer & Integration Features
 
-**Public API** (Indie, Nano, Pro)
+**Public API** (all tiers, including Free)
 - Programmatic access to monitoring data
 - API key authentication with read/write scopes
 - CRUD operations: create, read, update, and delete checks
@@ -437,7 +437,7 @@ The logs make the alerting layer's decisions legible, so you can always see *why
 - Query monitoring data from any MCP-compatible AI assistant
 - Published as `exit1-mcp` on npm — works with Claude Code, Claude Desktop, Cursor, VS Code Copilot, Windsurf, Codex CLI, Gemini, Goose, ChatGPT, and more
 - Five read-only tools: `list_checks`, `get_check`, `get_check_history`, `get_check_stats`, `get_status_page`
-- Access follows your API access tier (Indie and up with an API key, `checks:read` scope) — MCP is not a separate add-on, it's implied by having API access
+- Access follows your API access tier (every tier can mint a key, Free included — `checks:read` scope) — MCP is not a separate add-on, it's implied by having API access
 - **In-app setup page** (`/mcp`, "MCP" sidebar entry, Bot icon) — copy-paste configuration snippets for each client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex CLI, Gemini CLI, ChatGPT), a one-click "Create API key" hand-off that lands on the key form pre-armed to create a read key, the tool reference, and example prompts ("Are any of my monitors down right now?")
 
 **Webhooks & Integrations**
@@ -505,21 +505,25 @@ A guided five-step onboarding flow helps new users set up their first check and 
 
 Exit1.dev has four tiers. All tiers run on the same VPS-powered execution engine — you're paying for capacity, speed, and advanced features, not a different product.
 
-> **Note:** the interval ladder is deliberately non-monotonic. **Indie ($3) probes
-> every 15 seconds while Nano ($9) probes every 2 minutes.** Indie is the "few
-> sites, watched closely" tier; Nano is the "many sites, watched normally" tier.
+> **The ladder is monotonic.** Each tier is a strict superset of the one below it:
+> caps only rise, intervals only get faster (5min → 1min → 30s → 15s), and no
+> feature flag is ever revoked going up. Check interval is the primary axis —
+> *how fast do you want to know* — with the team-and-scale features layered on at
+> Nano and Pro. Enforced by `functions/src/__tests__/tier-ladder.test.ts`.
 
 ### Free Plan
 
-Get started with monitoring at no cost:
+Genuinely usable monitoring at no cost — not a crippled demo:
 
-- Up to **5** monitors
+- Up to **50** monitors
 - **5-minute** check intervals
 - **60-day** data retention
 - **1** status page (with exit1 branding)
 - **1** webhook endpoint
-- **10** emails/hour · **10**/month
+- **1** API key + full Public API access + **MCP server access**
+- **50** emails/hour · **300**/month
 - Email alerts only (no SMS)
+- **Live probe stream** — the real-time page, same as every other tier
 - SSL certificate monitoring
 - Heartbeat, HTTP, TCP, UDP, ICMP, WebSocket, redirect monitoring (no DNS)
 - Status badges (with exit1 branding)
@@ -528,59 +532,74 @@ Get started with monitoring at no cost:
 
 ### Indie Plan — $4/mo ($3/mo billed annually)
 
-For a handful of sites you want watched *closely*:
+For sites you want watched *closely*, with your own name on the status page:
 
-- Up to **10** monitors
-- **15-second** check intervals — the platform's fastest
-- **60-day** data retention
-- **1** API key + full Public API access
-- **MCP server access** for AI assistants
+- Up to **100** monitors
+- **1-minute** check intervals
+- **90-day** data retention
+- **3** API keys + full Public API access + MCP server
 - **3** webhook endpoints
-- **50** emails/hour · **500**/month
-- **1** status page (with exit1 branding)
+- **100** emails/hour · **800**/month
+- **1** status page **with the full builder** — branding, layout, widgets,
+  removable "Powered by" footer
 - Email and webhook alerts only (no SMS, no Slack/Discord/Teams)
 - **DNS record monitoring** (5-minute minimum interval — DNS queries are far
-  more expensive than an HTTP probe, so the 15s floor doesn't carry over)
-- No status page builder, domain intelligence, maintenance mode, or stats/timeline views
+  more expensive than an HTTP probe, so the general interval doesn't carry over)
+- No domain intelligence, maintenance mode, region choice, or stats/timeline views
 
 ### Nano Plan — $9/mo
 
-For small teams and side projects running many sites:
+Production monitoring for small teams:
 
-- Up to **100** monitors
-- **2-minute** check intervals
-- **60-day** data retention
-- **1** API key + full Public API access + MCP server
-- **5** status pages with layout builder, removable "Powered by" footer
-- **5** webhook endpoints
-- **50** emails/hour · **1,000**/month
+- Up to **250** monitors
+- **30-second** check intervals
+- **365-day** data retention
+- **10** API keys + full Public API access + MCP server
+- **5** status pages with layout builder
+- **10** webhook endpoints
+- **250** emails/hour · **2,500**/month
 - **Domain Intelligence** (automatic domain expiration tracking)
 - **DNS record monitoring** (5-minute minimum interval)
 - **Maintenance mode** (instant toggle, one-time scheduled, and recurring windows)
+- **Region choice** — pin checks to US, EU, or Asia
 - Status badges with removable branding
 - Timeline view, stats view, all widget types
 
 ### Pro Plan — $24/mo
 
 Everything exit1 does, at the highest limits. Pro absorbed the retired Agency
-tier in full — only the email and SMS budgets stayed at Pro's historical levels:
+tier in full:
 
 - Up to **1,000** monitors
 - **15-second** check intervals
 - **3-year (1,095 days)** data retention
 - **50** status pages
-- **50** webhook endpoints
-- **25** API keys + full Public API access + MCP server
-- **500** emails/hour · **10,000**/month
+- **100** webhook endpoints
+- **100** API keys + full Public API access + MCP server
+- **1,000** emails/hour · **10,000**/month
 - **SMS alerts** (25/hour · 50/month)
 - **DNS record monitoring** at 1-minute intervals
 - **CSV export** of check history
-- **Region choice** — pin checks to US, EU, or Asia
 - **Per-log comments** and **extra email recipients** (per-check & per-folder)
+- **All alert channels** — Slack, Discord, Teams
 - **Custom status domains** with SSL *(coming soon)*
 - **SLA reporting** surface *(coming soon)*
 - **Team seats** (10) *(coming soon)*
-- All alert channels, all widget types, all Nano features
+- All widget types, all Nano features
+
+### Email budget derivation
+
+The email caps are generated by two rules, not hand-picked:
+
+1. **Hourly cap = monitor cap.** One provider outage takes down every monitor at
+   once; an hourly cap below the check cap silently truncates alerts during the
+   exact incident the product exists for.
+2. **Monthly cap = 6–10× monitor cap**, rising with tier — room for 3–5 incidents
+   per monitor per month at two emails (down + up) each.
+
+Both are asserted in `tier-ladder.test.ts`. Note that exit1 does **not** yet batch
+simultaneous incidents into one email; until it does, these caps are the floor
+rather than headroom.
 
 ### Legacy & Founders
 
@@ -588,13 +607,15 @@ tier in full — only the email and SMS budgets stayed at Pro's historical level
 - **Agency (retired)** — Agency was folded into Pro. The `agency` plan key resolves to **Pro**, which carries every former Agency entitlement, so existing subscribers lose nothing
 - **Scale (legacy)** — former Scale subscribers are mapped to **Pro**
 - **Starter (legacy)** — mapped to **Nano**
+- **Free check grandfathering (retired)** — the sticky `legacyFreeChecks` flag that held ~91 early users at 10 checks was removed when Free moved to 50, which dominates it. Residual fields on user docs are inert.
 
 Tier-change enforcement is automatic and driven by comparing tier *limits*, not
 tier rank: on any plan change, if the target tier is tighter in any dimension,
 excess checks/webhooks/API keys/status pages are disabled (oldest first),
-intervals clamped, tier-gated features turned off, and SMS recipients cleared.
-Comparing limits rather than rank is what makes the **Indie → Nano** move (a rank
-upgrade that must still widen intervals from 15s to 2min) enforce correctly.
+intervals clamped, tier-gated features turned off, status-page branding stripped,
+pinned regions reset, and SMS recipients cleared. Downgrading to Free **prunes to
+the Free cap rather than disabling everything** — with 50 free monitors, blanking
+a user's whole account over a lapsed card is not a defensible outcome.
 
 ---
 
@@ -657,7 +678,7 @@ A system-level health gate prevents alert storms during infrastructure outages. 
 
 ### Sub-Minute Detection
 
-A continuous VPS worker pool with 15-second check intervals (Indie and Pro) means faster detection than any traditional scheduler. Combined with Firebase real-time listeners, the dashboard updates instantly when status changes.
+A continuous VPS worker pool with 15-second check intervals (Pro; 30-second on Nano) means faster detection than any traditional scheduler. Combined with Firebase real-time listeners, the dashboard updates instantly when status changes.
 
 ### Real-Time Live Page
 
@@ -760,7 +781,7 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 - Continuous worker pool with semaphore-limited concurrency (replaced batch scheduler)
 - 500ms dispatcher tick — each check runs independently, no head-of-line blocking
 - Post-restart concurrency ramp prevents downstream overload after a deploy
-- Sub-minute check support (15-second on Indie and Pro), with a flat 30s timeout budget for sub-minute checks
+- Sub-minute check support (15-second on Pro, 30-second on Nano), with a flat 30s timeout budget for sub-minute checks
 - 128 UV threads for high-concurrency DNS, TLS, and network operations
 - Real-time status buffering for efficient Firestore writes
 - HTTP/HTTPS, heartbeat, DNS, ICMP, TCP, UDP, WebSocket, redirect, and standalone domain check types
@@ -836,10 +857,10 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 | `sendTestEmail` | Callable | Send test email to verify delivery |
 
 **Per-Tier Email Quotas:**
-- Free: 10/hour · 10/month
-- Indie: 50/hour · 500/month
-- Nano: 50/hour · 1,000/month
-- Pro: 500/hour · 10,000/month
+- Free: 50/hour · 300/month
+- Indie: 100/hour · 800/month
+- Nano: 250/hour · 2,500/month
+- Pro: 1,000/hour · 10,000/month
 - Notification limit email sent when quota is reached; monitors keep running
 
 ### SMS Alert Functions
@@ -951,7 +972,7 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 
 | Function | Type | Description |
 |----------|------|-------------|
-| `createApiKey` | Callable | Generate new API key (Indie/Nano: 1, Pro: up to 25) |
+| `createApiKey` | Callable | Generate new API key (Free: 1, Indie: 3, Nano: 10, Pro: 100) |
 | `listApiKeys` | Callable | List all keys (hashed values only) |
 | `revokeApiKey` | Callable | Disable key without deleting |
 | `deleteApiKey` | Callable | Permanently delete key |
@@ -1193,6 +1214,6 @@ The frontend keeps Firestore `onSnapshot` as a parallel data source. If anything
 
 ## Summary
 
-Exit1.dev combines website monitoring, API health checks, LLM/AI API monitoring with silent model-fallback detection, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, standalone domain-expiry checks, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Indie and Pro), multi-region VPS execution (Frankfurt + opt-in Boston) with cross-region peer confirmation, a WebSocket-streamed Live page with scrolling charts, drag-to-zoom, bidirectional probe selection, per-stage phase breakdowns and raw-probe CSV/JSON export, per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering (including a durable SSL alert state machine), seven native notification providers (Slack, Discord, Teams, Pumble, Pushover, PagerDuty, Opsgenie), transient-vs-confirmed failure auditing, flexible maintenance windows, drag-and-drop status pages with custom domains, curated public uptime monitors, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
+Exit1.dev combines website monitoring, API health checks, LLM/AI API monitoring with silent model-fallback detection, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, standalone domain-expiry checks, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Pro, 30-second on Nano), multi-region VPS execution (Frankfurt + opt-in Boston) with cross-region peer confirmation, a WebSocket-streamed Live page with scrolling charts, drag-to-zoom, bidirectional probe selection, per-stage phase breakdowns and raw-probe CSV/JSON export, per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering (including a durable SSL alert state machine), seven native notification providers (Slack, Discord, Teams, Pumble, Pushover, PagerDuty, Opsgenie), transient-vs-confirmed failure auditing, flexible maintenance windows, drag-and-drop status pages with custom domains, curated public uptime monitors, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
 
 **Stop discovering outages from your customers. Start monitoring with Exit1.dev.**

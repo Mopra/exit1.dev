@@ -53,7 +53,7 @@ export interface SearchItem {
   external?: boolean;
   /** true = only visible to admins */
   adminOnly?: boolean;
-  /** true = only visible to nano/scale users */
+  /** true = only visible to tiers entitled to the feature (today: SMS ⇒ Pro) */
   paidOnly?: boolean;
   /** Intent string passed via navigation state — target page reads it and opens the matching dialog */
   actionIntent?: 'create-check' | 'create-status-page' | 'create-api-key';

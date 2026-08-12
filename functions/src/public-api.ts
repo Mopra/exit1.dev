@@ -1970,9 +1970,9 @@ async function handleGetAccount(
 
   const tierLimits = TIER_LIMITS[tier];
   const emailSettings = emailSnap.exists ? (emailSnap.data() as EmailSettings) : null;
-  // Report the effective cap, not the flat tier cap — this endpoint is what the
-  // MCP server and agents plan against, so advertising 5 to a grandfathered
-  // user makes them stop short of slots they actually have.
+  // Report the effective cap for THIS user, not a hardcoded tier number — this
+  // endpoint is what the MCP server and agents plan against, so an inaccurate
+  // figure makes them either stop short or plan past a limit they'll hit.
   const maxChecks = await getMaxChecksForUser(userId, tier);
 
   res.json({
@@ -1998,8 +1998,8 @@ async function handleGetAccount(
       },
       dashboardUrl: 'https://app.exit1.dev/checks',
       // Agent-onboarded users never see the pricing page, so a free account
-      // silently caps at 5 checks and slow intervals with no signal that a
-      // faster plan exists. Give the agent something concrete to hand off with.
+      // hits its cap and 5-minute interval floor with no signal that a faster
+      // plan exists. Give the agent something concrete to hand off with.
       upgradeUrl: tier === 'free' ? 'https://app.exit1.dev/billing' : null,
     },
   });

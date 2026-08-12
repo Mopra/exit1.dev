@@ -62,7 +62,7 @@ import {
 } from "@/components/billing/plan-matrix-data"
 import { usePlan, type Tier } from "@/hooks/usePlan"
 import { getActivePaidSubscriptionItem } from "@/lib/subscription"
-import { formatEmailBudget } from "@/lib/subscription"
+import { formatEmailBudget, formatRetentionForTier, getMaxChecksForTier } from "@/lib/subscription"
 import { downloadPaymentReceipt, buildOrganizationAddressLines } from "@/lib/pdf-receipt"
 import type { BillingRecipient } from "@/lib/pdf-receipt"
 import { parseOrganizationBillingProfile } from "@/lib/billing-profile"
@@ -654,8 +654,8 @@ export default function Billing() {
                         $4/mo pricing and Pro features. If you resubscribe, new
                         pricing applies — Indie at $4/mo, Nano at $9/mo, or Pro
                         at $24/mo. You'll keep access until the end of the billing
-                        period, then drop to Free (5 monitors, 5-minute intervals,
-                        60-day retention).
+                        period, then drop to Free ({getMaxChecksForTier('free')} monitors,
+                        5-minute intervals, {formatRetentionForTier('free')} retention).
                       </>
                     ) : (
                       <>

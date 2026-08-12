@@ -91,27 +91,72 @@ export function isNanoPlan(subscription: SubscriptionLike | null | undefined) {
  * Keep in sync with the backend — the backend is authoritative and re-validates
  * everything here.
  *
- * Note the interval column is NOT monotonic: Indie ($4) probes at 15s while
- * Nano ($9) probes at 2min. Indie is the "few sites, watched closely" tier.
- *
- * Always read caps through the helpers below. A `nano ? x : y` ternary silently
- * treats Indie as Free (and Pro as Nano) — that class of bug is what this mirror
- * exists to prevent.
+ * Always read caps and flags through the helpers below, and prefer the derived
+ * booleans on `usePlan()` over ad-hoc tier comparisons. A `nano ? x : y` ternary
+ * silently treats Indie as Free (and Pro as Nano), and a `paid ? x : y` gate
+ * treats Free as having no API access — both are wrong under the current
+ * lineup, and that class of bug is exactly what this mirror exists to prevent.
  */
 export type TierKey = "free" | "indie" | "nano" | "pro"
 
-const TIER_LIMITS_MIRROR: Record<TierKey, {
+export type TierLimitsRow = {
   emailsPerHour: number
   emailsPerMonth: number
   maxStatusPages: number
   minCheckIntervalSeconds: number
   maxChecks: number
   maxWebhooks: number
-}> = {
-  free:  { emailsPerHour: 10,  emailsPerMonth: 10,    maxStatusPages: 1,  minCheckIntervalSeconds: 300, maxChecks: 5,    maxWebhooks: 1 },
-  indie: { emailsPerHour: 50,  emailsPerMonth: 500,   maxStatusPages: 1,  minCheckIntervalSeconds: 15,  maxChecks: 10,   maxWebhooks: 3 },
-  nano:  { emailsPerHour: 50,  emailsPerMonth: 1000,  maxStatusPages: 5,  minCheckIntervalSeconds: 120, maxChecks: 100,  maxWebhooks: 5 },
-  pro:   { emailsPerHour: 500, emailsPerMonth: 10000, maxStatusPages: 50, minCheckIntervalSeconds: 15,  maxChecks: 1000, maxWebhooks: 50 },
+  maxApiKeys: number
+  retentionDays: number
+  /** API keys and MCP are one entitlement — there is no separate MCP flag. */
+  apiAccess: boolean
+  statusPageBuilder: boolean
+  domainIntel: boolean
+  maintenanceMode: boolean
+  smsAlerts: boolean
+  csvExport: boolean
+  allAlertChannels: boolean
+  regionChoice: boolean
+}
+
+const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
+  free: {
+    emailsPerHour: 50, emailsPerMonth: 300, maxStatusPages: 1,
+    minCheckIntervalSeconds: 300, maxChecks: 50, maxWebhooks: 1, maxApiKeys: 1,
+    retentionDays: 60,
+    apiAccess: true, statusPageBuilder: false, domainIntel: false,
+    maintenanceMode: false, smsAlerts: false, csvExport: false,
+    allAlertChannels: false, regionChoice: false,
+  },
+  indie: {
+    emailsPerHour: 100, emailsPerMonth: 800, maxStatusPages: 1,
+    minCheckIntervalSeconds: 60, maxChecks: 100, maxWebhooks: 3, maxApiKeys: 3,
+    retentionDays: 90,
+    apiAccess: true, statusPageBuilder: true, domainIntel: false,
+    maintenanceMode: false, smsAlerts: false, csvExport: false,
+    allAlertChannels: false, regionChoice: false,
+  },
+  nano: {
+    emailsPerHour: 250, emailsPerMonth: 2500, maxStatusPages: 5,
+    minCheckIntervalSeconds: 30, maxChecks: 250, maxWebhooks: 10, maxApiKeys: 10,
+    retentionDays: 365,
+    apiAccess: true, statusPageBuilder: true, domainIntel: true,
+    maintenanceMode: true, smsAlerts: false, csvExport: false,
+    allAlertChannels: false, regionChoice: true,
+  },
+  pro: {
+    emailsPerHour: 1000, emailsPerMonth: 10000, maxStatusPages: 50,
+    minCheckIntervalSeconds: 15, maxChecks: 1000, maxWebhooks: 100, maxApiKeys: 100,
+    retentionDays: 1095,
+    apiAccess: true, statusPageBuilder: true, domainIntel: true,
+    maintenanceMode: true, smsAlerts: true, csvExport: true,
+    allAlertChannels: true, regionChoice: true,
+  },
+}
+
+/** Full limit row for a tier. Prefer this when you need several values at once. */
+export function getTierLimits(tier: TierKey): TierLimitsRow {
+  return TIER_LIMITS_MIRROR[tier] ?? TIER_LIMITS_MIRROR.free
 }
 
 /** @deprecated Use `TIER_LIMITS_MIRROR` — this only covered free/nano. */
@@ -133,36 +178,33 @@ export function getMaxStatusPagesForTier(tier: TierKey): number {
   return TIER_LIMITS_MIRROR[tier]?.maxStatusPages ?? 1
 }
 
-/**
- * Free dropped from 10 checks to 5 in the Indie restructure. Users who signed up
- * before this cutoff keep the old cap of 10 — see LEGACY_FREE_CHECKS_CUTOFF_MS
- * in `functions/src/config.ts`, which must stay in sync with this value. The
- * backend is authoritative; this mirror only decides what the UI offers.
- */
-export const LEGACY_FREE_CHECKS_CUTOFF_MS = Date.parse("2026-07-30T00:00:00Z")
-export const LEGACY_FREE_MAX_CHECKS = 10
+// The Free tier's `legacyFreeChecks` grandfathering (10 checks for pre-cutoff
+// signups, back when Free allowed 5) was retired when Free moved to 50 — the
+// new cap dominates it for every user in the set. See the note in
+// `functions/src/config.ts`.
 
-/** True when a Clerk signup date predates the Free check-cap cut. */
-export function isLegacyFreeChecks(clerkCreatedAt: Date | null | undefined): boolean {
-  if (!clerkCreatedAt) return false
-  const ms = clerkCreatedAt.getTime()
-  return Number.isFinite(ms) && ms < LEGACY_FREE_CHECKS_CUTOFF_MS
-}
-
-export type CheckLimitOverrides = {
-  /** Signed up before the Free cap was cut — keeps the old 10-check ceiling. */
-  legacyFreeChecks?: boolean
-}
-
-export function getMaxChecksForTier(tier: TierKey, overrides?: CheckLimitOverrides): number {
-  if (tier === "free" && overrides?.legacyFreeChecks) {
-    return Math.max(TIER_LIMITS_MIRROR.free.maxChecks, LEGACY_FREE_MAX_CHECKS)
-  }
-  return TIER_LIMITS_MIRROR[tier]?.maxChecks ?? TIER_LIMITS_MIRROR.free.maxChecks
+export function getMaxChecksForTier(tier: TierKey): number {
+  return getTierLimits(tier).maxChecks
 }
 
 export function getMaxWebhooksForTier(tier: TierKey): number {
-  return TIER_LIMITS_MIRROR[tier]?.maxWebhooks ?? TIER_LIMITS_MIRROR.free.maxWebhooks
+  return getTierLimits(tier).maxWebhooks
+}
+
+export function getMaxApiKeysForTier(tier: TierKey): number {
+  return getTierLimits(tier).maxApiKeys
+}
+
+export function getRetentionDaysForTier(tier: TierKey): number {
+  return getTierLimits(tier).retentionDays
+}
+
+/** Human-readable retention, e.g. "60 days" / "1 year" / "3 years". */
+export function formatRetentionForTier(tier: TierKey): string {
+  const days = getRetentionDaysForTier(tier)
+  if (days < 365) return `${days} days`
+  const years = Math.round(days / 365)
+  return years === 1 ? "1 year" : `${years} years`
 }
 
 export const TIER_DISPLAY_NAME: Record<TierKey, string> = {
@@ -172,10 +214,20 @@ export const TIER_DISPLAY_NAME: Record<TierKey, string> = {
   pro: "Pro",
 }
 
-// Price order. Deliberately NOT interval order — see the note above.
+// Price order, which is also interval order and cap order — the ladder is
+// monotonic on every dimension.
 const TIER_LADDER: readonly TierKey[] = ["free", "indie", "nano", "pro"]
 
-type CountableDimension = "maxChecks" | "maxWebhooks" | "maxStatusPages"
+type CountableDimension =
+  | "maxChecks"
+  | "maxWebhooks"
+  | "maxStatusPages"
+  | "maxApiKeys"
+  | "retentionDays"
+
+type BooleanDimension = {
+  [K in keyof TierLimitsRow]: TierLimitsRow[K] extends boolean ? K : never
+}[keyof TierLimitsRow]
 
 /**
  * Cheapest tier above `tier` whose cap for `dimension` is strictly larger, or
@@ -186,13 +238,14 @@ type CountableDimension = "maxChecks" | "maxWebhooks" | "maxStatusPages"
 export function nextTierWithMore(
   tier: TierKey,
   dimension: CountableDimension,
+  /**
+   * Per-user cap that beats the flat tier row, when one exists. No entitlement
+   * uses this today (the Free grandfathering that needed it is retired), but
+   * the seam is cheap to keep and callers already pass their effective cap.
+   */
   effectiveCurrent?: number,
 ): { tier: TierKey; name: string; max: number } | null {
-  const limits = TIER_LIMITS_MIRROR[tier] ?? TIER_LIMITS_MIRROR.free
-  // `effectiveCurrent` lets callers pass a per-user cap that beats the flat tier
-  // row — without it, a grandfathered Free user (10 checks) gets pitched Indie,
-  // whose 10 checks are no upgrade at all.
-  const current = effectiveCurrent ?? limits[dimension]
+  const current = effectiveCurrent ?? getTierLimits(tier)[dimension]
   const start = TIER_LADDER.indexOf(tier)
   for (const candidate of TIER_LADDER.slice(start + 1)) {
     const max = TIER_LIMITS_MIRROR[candidate][dimension]
@@ -202,9 +255,27 @@ export function nextTierWithMore(
 }
 
 /**
+ * Cheapest tier above `tier` that has `flag` enabled, or null when nothing
+ * above it adds the feature. Use for "upgrade to X for Y" copy on flag-gated
+ * features so it can't drift from TIER_LIMITS.
+ */
+export function nextTierWithFlag(
+  tier: TierKey,
+  flag: BooleanDimension,
+): { tier: TierKey; name: string } | null {
+  const start = TIER_LADDER.indexOf(tier)
+  for (const candidate of TIER_LADDER.slice(start + 1)) {
+    if (TIER_LIMITS_MIRROR[candidate][flag]) {
+      return { tier: candidate, name: TIER_DISPLAY_NAME[candidate] }
+    }
+  }
+  return null
+}
+
+/**
  * Minimum check interval in seconds. Founders are mapped to 'pro' upstream by
  * `usePlan()`, so this map covers them too.
  */
 export function getMinCheckIntervalSecondsForTier(tier: TierKey): number {
-  return TIER_LIMITS_MIRROR[tier]?.minCheckIntervalSeconds ?? 300
+  return getTierLimits(tier).minCheckIntervalSeconds
 }

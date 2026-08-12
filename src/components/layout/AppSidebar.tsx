@@ -57,7 +57,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 
-const getNavData = (isAdmin: boolean, nano: boolean) => ({
+const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
   navMain: [
     {
       title: "Checks",
@@ -95,7 +95,9 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       url: "/emails",
       icon: Mail,
     },
-    ...(nano || isAdmin ? [
+    // SMS is Pro-only (TIER_LIMITS.smsAlerts). This used to key off the `nano`
+    // boolean, which showed Nano users a nav item they could not use.
+    ...(smsAlerts || isAdmin ? [
       {
         title: "SMS",
         url: "/sms",
@@ -173,7 +175,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { isSignedIn } = useAuth();
   const { user } = useUser();
   const { isAdmin } = useAdmin();
-  const { tier, isFounders, nano } = usePlan()
+  const { tier, isFounders, smsAlerts } = usePlan()
 
   const userData = {
     name: user?.fullName || user?.firstName || "User",
@@ -185,7 +187,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     return null;
   }
 
-  const data = getNavData(isAdmin, nano);
+  const data = getNavData(isAdmin, smsAlerts);
 
   return (
     <Sidebar 

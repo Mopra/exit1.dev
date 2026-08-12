@@ -5,44 +5,33 @@ dotenv.config();
 // Canonical user tier union. Kept here so config/helpers are self-contained;
 // `init.ts` re-uses the same string literal union under the `UserTier` alias.
 //
-// NOTE: the ladder is deliberately NOT monotonic on check interval. Indie is the
-// "few sites, watched closely" tier (10 checks @ 15s); Nano is the "many sites,
-// watched normally" tier (100 checks @ 2min). An indie -> nano move is a rank
-// *upgrade* that still clamps intervals — see plan-enforcement.ts.
+// The ladder is monotonic on every dimension: each tier is a strict superset of
+// the one below it. Check interval is the primary axis (5min → 1min → 30s →
+// 15s) — "how fast do you want to know" — with the team/scale features layered
+// on top at Nano and Pro.
 export type Tier = 'free' | 'indie' | 'nano' | 'pro';
 
 // Single source of truth for per-tier feature limits + flags.
+//
+// Email budgets follow two rules, not hand-picked numbers:
+//   1. `emailHourly` === `maxChecks`. A provider outage that takes down every
+//      monitor at once must always get through in full — the hourly cap is the
+//      thing that silently eats alerts during the exact incident the product
+//      exists for, so it can never be smaller than the blast radius.
+//   2. `emailMonthly` is 6-10x `maxChecks`, rising with tier, so the
+//      emails-per-monitor ratio is monotonic across the ladder.
 export const TIER_LIMITS = {
   free: {
-    maxChecks: 5,
+    maxChecks: 50,
     minCheckIntervalMinutes: 5,
     maxWebhooks: 1,
-    maxApiKeys: 0,
-    emailHourly: 10,
-    emailMonthly: 10,
-    smsHourly: 0,
-    smsMonthly: 0,
-    retentionDays: 60,
-    maxStatusPages: 1,
-    statusPageBuilder: false,
-    domainIntel: false,
-    maintenanceMode: false,
-    smsAlerts: false,
-    apiAccess: false,
-    csvExport: false,
-    teamSeats: 0,
-    slaReporting: false,
-    customStatusDomain: false,
-    allAlertChannels: false,
-    regionChoice: false,
-  },
-  indie: {
-    maxChecks: 10,
-    minCheckIntervalMinutes: 0.25, // 15 sec
-    maxWebhooks: 3,
-    maxApiKeys: 1, // MCP access follows apiAccess — no separate flag
+    // Free mints one API key on purpose. MCP access follows API access, and the
+    // hosted MCP server is the onboarding wedge — putting it behind a card
+    // means a developer can't reach the thing the product is pitched on. The
+    // public API's own per-key rate limits (5 req/min, 500/day) bound the cost.
+    maxApiKeys: 1,
     emailHourly: 50,
-    emailMonthly: 500,
+    emailMonthly: 300,
     smsHourly: 0,
     smsMonthly: 0,
     retentionDays: 60,
@@ -56,19 +45,44 @@ export const TIER_LIMITS = {
     teamSeats: 0,
     slaReporting: false,
     customStatusDomain: false,
+    allAlertChannels: false,
+    regionChoice: false,
+  },
+  indie: {
+    maxChecks: 100,
+    minCheckIntervalMinutes: 1,
+    maxWebhooks: 3,
+    maxApiKeys: 3, // MCP access follows apiAccess — no separate flag
+    emailHourly: 100,
+    emailMonthly: 800,
+    smsHourly: 0,
+    smsMonthly: 0,
+    retentionDays: 90,
+    maxStatusPages: 1,
+    // Indie's single status page is fully brandable. It is the most visible
+    // thing a $3 customer gets, and it costs nothing to serve.
+    statusPageBuilder: true,
+    domainIntel: false,
+    maintenanceMode: false,
+    smsAlerts: false,
+    apiAccess: true,
+    csvExport: false,
+    teamSeats: 0,
+    slaReporting: false,
+    customStatusDomain: false,
     allAlertChannels: false, // email + webhooks only
     regionChoice: false,
   },
   nano: {
-    maxChecks: 100,
-    minCheckIntervalMinutes: 2,
-    maxWebhooks: 5,
-    maxApiKeys: 1,
-    emailHourly: 50,
-    emailMonthly: 1000,
+    maxChecks: 250,
+    minCheckIntervalMinutes: 0.5, // 30 sec
+    maxWebhooks: 10,
+    maxApiKeys: 10,
+    emailHourly: 250,
+    emailMonthly: 2500,
     smsHourly: 0,
     smsMonthly: 0,
-    retentionDays: 60,
+    retentionDays: 365,
     maxStatusPages: 5,
     statusPageBuilder: true,
     domainIntel: true,
@@ -80,16 +94,19 @@ export const TIER_LIMITS = {
     slaReporting: false,
     customStatusDomain: false,
     allAlertChannels: false,
-    regionChoice: false,
+    // Region pinning moved down from Pro so Nano is a destination rather than
+    // "Indie with more". Pro is the team tier.
+    regionChoice: true,
   },
-  // Pro absorbed the retired Agency tier in full, except the email/SMS budgets,
-  // which stay at Pro's historical levels.
+  // Pro absorbed the retired Agency tier in full.
   pro: {
     maxChecks: 1000,
     minCheckIntervalMinutes: 0.25, // 15 sec
-    maxWebhooks: 50,
-    maxApiKeys: 25,
-    emailHourly: 500,
+    // Not "unlimited": one down event fans out to every webhook, so an
+    // unbounded count is an amplifier pointed at our own egress and at Svix.
+    maxWebhooks: 100,
+    maxApiKeys: 100,
+    emailHourly: 1000,
     emailMonthly: 10000,
     smsHourly: 25,
     smsMonthly: 50,
@@ -131,34 +148,31 @@ export const TIER_LIMITS = {
   regionChoice: boolean;
 }>;
 
-// Hard floor for check intervals — matches the fastest tiers (Indie/Pro, 15s).
+// Hard floor for check intervals — matches the fastest tier (Pro, 15s).
 // Centralised so `getNextCheckAtMs` doesn't need to reach into TIER_LIMITS.
 const MIN_INTERVAL_FLOOR_MINUTES = 0.25;
 
-// --- Free-tier check grandfathering -----------------------------------------
-//
-// Free dropped from 10 checks to 5 in the Indie restructure (c80880a, deployed
-// 2026-07-29) with no migration, so ~91 existing free users were left holding
-// more checks than the new cap allows. Their checks kept running (nothing
-// prunes on a non-event), but every *action* gate refused them — including
-// re-enabling a check they already owned.
-//
-// Anyone who signed up before the cutoff keeps the old cap of 10; everyone
-// after gets 5. Keyed on the Clerk signup timestamp rather than a metadata
-// flag so there is no backfill to run and no per-user Clerk write, and so the
-// grandfather set can never accidentally grow.
-//
-// The resolved boolean is cached *stickily* on the user doc by
-// `getLegacyFreeChecks()` in init.ts — see the note there on why it must never
-// be recomputed once written.
-export const LEGACY_FREE_MAX_CHECKS = 10;
-export const LEGACY_FREE_CHECKS_CUTOFF_MS = Date.parse('2026-07-30T00:00:00Z');
-
-/** Per-user entitlement overrides layered on top of the flat tier limits. */
-export type CheckLimitOverrides = {
-  /** Signed up before the Free cap was cut — keeps the old 10-check ceiling. */
-  legacyFreeChecks?: boolean;
+/** Customer-facing plan names. Keep in step with PLAN_MATRIX on the frontend. */
+export const TIER_DISPLAY_NAMES: Record<Tier, string> = {
+  free: 'Free',
+  indie: 'Indie',
+  nano: 'Nano',
+  pro: 'Pro',
 };
+
+// --- Free-tier check grandfathering (RETIRED) --------------------------------
+//
+// Free briefly dropped from 10 checks to 5 in the Indie restructure, which left
+// ~91 early users above the cap; they were grandfathered back to 10 via a
+// sticky `users/{uid}.legacyFreeChecks` flag keyed on the Clerk signup date.
+//
+// Free is now 50 checks, which dominates the grandfathered cap of 10 for every
+// user in the set, so the whole mechanism was removed rather than left to rot:
+// there is no longer any input for which it changes an answer. Leftover
+// `legacyFreeChecks` booleans on user docs are inert and need no cleanup.
+//
+// The `CheckLimitOverrides` argument that carried the flag was removed with it —
+// `getMaxChecksForTier` is a pure tier lookup again.
 
 // Configuration for cost optimization
 export const CONFIG = {
@@ -240,13 +254,15 @@ export const CONFIG = {
   // Per-user email budget to prevent runaway sends. Per-tier quotas live in TIER_LIMITS.
   EMAIL_USER_BUDGET_COLLECTION: 'emailBudgets',
   EMAIL_USER_BUDGET_WINDOW_MS: 60 * 60 * 1000, // 1 hour rolling window
-  EMAIL_USER_BUDGET_MAX_PER_WINDOW: 10, // fallback when tier is unknown
+  // Fallback when tier is unknown. Matches TIER_LIMITS.free so an unresolvable
+  // tier degrades to the Free allowance rather than below every real tier.
+  EMAIL_USER_BUDGET_MAX_PER_WINDOW: 50,
   EMAIL_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000, // Keep docs slightly past window for TTL cleanup
 
   // Per-user email monthly budget (all checks combined). Per-tier quotas live in TIER_LIMITS.
   EMAIL_USER_MONTHLY_BUDGET_COLLECTION: 'emailMonthlyBudgets',
   EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
-  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 10, // fallback when tier is unknown
+  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 300, // fallback when tier is unknown (= Free)
   EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
   // System-level health gate — detects infrastructure-wide failures
@@ -500,7 +516,7 @@ export const CONFIG = {
     return this.SSL_REFRESH_INTERVAL_DEFAULT_MS;
   },
 
-  // Per-check timeout. Sub-minute checks (Pro 30s, Agency 15s intervals) are
+  // Per-check timeout. Sub-minute checks (Nano 30s, Pro 15s intervals) are
   // clamped to 70% of the interval so a check finishes before the next is due.
   getCheckTimeout(website: { checkFrequency?: number }): number {
     if (typeof website.checkFrequency === 'number' && website.checkFrequency < 1) {
@@ -760,16 +776,29 @@ export const CONFIG = {
   },
 
   // Get max checks allowed for a given tier.
-  //
-  // `overrides.legacyFreeChecks` lifts Free back to its pre-restructure cap of
-  // 10 for users who signed up before the cut. It deliberately only applies to
-  // Free — every paid tier already allows 10 or more, so a grandfathered user
-  // who upgrades just gets the paid cap.
-  getMaxChecksForTier(tier: Tier, overrides?: CheckLimitOverrides): number {
-    if (tier === 'free' && overrides?.legacyFreeChecks) {
-      return Math.max(TIER_LIMITS.free.maxChecks, LEGACY_FREE_MAX_CHECKS);
-    }
+  getMaxChecksForTier(tier: Tier): number {
     return TIER_LIMITS[tier].maxChecks;
+  },
+
+  /**
+   * Cheapest tier above `tier` whose allowance for `dimension` is strictly
+   * larger, or null when `tier` already has the most. Build upsell copy from
+   * this instead of naming a tier inline — hardcoded "upgrade to Nano for
+   * 1,000" strings are how the app ended up advertising caps the backend never
+   * honoured. Mirrors `nextTierWithMore` in src/lib/subscription.ts.
+   */
+  nextTierWithMore(
+    tier: Tier,
+    dimension: 'maxChecks' | 'maxWebhooks' | 'maxApiKeys' | 'maxStatusPages'
+      | 'emailMonthly' | 'emailHourly' | 'smsMonthly' | 'retentionDays',
+  ): { tier: Tier; name: string; max: number } | null {
+    const ladder: Tier[] = ['free', 'indie', 'nano', 'pro'];
+    const current = TIER_LIMITS[tier][dimension];
+    for (const candidate of ladder.slice(ladder.indexOf(tier) + 1)) {
+      const max = TIER_LIMITS[candidate][dimension];
+      if (max > current) return { tier: candidate, name: TIER_DISPLAY_NAMES[candidate], max };
+    }
+    return null;
   },
 
   // Get max webhooks allowed for a given tier
@@ -794,8 +823,9 @@ export const CONFIG = {
 
   // DNS monitoring availability + minimum interval.
   // Free: 0 (not allowed). Indie/Nano: 5 min. Pro: 1 min.
-  // DNS queries are far more expensive than an HTTP probe, so Indie's 15s general
-  // interval deliberately does NOT carry over here.
+  // DNS queries are far more expensive than an HTTP probe, so a tier's general
+  // check interval deliberately does NOT carry over here — Nano probes HTTP at
+  // 30s but DNS at 5min.
   getMinDnsCheckIntervalMinutesForTier(tier: Tier): number {
     if (tier === 'free') return 0;
     if (tier === 'indie' || tier === 'nano') return this.MIN_DNS_CHECK_INTERVAL_MINUTES_NANO;
