@@ -11,6 +11,8 @@
 //            otherwise-valid reads, so this is not optional. POSTs are only
 //            retried when an Idempotency-Key is set, which makes the retry a
 //            replay rather than a second write.
+//   - 409 idempotency_conflict → the original request is still running behind
+//            the key. Wait it out on a much slower schedule, then replay.
 //   - network errors → treated as 5xx
 // ============================================================================
 
@@ -32,12 +34,70 @@ export interface Day3Result<T> {
   error: Day3Error | null;
 }
 
-const MAX_ATTEMPTS = 4;
+const MAX_ATTEMPTS = 5;
 
 // Cap a single Retry-After sleep. Day3's limit resets within a minute, so
 // anything longer means something is badly wrong and we'd rather fail fast
 // inside a Cloud Function than burn the invocation budget waiting.
 const MAX_RETRY_AFTER_S = 30;
+
+export const IDEMPOTENCY_CONFLICT = "idempotency_conflict";
+
+// Day3 holds the idempotency lock for the lifetime of the original request and
+// answers a same-key retry with `idempotency_conflict` — "already in progress".
+// That is a wait-and-replay, not a failure: once the original settles, the key
+// returns its recorded response. Backing off in milliseconds lands inside the
+// same lock, so conflicts get their own, far slower schedule. Indexed by the
+// 0-based attempt that just failed; the tail value repeats.
+const CONFLICT_BACKOFF_MS = [3_000, 8_000, 20_000, 30_000];
+
+// A 5xx on a write is ambiguous — Day3 may still be applying it — so give the
+// original room to settle before replaying the key, or the retry just walks
+// into a conflict. Reads have nothing in flight and can come back quickly.
+const TRANSIENT_BASE_MS = { read: 500, write: 2_000 };
+
+export interface RetryDecision {
+  retry: boolean;
+  waitMs: number;
+}
+
+/**
+ * The retry policy as a pure function, so the classification is testable
+ * without a network. `attempt` is the 0-based index of the attempt that just
+ * failed; `status` is 0 for a network/DNS/abort failure.
+ */
+export function classifyRetry(input: {
+  status: number;
+  code: string;
+  isWrite: boolean;
+  hasIdempotencyKey: boolean;
+  attempt: number;
+  retryAfterS: number | null;
+}): RetryDecision {
+  const noRetry: RetryDecision = { retry: false, waitMs: 0 };
+
+  // Replaying a write without a key would write twice.
+  if (input.isWrite && !input.hasIdempotencyKey) return noRetry;
+
+  if (input.code === IDEMPOTENCY_CONFLICT) {
+    const index = Math.min(input.attempt, CONFLICT_BACKOFF_MS.length - 1);
+    return { retry: true, waitMs: CONFLICT_BACKOFF_MS[index] };
+  }
+
+  if (input.status === 429) {
+    const seconds = input.retryAfterS !== null && Number.isFinite(input.retryAfterS)
+      ? input.retryAfterS
+      : 1;
+    return { retry: true, waitMs: Math.min(seconds, MAX_RETRY_AFTER_S) * 1000 };
+  }
+
+  if (input.status === 0 || input.status >= 500) {
+    const base = input.isWrite ? TRANSIENT_BASE_MS.write : TRANSIENT_BASE_MS.read;
+    return { retry: true, waitMs: 2 ** input.attempt * base };
+  }
+
+  return noRetry;
+}
 
 export interface Day3RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
@@ -92,7 +152,7 @@ export async function day3Request<T>(
 ): Promise<Day3Result<T>> {
   const method = options.method ?? "GET";
   const url = buildUrl(path, options.query);
-  const retryableWrite = method !== "GET" ? Boolean(options.idempotencyKey) : true;
+  const isWrite = method !== "GET";
 
   let lastError: Day3Error = { code: "internal_error", message: "no attempt made" };
   let lastStatus = 0;
@@ -142,21 +202,23 @@ export async function day3Request<T>(
       ? { code: "network_error", message: text }
       : parseError(status, text);
 
-    const isRateLimit = status === 429;
-    const isTransient = status === 0 || status >= 500;
-    const canRetry = (isRateLimit || isTransient) && retryableWrite;
+    const decision = classifyRetry({
+      status,
+      code: lastError.code,
+      isWrite,
+      hasIdempotencyKey: Boolean(options.idempotencyKey),
+      attempt,
+      retryAfterS: retryAfter,
+    });
     const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
 
-    if (!canRetry || isLastAttempt) break;
-
-    const waitMs = isRateLimit
-      ? Math.min(retryAfter && Number.isFinite(retryAfter) ? retryAfter : 1, MAX_RETRY_AFTER_S) * 1000
-      : 2 ** attempt * 500;
+    if (!decision.retry || isLastAttempt) break;
 
     logger.debug("Retrying Day3 request", {
-      path, method, status, attempt: attempt + 1, waitMs,
+      path, method, status, code: lastError.code,
+      attempt: attempt + 1, waitMs: decision.waitMs,
     });
-    await sleep(waitMs);
+    await sleep(decision.waitMs);
   }
 
   return { ok: false, status: lastStatus, data: null, error: lastError };

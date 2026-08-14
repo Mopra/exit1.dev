@@ -36,5 +36,14 @@ export const DAY3_SEGMENTS = {
 } as const;
 
 // Day3 accepts up to 1,000 contacts per /contacts/batch call, and the whole
-// call costs one request against the rate limit.
+// call costs one request against the rate limit. This is the API ceiling, used
+// as the client-side guard — not the size we actually import at.
 export const DAY3_BATCH_SIZE = 1000;
+
+// A full 1,000-row batch runs ~40s server-side and 500s at the gateway while
+// the write keeps going behind it, which strands the Idempotency-Key in
+// `idempotency_conflict` for the rest of that minute (observed on the first
+// live backfill, 2026-08-14). Import in smaller chunks instead: at 600 req/min
+// four requests per 1,000 users costs nothing, and a chunk that does fail holds
+// the key for seconds rather than a minute, so the client's replay lands.
+export const DAY3_IMPORT_CHUNK_SIZE = 250;

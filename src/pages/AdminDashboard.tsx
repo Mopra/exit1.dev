@@ -181,6 +181,13 @@ const AdminDashboard: React.FC = () => {
           'info',
         );
       }
+      if (e?.code === 'functions/aborted') {
+        addDay3Log(
+          'Day3 is still chewing on an earlier request. Wait a minute and press Backfill again — '
+          + 'the re-run gets a fresh runId and re-upserting is harmless.',
+          'info',
+        );
+      }
       toast.error(`Day3 backfill failed: ${message}`);
     } finally {
       setDay3Loading(false);

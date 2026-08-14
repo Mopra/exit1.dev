@@ -45,7 +45,8 @@ import {
   upsertDay3Contact,
   type Day3ContactInput,
 } from "./day3-sync";
-import { DAY3_BATCH_SIZE } from "./day3-config";
+import { DAY3_IMPORT_CHUNK_SIZE } from "./day3-config";
+import { IDEMPOTENCY_CONFLICT } from "./day3-client";
 import { requireAdmin } from "./require-admin";
 
 // Generic Clerk webhook payload — we handle multiple event types
@@ -1628,7 +1629,7 @@ export const backfillDay3Contacts = onCall({
     const syncedUserIds: string[] = [];
 
     if (!dryRun) {
-      const chunks = chunkForDay3(deduped, DAY3_BATCH_SIZE);
+      const chunks = chunkForDay3(deduped, DAY3_IMPORT_CHUNK_SIZE);
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         const outcome = await batchUpsertDay3Contacts(
@@ -1649,6 +1650,19 @@ export const backfillDay3Contacts = onCall({
               'resource-exhausted',
               `Day3 rejected the import: the account is out of subscriber headroom (${message}). `
               + 'Upgrade the Day3 plan, then re-run this backfill — nothing was partially applied.',
+            );
+          }
+
+          // The key is still locked by an earlier attempt Day3 hasn't settled,
+          // even after the client's backoff. The original write has most likely
+          // landed, so waiting and re-running (which mints a fresh runId, and
+          // upserts either way) is the fix — never hammer the same key.
+          if (code === IDEMPOTENCY_CONFLICT) {
+            throw new HttpsError(
+              'aborted',
+              `Day3 is still processing an earlier request under this key (${message}). `
+              + 'Wait a minute, then re-run the backfill — it takes a fresh runId and upserts '
+              + 'are safe to repeat.',
             );
           }
 
