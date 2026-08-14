@@ -28,6 +28,58 @@ export const RESEND_TOPIC_IDS: string[] = Object.values(RESEND_TOPICS);
 export const RESEND_RATE_LIMIT_MS = 600;
 
 /**
+ * Every address that has opted out in Resend, lowercased.
+ *
+ * Resend is the only system that holds this state: Day3 was seeded contacts-only
+ * and opt-out status was never carried across, so every imported contact landed
+ * as subscribed. The Day3 backfill joins against this set so that the day
+ * marketing sending moves to Day3, the people who unsubscribed from Resend
+ * aren't mailed again.
+ *
+ * Throws rather than returning a partial set. A half-read list reads as "these
+ * people never opted out", which is precisely the failure this exists to
+ * prevent — the caller must abort, not carry on with what it managed to get.
+ */
+export async function loadResendUnsubscribedEmails(
+  apiKey: string,
+): Promise<Set<string>> {
+  const resend = new Resend(apiKey);
+  const unsubscribed = new Set<string>();
+  let after: string | undefined;
+  let scanned = 0;
+
+  for (;;) {
+    const { data, error } = await resend.contacts.list({
+      limit: 100,
+      ...(after ? { after } : {}),
+    });
+
+    if (error || !data) {
+      throw new Error(
+        `Failed to list Resend contacts: ${error?.message || "unknown error"}`,
+      );
+    }
+
+    for (const contact of data.data) {
+      scanned++;
+      if (contact.unsubscribed) {
+        unsubscribed.add(contact.email.trim().toLowerCase());
+      }
+    }
+
+    if (!data.has_more || data.data.length === 0) break;
+    after = data.data[data.data.length - 1].id;
+    await sleep(RESEND_RATE_LIMIT_MS);
+  }
+
+  logger.info("Loaded Resend opt-out state", {
+    scanned,
+    unsubscribed: unsubscribed.size,
+  });
+  return unsubscribed;
+}
+
+/**
  * Idempotently register every property in PROPERTY_DEFS. Resend returns an
  * "already exists" style error for duplicates which we swallow. Any other
  * failure is logged but does not abort — the caller still attempts the update

@@ -23,6 +23,7 @@ import {
   backfillCheckUserTier,
 } from "./plan-enforcement";
 import {
+  loadResendUnsubscribedEmails,
   registerResendSchema,
   RESEND_RATE_LIMIT_MS,
   syncContactTopics,
@@ -1456,7 +1457,7 @@ const MAX_DAY3_BACKFILL_SIZE = 5000;
 export const backfillDay3Contacts = onCall({
   cors: true,
   timeoutSeconds: 540,
-  secrets: [DAY3_API_KEY, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [DAY3_API_KEY, RESEND_API_KEY, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1520,6 +1521,17 @@ export const backfillDay3Contacts = onCall({
     throw new HttpsError('failed-precondition', 'Day3 API key not configured');
   }
 
+  // Resend holds the only copy of opt-out state — Day3 was seeded
+  // contacts-only. Without this the import silently marks every unsubscriber
+  // as subscribed, and they get mailed again once sending moves to Day3.
+  const resendApiKey = getResendApiKey();
+  if (!resendApiKey) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Resend API key not configured — it is required to carry opt-out state into Day3',
+    );
+  }
+
   const clerk = createClerkClient({ secretKey });
 
   const stats = {
@@ -1531,6 +1543,7 @@ export const backfillDay3Contacts = onCall({
     skippedFresh: 0,
     dedupedAway: 0,
     withOnboarding: 0,
+    unsubscribedCarried: 0,
     dryRun,
     force,
     runId,
@@ -1544,6 +1557,11 @@ export const backfillDay3Contacts = onCall({
     if (normalizedOffset === 0) {
       logger.info(`Day3 backfill: loaded ${onboardingByUser.size} onboarding responses from BigQuery`);
     }
+
+    // Deliberately not wrapped in a try/catch: if Resend's opt-out list can't
+    // be read, aborting is the safe outcome. Continuing would import opt-outs
+    // as subscribed, and the only signal would be a line in a log.
+    const resendUnsubscribed = await loadResendUnsubscribedEmails(resendApiKey);
 
     // Collect this invocation's users first, then push them to Day3 in
     // 1,000-contact chunks. emailToUserId lets us stamp only the rows that
@@ -1598,17 +1616,22 @@ export const backfillDay3Contacts = onCall({
         const onboarding = onboardingByUser.get(user.id) ?? info.onboarding;
         if (onboarding) stats.withOnboarding++;
 
+        const normalizedEmail = email.trim().toLowerCase();
+        const unsubscribed = resendUnsubscribed.has(normalizedEmail);
+        if (unsubscribed) stats.unsubscribedCarried++;
+
         pending.push({
           email,
           firstName: user.firstName,
           lastName: user.lastName,
+          unsubscribed,
           attributes: buildPropertiesForUser({
             signupDate: formatSignupDate(user.createdAt),
             tier: info.tier,
             onboarding,
           }),
         });
-        emailToUserId.set(email.trim().toLowerCase(), user.id);
+        emailToUserId.set(normalizedEmail, user.id);
       }
 
       offset += users.length;

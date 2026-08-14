@@ -24,6 +24,11 @@ export interface Day3ContactInput {
   lastName?: string | null;
   /** Custom attributes. Every value must already be a string. */
   attributes: Record<string, string>;
+  /**
+   * True to opt this contact out. Only ever meaningful as `true` — see
+   * buildDay3Payload for why the subscribed case must stay unwritten.
+   */
+  unsubscribed?: boolean;
 }
 
 export interface Day3Contact {
@@ -79,7 +84,7 @@ export function assertStringAttributes(
  */
 const RESERVED_ATTRIBUTE_KEYS = new Set(["email", "first_name", "last_name"]);
 
-const toPayload = (input: Day3ContactInput, context: string) => {
+export const buildDay3Payload = (input: Day3ContactInput, context: string) => {
   const attributes = assertStringAttributes(input.attributes, context);
 
   for (const key of RESERVED_ATTRIBUTE_KEYS) {
@@ -93,6 +98,17 @@ const toPayload = (input: Day3ContactInput, context: string) => {
     email: normalizeDay3Email(input.email),
     ...(input.firstName ? { first_name: input.firstName } : {}),
     ...(input.lastName ? { last_name: input.lastName } : {}),
+    // Write the opt-out, never the opt-in. Omitting `status` leaves Day3's
+    // stored value untouched (verified live), so a re-run can't resurrect
+    // someone who unsubscribed in Day3 since the last import — whereas an
+    // explicit status:"subscribed" would do exactly that, silently, to every
+    // opted-out contact on every run.
+    //
+    // It must be `status` and not `unsubscribed_at`: /contacts/batch silently
+    // drops unsubscribed_at (200, updated:1, contact still subscribed — the
+    // §3 gotcha-4 failure mode), while `status` is honoured and Day3 stamps
+    // unsubscribed_at itself. Verified against the live API 2026-08-14.
+    ...(input.unsubscribed ? { status: "unsubscribed" } : {}),
     ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
   };
 };
@@ -109,7 +125,7 @@ export async function upsertDay3Contact(
   const result = await day3Request<Day3Contact>(apiKey, contactsPath(), {
     method: "POST",
     query: { upsert: true },
-    body: toPayload(input, "upsertDay3Contact"),
+    body: buildDay3Payload(input, "upsertDay3Contact"),
   });
 
   if (result.ok) return { success: true };
@@ -229,7 +245,7 @@ export async function batchUpsertDay3Contacts(
     };
   }
 
-  const payload = inputs.map((input) => toPayload(input, "batchUpsertDay3Contacts"));
+  const payload = inputs.map((input) => buildDay3Payload(input, "batchUpsertDay3Contacts"));
 
   // upsert belongs in the BODY here, not the query string. `?upsert=true` is
   // silently ignored on this endpoint and every existing contact then comes

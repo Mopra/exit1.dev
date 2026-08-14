@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   assertStringAttributes,
+  buildDay3Payload,
   chunkForDay3,
   dedupeByEmail,
   normalizeDay3Email,
@@ -82,6 +83,44 @@ test("assertStringAttributes drops null and undefined rather than sending 'null'
     "test",
   );
   assert.deepEqual(out, { a: "keep" });
+});
+
+// ── Opt-out carry-over ──────────────────────────────────────────────────────
+// Resend holds the only copy of unsubscribe state; Day3 was seeded
+// contacts-only. These lock in the two halves of the rule: WRITE the opt-out,
+// and never write the opt-in. Getting the second half wrong silently
+// re-subscribes every opted-out contact on every backfill re-run, and the only
+// symptom is mail landing in the inbox of someone who asked you to stop.
+
+test("an unsubscribed contact carries status: unsubscribed", () => {
+  const payload = buildDay3Payload(contact("ada@acme.com", { unsubscribed: true }), "test");
+  assert.equal(payload.status, "unsubscribed");
+});
+
+test("a subscribed contact writes NO status at all", () => {
+  // Omission is what preserves a Day3-native opt-out across a re-run —
+  // verified against the live API. An explicit "subscribed" would undo it.
+  const payload = buildDay3Payload(contact("ada@acme.com", { unsubscribed: false }), "test");
+  assert.equal("status" in payload, false);
+});
+
+test("an unspecified opt-out state writes no status either", () => {
+  const payload = buildDay3Payload(contact("ada@acme.com"), "test");
+  assert.equal("status" in payload, false);
+});
+
+test("the opt-out never travels as unsubscribed_at, which batch silently drops", () => {
+  const payload = buildDay3Payload(contact("ada@acme.com", { unsubscribed: true }), "test");
+  assert.equal("unsubscribed_at" in payload, false);
+});
+
+test("dedupe keeps the opt-out when the last write carries it", () => {
+  const result = dedupeByEmail([
+    contact("ada@acme.com"),
+    contact("ADA@acme.com", { unsubscribed: true }),
+  ]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].unsubscribed, true);
 });
 
 // ── Chunking ────────────────────────────────────────────────────────────────

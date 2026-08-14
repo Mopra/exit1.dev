@@ -111,6 +111,7 @@ const AdminDashboard: React.FC = () => {
         skippedFresh: number;
         dedupedAway: number;
         withOnboarding: number;
+        unsubscribedCarried: number;
       };
       errors?: Array<{ email: string; error: string }>;
     };
@@ -118,6 +119,7 @@ const AdminDashboard: React.FC = () => {
     const agg = {
       total: 0, created: 0, updated: 0, rowFailures: 0,
       skippedNoEmail: 0, skippedFresh: 0, dedupedAway: 0, withOnboarding: 0,
+      unsubscribedCarried: 0,
     };
 
     try {
@@ -146,6 +148,7 @@ const AdminDashboard: React.FC = () => {
         agg.skippedFresh += data.stats.skippedFresh;
         agg.dedupedAway += data.stats.dedupedAway;
         agg.withOnboarding += data.stats.withOnboarding;
+        agg.unsubscribedCarried += data.stats.unsubscribedCarried ?? 0;
         day3Total = data.day3Total;
 
         addDay3Log(
@@ -162,6 +165,7 @@ const AdminDashboard: React.FC = () => {
       addDay3Log(`Clerk users processed: ${agg.total}`, 'info');
       addDay3Log(`Created: ${agg.created}, updated: ${agg.updated}`, 'success');
       if (agg.withOnboarding > 0) addDay3Log(`With onboarding answers: ${agg.withOnboarding}`, 'info');
+      addDay3Log(`Opt-outs carried over from Resend: ${agg.unsubscribedCarried}`, 'success');
       if (agg.skippedFresh > 0) addDay3Log(`Skipped (synced < 30 days ago): ${agg.skippedFresh}`, 'info');
       if (agg.skippedNoEmail > 0) addDay3Log(`Skipped (no primary email): ${agg.skippedNoEmail}`, 'info');
       if (agg.dedupedAway > 0) {
