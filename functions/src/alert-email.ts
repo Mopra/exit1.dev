@@ -12,7 +12,6 @@ import {
   formatDateOnlyForCheck,
   formatStatusCode,
   emitAlertMetric,
-  getResendClient,
   evaluateDeliveryState,
   markDeliverySuccess,
   recordDeliveryFailure,
@@ -25,6 +24,7 @@ import {
   acquireUserEmailMonthlyBudget,
 } from './alert-throttle';
 import { isEmailSuppressedCached } from './email-suppression';
+import { sendTransactionalEmail } from './email-send';
 
 // ============================================================================
 // BOUNCE SUPPRESSION GATE
@@ -34,6 +34,11 @@ import { isEmailSuppressedCached } from './email-suppression';
  * Skip recipients Resend told us are bouncing (see emailSuppressions /
  * resend-webhook.ts). Returns true when the send should be skipped.
  * Fails open — a lookup error never blocks an alert.
+ *
+ * The gate is provider-independent: it blocks the address whichever provider
+ * the flag routes to. The *feed* is not — Day3 v1 has no bounce webhook, so
+ * while traffic sits on Day3 this list stops learning about new bad addresses.
+ * See email-send.ts for how a Day3 suppression rejection is handled.
  */
 const skipIfSuppressed = async (toEmail: string, eventType: WebhookEvent | string): Promise<boolean> => {
   const suppressed = await isEmailSuppressedCached(toEmail);
@@ -170,8 +175,6 @@ export async function sendEmailNotification(
   emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
   if (await skipIfSuppressed(toEmail, eventType)) return;
-
-  const { resend, fromAddress } = getResendClient();
 
   const statusLabel = website.detailedStatus || website.status;
 
@@ -323,7 +326,13 @@ export async function sendEmailNotification(
     lines.push('', 'Manage email alerts in your Exit1 settings.');
 
     const text = lines.join('\n');
-    await resend.emails.send({ from: fromAddress, to: toEmail, subject, text });
+    await sendTransactionalEmail({
+      to: toEmail,
+      subject,
+      text,
+      category: 'alerts',
+      meta: { checkId: website.id, userId: website.userId, eventType },
+    });
   } else {
     const html = `
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
@@ -363,7 +372,13 @@ export async function sendEmailNotification(
     </div>
   `;
 
-    await resend.emails.send({ from: fromAddress, to: toEmail, subject, html });
+    await sendTransactionalEmail({
+      to: toEmail,
+      subject,
+      html,
+      category: 'alerts',
+      meta: { checkId: website.id, userId: website.userId, eventType },
+    });
   }
 }
 
@@ -387,8 +402,6 @@ export async function sendSSLEmailNotification(
   emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
   if (await skipIfSuppressed(toEmail, eventType)) return;
-
-  const { resend, fromAddress } = getResendClient();
 
   const subject =
     eventType === 'ssl_error'
@@ -430,7 +443,13 @@ export async function sendSSLEmailNotification(
     lines.push('', 'Manage SSL alerts in your Exit1 settings.');
 
     const text = lines.join('\n');
-    await resend.emails.send({ from: fromAddress, to: toEmail, subject, text });
+    await sendTransactionalEmail({
+      to: toEmail,
+      subject,
+      text,
+      category: 'alerts',
+      meta: { checkId: website.id, userId: website.userId, eventType },
+    });
   } else {
     const html = `
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
@@ -447,7 +466,13 @@ export async function sendSSLEmailNotification(
     </div>
   `;
 
-    await resend.emails.send({ from: fromAddress, to: toEmail, subject, html });
+    await sendTransactionalEmail({
+      to: toEmail,
+      subject,
+      html,
+      category: 'alerts',
+      meta: { checkId: website.id, userId: website.userId, eventType },
+    });
   }
 }
 
@@ -463,8 +488,6 @@ export async function sendDnsChangeEmail(
   emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
   if (await skipIfSuppressed(toEmail, eventType)) return;
-
-  const { resend, fromAddress } = getResendClient();
 
   const isMissing = eventType === 'dns_record_missing';
   const subject = isMissing
@@ -496,7 +519,13 @@ export async function sendDnsChangeEmail(
     lines.push('', 'Manage email alerts in your Exit1 settings.');
 
     const text = lines.join('\n');
-    await resend.emails.send({ from: fromAddress, to: toEmail, subject, text });
+    await sendTransactionalEmail({
+      to: toEmail,
+      subject,
+      text,
+      category: 'alerts',
+      meta: { checkId: website.id, userId: website.userId, eventType },
+    });
     return;
   }
 
@@ -528,7 +557,13 @@ export async function sendDnsChangeEmail(
     </div>
   `;
 
-  await resend.emails.send({ from: fromAddress, to: toEmail, subject, html });
+  await sendTransactionalEmail({
+    to: toEmail,
+    subject,
+    html,
+    category: 'alerts',
+    meta: { checkId: website.id, userId: website.userId, eventType },
+  });
 }
 
 // ============================================================================
@@ -596,7 +631,6 @@ export const sendLimitReachedEmail = async (
       return;
     }
 
-    const { resend, fromAddress } = getResendClient();
     const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
     const billingUrl = `${baseUrl}/billing`;
     const channelLabel = channel === 'email' ? 'email' : 'SMS';
@@ -644,11 +678,12 @@ export const sendLimitReachedEmail = async (
       </div>
     `;
 
-    await resend.emails.send({
-      from: fromAddress,
+    await sendTransactionalEmail({
       to: userEmail,
       subject,
       html,
+      category: 'account',
+      meta: { userId, channel, tier },
     });
 
     // Mark as notified in Firestore with TTL so it auto-cleans

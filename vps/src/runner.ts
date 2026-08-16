@@ -39,6 +39,10 @@ const { drainQueuedWebhookRetries, enableDeferredBudgetWrites, flushDeferredBudg
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { invalidatePeerSettingsCache, peekPeerSettings } = await import('../../functions/lib/peer-settings.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { invalidateEmailProviderCache, peekEmailProviderSettings } = await import('../../functions/lib/email-provider-settings.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { drainDay3WebhookEvents, getDay3QueueDepth } = await import('../../functions/lib/day3-webhook-queue.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confirm.js');
 import { CheckSchedule } from './check-schedule.js';
 import { attachWsServer, broadcastState, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
@@ -1007,6 +1011,16 @@ const server = createServer((req, res) => {
       // Phase 7: heartbeat-defer mode + counters so operators can see
       // how many writes are deferred vs. immediate without grepping logs.
       heartbeatDefer: getHeartbeatDeferStats(),
+      // Which provider this runner's alert emails are currently leaving via.
+      // null = not read yet (no email sent since boot).
+      emailProvider: peekEmailProviderSettings(),
+      // Day3 delivery-event queue. Day3 gets its 2xx from day3Webhook before
+      // any of this runs, so a depth that only climbs is the only signal that
+      // events are arriving but never being applied.
+      day3Webhooks: {
+        queueDepth: day3QueueDepth,
+        lastDrainProcessed: lastDay3DrainCount,
+      },
       // Event-loop lag over the last completed minute, in ms. Watch the p99
       // to detect dispatcher saturation before broadcast load lands.
       loopLag: {
@@ -1041,6 +1055,10 @@ const server = createServer((req, res) => {
       return;
     }
     invalidatePeerSettingsCache();
+    // The transactional email provider switch. This runner sends alert email
+    // itself, so a rollback from Day3 back to Resend has to reach here — not
+    // just Cloud Functions — before it is actually in effect.
+    invalidateEmailProviderCache();
     // Also expire the deploy-mode cache so the next dispatch tick re-reads.
     // Expire by exactly one TTL rather than zeroing the timestamp: the
     // watchdog reads a very stale deployModeLastChecked as "dispatcher
@@ -1746,6 +1764,31 @@ drainQueuedWebhookRetries().catch((err: unknown) =>
   console.warn('Failed to drain webhook retries on startup:', err)
 );
 
+// ── Day3 webhook event drain (every 30s) ──────────────────────────────
+// day3Webhook verifies and persists on the request path, then returns 2xx
+// inside Day3's 10s budget. This is where the events are actually applied.
+// Both regions run this; each doc is claimed transactionally, so a duplicate
+// runner costs a wasted read, not a double-write.
+// Depth is sampled here rather than read on each /health hit — /health is
+// polled often and a count() per request would be pure waste. A depth that
+// only climbs means the drain is wedged and events are piling up unapplied.
+let lastDay3DrainCount = 0;
+let day3QueueDepth: number | null = null;
+
+const runDay3Drain = async () => {
+  lastDay3DrainCount = await drainDay3WebhookEvents();
+  day3QueueDepth = await getDay3QueueDepth();
+};
+
+const day3WebhookTimer = setInterval(() => {
+  runDay3Drain().catch((err: unknown) =>
+    console.warn('Failed to drain Day3 webhook events:', err)
+  );
+}, 30_000);
+runDay3Drain().catch((err: unknown) =>
+  console.warn('Failed to drain Day3 webhook events on startup:', err)
+);
+
 // ── Dispatcher ─────────────────────────────────────────────────────────
 // Runs every 500ms. For each due check, submits it to the semaphore-limited
 // worker pool. inFlight set prevents double-runs. No batching, no lock.
@@ -1889,6 +1932,7 @@ async function shutdown(signal: string) {
   server.close();
   clearInterval(resyncTimer);
   clearInterval(webhookRetryTimer);
+  clearInterval(day3WebhookTimer);
   clearInterval(budgetFlushTimer);
   clearInterval(heartbeatFlushTimer);
   clearInterval(heartbeatDeferFlushTimer);

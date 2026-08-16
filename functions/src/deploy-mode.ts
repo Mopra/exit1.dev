@@ -222,3 +222,79 @@ export const toggleHeartbeatDefer = onCall({
   logger.info(`Heartbeat-defer ${enabled ? 'ENABLED' : 'DISABLED'} by ${uid}`);
   return { success: true, enabled };
 });
+
+// ── Transactional email provider switch (admin only) ───────────────────
+// Writes system_settings/email_provider, the doc email-send.ts consults on
+// every send. Both Cloud Functions and the VPS runner cache it for
+// CONFIG.EMAIL_PROVIDER_CACHE_TTL_MS, so a change here lands everywhere
+// within ~30s; POST /admin/refresh-flags on each runner makes it immediate.
+//
+// Deliberately no validation-by-omission: the callable always writes the full
+// shape, so a partial update can't leave the doc in a half-configured state
+// that parseEmailProviderSettings has to guess about.
+const EMAIL_PROVIDER_DOC = 'system_settings/email_provider';
+
+export const setEmailProvider = onCall({
+  cors: true,
+  maxInstances: 1,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new Error("Authentication required");
+
+  const isAdmin = await syncAdminStatus(uid);
+  if (!isAdmin) throw new Error("Admin access required");
+
+  const {
+    provider,
+    categories,
+    canaryPercent,
+    fallbackToResend,
+  } = (request.data ?? {}) as {
+    provider?: string;
+    categories?: Record<string, string>;
+    canaryPercent?: number;
+    fallbackToResend?: boolean;
+  };
+
+  const PROVIDERS = ['resend', 'day3'];
+  const CATEGORIES = ['internal', 'test', 'account', 'alerts'];
+
+  if (!provider || !PROVIDERS.includes(provider)) {
+    throw new Error("'provider' must be 'resend' or 'day3'");
+  }
+
+  const cleanCategories: Record<string, string> = {};
+  for (const [key, value] of Object.entries(categories ?? {})) {
+    if (!CATEGORIES.includes(key)) {
+      throw new Error(`Unknown email category '${key}'`);
+    }
+    if (!PROVIDERS.includes(value)) {
+      throw new Error(`Category '${key}' must be 'resend' or 'day3'`);
+    }
+    cleanCategories[key] = value;
+  }
+
+  if (canaryPercent !== undefined) {
+    if (typeof canaryPercent !== 'number' || !Number.isFinite(canaryPercent) ||
+        canaryPercent < 0 || canaryPercent > 100) {
+      throw new Error("'canaryPercent' must be a number between 0 and 100");
+    }
+  }
+
+  const next = {
+    provider,
+    categories: cleanCategories,
+    canaryPercent: canaryPercent ?? 0,
+    fallbackToResend: fallbackToResend !== false,
+    updatedAt: Date.now(),
+    updatedBy: uid,
+  };
+
+  // Not merged: categories must be replaceable down to {}, and a merge would
+  // strand removed overrides in the doc forever.
+  await firestore.doc(EMAIL_PROVIDER_DOC).set(next);
+
+  logger.info('Email provider settings updated', { ...next });
+  return { success: true, settings: next };
+});

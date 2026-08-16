@@ -10,6 +10,15 @@ export const RESEND_WEBHOOK_SECRET = defineSecret('RESEND_WEBHOOK_SECRET');
 // Day3 (go.day3.app) — the email platform we're migrating to. During the
 // dual-write period every contact write goes to both Resend and Day3.
 export const DAY3_API_KEY = defineSecret('DAY3_API_KEY');
+// Optional. Transactional sends fall back to RESEND_FROM when unset, which is
+// what we want once the same sending domain is verified in both providers —
+// the From address should not change under the user when the switch flips.
+// Set it only to send from a different address while testing Day3.
+export const DAY3_FROM = defineSecret('DAY3_FROM');
+// Signing secret for the Day3 → day3Webhook endpoint (`whsec_…`). Created with
+// the endpoint in the Day3 dashboard (API keys → Webhooks) and set via
+// `firebase functions:secrets:set DAY3_WEBHOOK_SECRET`. Day3 shows it once.
+export const DAY3_WEBHOOK_SECRET = defineSecret('DAY3_WEBHOOK_SECRET');
 export const CLERK_SECRET_KEY_PROD = defineSecret('CLERK_SECRET_KEY_PROD');
 export const CLERK_SECRET_KEY_DEV = defineSecret('CLERK_SECRET_KEY_DEV');
 export const CLERK_SECRET_KEY = defineSecret('CLERK_SECRET_KEY');
@@ -52,6 +61,28 @@ export const getDay3ApiKey = (): string | undefined => {
   } catch {
     return sanitize(process.env.DAY3_API_KEY);
   }
+};
+
+/**
+ * Credentials for transactional sending via Day3. The From address defaults to
+ * whatever Resend sends as, so flipping the provider is invisible to the
+ * recipient — provided the same domain is verified on both sides.
+ */
+export const getDay3EmailCredentials = () => {
+  const sanitize = (value?: string | null) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+  let fromAddress: string | undefined;
+  try {
+    fromAddress = sanitize(DAY3_FROM.value());
+  } catch {
+    fromAddress = sanitize(process.env.DAY3_FROM);
+  }
+
+  return {
+    apiKey: getDay3ApiKey(),
+    fromAddress: fromAddress || getResendCredentials().fromAddress,
+  };
 };
 
 export const getTwilioCredentials = () => {

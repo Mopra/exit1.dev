@@ -1,14 +1,15 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import * as crypto from "crypto";
-import { Resend } from 'resend';
 import {
   RESEND_API_KEY,
   RESEND_FROM,
+  DAY3_API_KEY,
+  DAY3_FROM,
   TWILIO_AUTH_TOKEN,
-  getResendCredentials,
   getTwilioCredentials,
 } from "./env";
+import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 
 const FORWARD_TO = 'morten@exit1.dev';
 
@@ -71,11 +72,11 @@ const normalizeParams = (body: unknown): Record<string, string> => {
  * Webhook for inbound SMS on the Twilio number. Configure in the Twilio
  * console (number → Messaging Configuration → "A message comes in", or the
  * Messaging Service → Integration → Incoming Messages) as an HTTP POST to
- * this function's URL. Forwards every message to FORWARD_TO via Resend and
+ * this function's URL. Forwards every message to FORWARD_TO by email and
  * returns empty TwiML so the sender gets no auto-reply.
  */
 export const twilioInboundSms = onRequest({
-  secrets: [TWILIO_AUTH_TOKEN, RESEND_API_KEY, RESEND_FROM],
+  secrets: [TWILIO_AUTH_TOKEN, RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM],
   cors: false,
 }, async (req, res) => {
   if (req.method !== 'POST') {
@@ -153,9 +154,8 @@ export const twilioInboundSms = onRequest({
   ].join('\n');
 
   try {
-    const { apiKey, fromAddress } = getResendCredentials();
-    if (!apiKey) {
-      logger.error('twilioInboundSms: Resend not configured; SMS not forwarded', { from, body });
+    if (!isTransactionalEmailConfigured()) {
+      logger.error('twilioInboundSms: no email provider configured; SMS not forwarded', { from, body });
       // Still ack — Twilio does not retry inbound webhooks, and a 500 only
       // raises a debugger alert. The message content is preserved in the log
       // line above.
@@ -163,24 +163,19 @@ export const twilioInboundSms = onRequest({
       return;
     }
 
-    const resend = new Resend(apiKey);
-    const response = await resend.emails.send({
-      from: fromAddress,
+    const result = await sendTransactionalEmail({
       to: FORWARD_TO,
       subject: `SMS from ${from}`,
       html,
       text,
+      category: 'internal',
+      meta: { from },
     });
-
-    if (response.error) {
-      logger.error('twilioInboundSms: Resend send failed; SMS not forwarded', {
-        from,
-        body,
-        error: response.error,
-      });
-    } else {
-      logger.info('twilioInboundSms: forwarded', { from, resendId: response.data?.id });
-    }
+    logger.info('twilioInboundSms: forwarded', {
+      from,
+      provider: result.provider,
+      messageId: result.id,
+    });
   } catch (error) {
     logger.error('twilioInboundSms: forward failed; SMS not forwarded', { from, body, error });
   }

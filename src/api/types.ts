@@ -590,3 +590,27 @@ export interface McpConnection {
   lastUsedAt: number | null;
 }
 
+
+// Transactional email provider switch (admin only)
+
+export type EmailProviderName = 'resend' | 'day3';
+
+/** Send sites are grouped so the migration can ramp one blast radius at a time. */
+export type EmailProviderCategory = 'internal' | 'test' | 'account' | 'alerts';
+
+/** Payload for `setEmailProvider`; mirrors system_settings/email_provider. */
+export interface EmailProviderSettingsInput {
+  /** Default for any category without an explicit override. */
+  provider: EmailProviderName;
+  categories?: Partial<Record<EmailProviderCategory, EmailProviderName>>;
+  /** 0-100. Ramps Day3 within categories still resolving to Resend. */
+  canaryPercent?: number;
+  /** Retry a failed Day3 send through Resend. Defaults to true. */
+  fallbackToResend?: boolean;
+}
+
+/** The stored doc, as read back from Firestore. */
+export interface EmailProviderSettingsDoc extends EmailProviderSettingsInput {
+  updatedAt?: number;
+  updatedBy?: string;
+}

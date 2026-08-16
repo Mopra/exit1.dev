@@ -10,6 +10,8 @@ import { DEFAULT_ALERT_THRESHOLDS } from "./domain-intelligence";
 import {
   RESEND_API_KEY,
   RESEND_FROM,
+  DAY3_API_KEY,
+  DAY3_FROM,
   CLERK_SECRET_KEY_DEV,
   CLERK_SECRET_KEY_PROD,
   TWILIO_ACCOUNT_SID,
@@ -3469,12 +3471,14 @@ export const deleteWebsite = onCall({
 export const toggleCheckStatus = onCall({
   cors: true,
   maxInstances: 10,
-  // RESEND_*: handleCheckDisabled email notifications.
+  // RESEND_*/DAY3_*: handleCheckDisabled email notifications. Both providers
+  // are bound because system_settings/email_provider decides at send time
+  // which one carries the message.
   // CLERK_*: the re-enable gate compares against the user's tier cap, so
   // getUserTier() must be able to fall back to a live Clerk lookup. Without
   // these bound it silently serves a stale cached tier and can 429 a user who
   // is entitled to the slot.
-  secrets: [RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const { id, disabled, reason } = request.data || {};
   const uid = request.auth?.uid;
@@ -3841,6 +3845,8 @@ export const manualCheck = onCall({
   secrets: [
     RESEND_API_KEY,
     RESEND_FROM,
+    DAY3_API_KEY,
+    DAY3_FROM,
     CLERK_SECRET_KEY_PROD,
     CLERK_SECRET_KEY_DEV,
     TWILIO_ACCOUNT_SID,

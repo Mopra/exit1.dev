@@ -15,16 +15,17 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { Webhook } from "svix";
-import { Resend } from "resend";
 import { createClerkClient } from "@clerk/backend";
 import { firestore } from "./init";
 import {
   RESEND_API_KEY,
   RESEND_FROM,
+  DAY3_API_KEY,
+  DAY3_FROM,
   RESEND_WEBHOOK_SECRET,
   CLERK_SECRET_KEY_PROD,
-  getResendCredentials,
 } from "./env";
+import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 import { recordEmailBounce, isEmailSuppressedCached } from "./email-suppression";
 import { normalizeEmail, type BounceKind, type EmailSuppressionState } from "./email-suppression-policy";
 
@@ -113,8 +114,7 @@ const notifyOwnersOfSuppression = async (
 
   const clerkSecretKey = CLERK_SECRET_KEY_PROD.value();
   const clerkClient = clerkSecretKey ? createClerkClient({ secretKey: clerkSecretKey }) : null;
-  const { apiKey, fromAddress } = getResendCredentials();
-  const resend = apiKey ? new Resend(apiKey) : null;
+  const canSendEmail = isTransactionalEmailConfigured();
 
   const baseUrl = process.env.FRONTEND_URL || "https://app.exit1.dev";
   const emailsUrl = `${baseUrl}/emails`;
@@ -139,7 +139,7 @@ const notifyOwnersOfSuppression = async (
 
     // Email notice to the account's primary (Clerk) address — a known-good
     // mailbox, unless it is itself the suppressed address.
-    if (!clerkClient || !resend) continue;
+    if (!clerkClient || !canSendEmail) continue;
     try {
       const user = await clerkClient.users.getUser(userId);
       const accountEmail =
@@ -163,11 +163,12 @@ const notifyOwnersOfSuppression = async (
           </div>
         </div>`;
 
-      await resend.emails.send({
-        from: fromAddress,
+      await sendTransactionalEmail({
         to: accountEmail,
         subject: title,
         html,
+        category: 'account',
+        meta: { userId, suppressedEmail },
       });
     } catch (error) {
       logger.error("Failed to send suppression notice email", { userId, error });
@@ -180,7 +181,7 @@ const notifyOwnersOfSuppression = async (
 // ----------------------------------------------------------------------------
 
 export const resendWebhook = onRequest({
-  secrets: [RESEND_WEBHOOK_SECRET, RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD],
+  secrets: [RESEND_WEBHOOK_SECRET, RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM, CLERK_SECRET_KEY_PROD],
   cors: false,
 }, async (req, res) => {
   if (req.method !== "POST") {

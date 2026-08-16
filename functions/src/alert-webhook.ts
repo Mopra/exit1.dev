@@ -36,7 +36,6 @@ import {
   formatStatusCode,
   sleep,
   emitAlertMetric,
-  getResendClient,
   calculateDeliveryBackoff,
   evaluateDeliveryState,
   markDeliverySuccess,
@@ -51,6 +50,7 @@ import {
   hydrateWebsiteFromRetry,
   createWebhookDeliveryId,
 } from './alert-helpers';
+import { sendTransactionalEmail } from './email-send';
 import {
   PAGERDUTY_EVENTS_URL,
   buildPagerDutyEnvelope,
@@ -219,7 +219,6 @@ export const sendWebhookFailureEmail = async (
       return;
     }
 
-    const { resend, fromAddress } = getResendClient();
     const errorMessage = error instanceof Error ? error.message : String(error);
     const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
     const webhooksUrl = `${baseUrl}/webhooks`;
@@ -287,11 +286,12 @@ export const sendWebhookFailureEmail = async (
       </div>
     `;
 
-    await resend.emails.send({
-      from: fromAddress,
+    await sendTransactionalEmail({
       to: userEmail,
       subject,
       html,
+      category: 'account',
+      meta: { userId: webhook.userId, webhookId: webhook.id, reason },
     });
 
     logger.info(`Sent webhook failure email to ${userEmail} for webhook ${webhook.id}`);

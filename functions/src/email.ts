@@ -3,12 +3,12 @@ import * as logger from "firebase-functions/logger";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { firestore, getUserTier } from "./init";
 import { EmailSettings } from "./types";
-import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, getResendCredentials } from "./env";
-import { Resend } from 'resend';
+import { RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 import { CONFIG } from "./config";
 import { normalizeCheckFilter } from "./webhook-events";
 import { notifySettingsEdit } from "./check-helpers";
 import { getActiveSuppressions, clearEmailSuppression } from "./email-suppression";
+import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
@@ -572,7 +572,7 @@ function getEmailRecipients(settings: EmailSettings): string[] {
 
 // Send a test email to the configured recipients
 export const sendTestEmail = onCall({
-  secrets: [RESEND_API_KEY, RESEND_FROM],
+  secrets: [RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -591,14 +591,12 @@ export const sendTestEmail = onCall({
       throw new HttpsError('failed-precondition', 'No recipient emails configured');
     }
 
-    const { apiKey, fromAddress } = getResendCredentials();
-    if (!apiKey) {
+    if (!isTransactionalEmailConfigured()) {
       throw new HttpsError('failed-precondition', 'Email delivery is not configured');
     }
 
-    logger.info('sendTestEmail: preparing to send', { uid, recipients, fromAddress });
+    logger.info('sendTestEmail: preparing to send', { uid, recipients });
 
-    const resend = new Resend(apiKey);
     const format = settings.emailFormat || 'html';
     const subject = 'Test: Exit1 email alerts';
 
@@ -613,7 +611,9 @@ export const sendTestEmail = onCall({
       ? 'Test email from Exit1\n=======================\n\nIf you see this, your email alerts are configured.'
       : undefined;
 
-    // Send to all recipients with delay to avoid Resend rate limit (2 req/sec)
+    // Send to all recipients with delay to avoid Resend rate limit (2 req/sec).
+    // Day3 allows 600 req/min, so the pacing is unnecessary there — but the
+    // delay stays because a message can fall back onto Resend mid-loop.
     for (let i = 0; i < recipients.length; i++) {
       const recipient = recipients[i];
 
@@ -622,14 +622,19 @@ export const sendTestEmail = onCall({
         await new Promise(resolve => setTimeout(resolve, 600));
       }
 
-      const response = format === 'text'
-        ? await resend.emails.send({ from: fromAddress, to: recipient, subject, text: text! })
-        : await resend.emails.send({ from: fromAddress, to: recipient, subject, html: html! });
-      if (response.error) {
-        logger.error('sendTestEmail: resend error', { uid, recipient, error: response.error });
-        throw new HttpsError('internal', response.error.message);
-      }
-      logger.info('sendTestEmail: resend response', { uid, recipient, apiResponse: response.data });
+      const result = await sendTransactionalEmail({
+        to: recipient,
+        subject,
+        ...(format === 'text' ? { text: text! } : { html: html! }),
+        category: 'test',
+        meta: { uid },
+      });
+      logger.info('sendTestEmail: sent', {
+        uid,
+        recipient,
+        provider: result.provider,
+        messageId: result.id,
+      });
     }
 
     return { success: true };

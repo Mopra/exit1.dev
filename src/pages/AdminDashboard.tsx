@@ -4,6 +4,7 @@ import { functions } from '@/firebase';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminStats } from '@/hooks/useAdminStats';
 import { HeartbeatDeferToggle } from '@/components/admin/HeartbeatDeferToggle';
+import { EmailProviderControl } from '@/components/admin/EmailProviderControl';
 import { PageHeader, PageContainer } from '@/components/layout';
 import {
   CardContent,
@@ -829,6 +830,8 @@ const AdminDashboard: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <HeartbeatDeferToggle />
+
+            <EmailProviderControl />
 
             {/* Sync Clerk → Resend */}
             <GlowCard className="p-0">

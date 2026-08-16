@@ -76,6 +76,10 @@ export {
 // Resend bounce/complaint webhook (email suppression)
 export { resendWebhook } from './resend-webhook';
 
+// Day3 delivery-event webhook — the second feed into the same
+// `emailSuppressions` store, for traffic sent via Day3.
+export { day3Webhook } from './day3-webhook';
+
 // SMS settings functions
 export {
   saveSmsSettings,
@@ -191,6 +195,7 @@ export {
   enableDeployMode,
   disableDeployMode,
   toggleHeartbeatDefer,
+  setEmailProvider,
 } from './deploy-mode';
 
 // Clerk webhook and email-platform contact sync (Resend + Day3)

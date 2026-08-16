@@ -32,8 +32,10 @@ import {
   CLERK_SECRET_KEY_DEV,
   RESEND_API_KEY,
   RESEND_FROM,
-  getResendCredentials,
+  DAY3_API_KEY,
+  DAY3_FROM,
 } from "./env";
+import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -1624,14 +1626,11 @@ async function handleTestEmailAlert(
     return;
   }
 
-  const { apiKey, fromAddress } = getResendCredentials();
-  if (!apiKey) {
+  if (!isTransactionalEmailConfigured()) {
     res.status(503).json({ error: 'Email delivery is not configured' });
     return;
   }
 
-  const { Resend } = await import('resend');
-  const resend = new Resend(apiKey);
   const format = settings.emailFormat || 'html';
   const subject = 'Test: Exit1 email alerts';
   const html = format === 'text' ? undefined : `
@@ -1649,16 +1648,16 @@ async function handleTestEmailAlert(
   const delivered: string[] = [];
   try {
     for (let i = 0; i < recipients.length; i++) {
-      // Resend allows 2 req/sec — space the sends out.
+      // Resend allows 2 req/sec — space the sends out. Kept regardless of the
+      // active provider, since any message can fall back onto Resend.
       if (i > 0) await new Promise((resolve) => setTimeout(resolve, 600));
-      const response = format === 'text'
-        ? await resend.emails.send({ from: fromAddress, to: recipients[i], subject, text: text! })
-        : await resend.emails.send({ from: fromAddress, to: recipients[i], subject, html: html! });
-      if (response.error) {
-        logger.error('Public API test email failed', { userId, recipient: recipients[i], error: response.error });
-        res.status(502).json({ error: response.error.message, delivered });
-        return;
-      }
+      await sendTransactionalEmail({
+        to: recipients[i],
+        subject,
+        ...(format === 'text' ? { text: text! } : { html: html! }),
+        category: 'test',
+        meta: { userId },
+      });
       delivered.push(recipients[i]);
     }
   } catch (error) {
@@ -2010,7 +2009,7 @@ async function handleGetAccount(
 // ============================================================
 
 export const publicApi = onRequest({
-  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY, RESEND_FROM],
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM],
 }, async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');

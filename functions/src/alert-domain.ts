@@ -5,13 +5,13 @@ import { firestore } from './init';
 import {
   formatDateForCheck,
   formatDateOnlyForCheck,
-  getResendClient,
   getEmailRecipientsForCheck,
   getSmsRecipients,
   resolvePerFolder,
   webhookAppliesToCheck,
 } from './alert-helpers';
 import { sendSmsMessage } from './alert-sms';
+import { sendTransactionalEmail } from './email-send';
 import {
   PAGERDUTY_EVENTS_URL,
   buildPagerDutyEnvelope,
@@ -488,8 +488,6 @@ async function sendDomainAlertEmail(
       : true; // No checkFilter configured — domain alerts send by default
     if (!shouldSend) return;
 
-    const { resend, fromAddress } = getResendClient();
-
     const isExpired = payload.event === 'domain_expired';
     const subject = isExpired
       ? `DOMAIN EXPIRED: ${payload.domain}`
@@ -527,11 +525,12 @@ async function sendDomainAlertEmail(
 
     // Send to all recipients
     for (const recipient of emailRecipients) {
-      await resend.emails.send({
-        from: fromAddress,
+      await sendTransactionalEmail({
         to: recipient,
         subject,
         html,
+        category: 'alerts',
+        meta: { checkId: check.id, userId, event: payload.event },
       });
       logger.info(`Domain alert email sent to ${recipient}`);
     }
@@ -582,8 +581,6 @@ async function sendDomainRenewalEmail(
       : true;
     if (!shouldSend) return;
 
-    const { resend, fromAddress } = getResendClient();
-
     const formatDate = (timestamp?: number) => formatDateOnlyForCheck(timestamp, check.timezone);
 
     const subject = `Domain Renewed: ${payload.domain}`;
@@ -611,11 +608,12 @@ async function sendDomainRenewalEmail(
 
     // Send to all recipients
     for (const recipient of emailRecipients) {
-      await resend.emails.send({
-        from: fromAddress,
+      await sendTransactionalEmail({
         to: recipient,
         subject,
         html,
+        category: 'alerts',
+        meta: { checkId: check.id, userId, event: payload.event },
       });
       logger.info(`Domain renewal email sent to ${recipient}`);
     }

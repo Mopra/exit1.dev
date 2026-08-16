@@ -13,9 +13,8 @@
 // — failures only log; they never block the probe.
 
 import * as logger from 'firebase-functions/logger';
-import { Resend } from 'resend';
 import { firestore } from './init.js';
-import { getResendCredentials } from './env.js';
+import { sendTransactionalEmail, isTransactionalEmailConfigured } from './email-send.js';
 import type { EmailSettings, Website } from './types.js';
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://app.exit1.dev';
@@ -98,17 +97,21 @@ export async function sendPeerDisagreementEmail(
     return;
   }
 
-  const { apiKey, fromAddress } = getResendCredentials();
-  if (!apiKey) {
-    logger.debug('[peer-disagree-notify] RESEND_API_KEY not configured — skipping');
+  if (!isTransactionalEmailConfigured()) {
+    logger.debug('[peer-disagree-notify] no email provider configured — skipping');
     return;
   }
 
   const { subject, html } = buildEmail(website, primaryRegion, peerRegion, streakStartedAt);
 
   try {
-    const resend = new Resend(apiKey);
-    await resend.emails.send({ from: fromAddress, to: recipient, subject, html });
+    await sendTransactionalEmail({
+      to: recipient,
+      subject,
+      html,
+      category: 'alerts',
+      meta: { checkId: website.id, userId: website.userId, primaryRegion, peerRegion },
+    });
     logger.info(`[peer-disagree-notify] sent to ${recipient} for ${website.id}`);
   } catch (err) {
     logger.warn(`[peer-disagree-notify] send failed for ${website.id}: ${String(err)}`);

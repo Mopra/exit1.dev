@@ -1,8 +1,8 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { createClerkClient } from '@clerk/backend';
-import { Resend } from 'resend';
-import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, getResendCredentials } from "./env";
+import { RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM, CLERK_SECRET_KEY_PROD } from "./env";
+import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 
 const FEEDBACK_TO = 'connect@exit1.dev';
 const MAX_MESSAGE_LENGTH = 4000;
@@ -17,7 +17,7 @@ const escapeHtml = (input: string): string =>
     .replace(/'/g, '&#39;');
 
 export const submitFeedback = onCall({
-  secrets: [RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD],
+  secrets: [RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM, CLERK_SECRET_KEY_PROD],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -32,8 +32,7 @@ export const submitFeedback = onCall({
   const trimmed = message.trim().slice(0, MAX_MESSAGE_LENGTH);
   const pageUrl = typeof page === 'string' ? page.trim().slice(0, MAX_PAGE_LENGTH) : '';
 
-  const { apiKey, fromAddress } = getResendCredentials();
-  if (!apiKey) {
+  if (!isTransactionalEmailConfigured()) {
     throw new HttpsError('failed-precondition', 'Email delivery is not configured');
   }
 
@@ -52,7 +51,6 @@ export const submitFeedback = onCall({
     logger.warn('submitFeedback: failed to fetch Clerk user', { uid, error });
   }
 
-  const resend = new Resend(apiKey);
   const subject = `Feedback from ${userName || userEmail || uid}`;
 
   const metaRows: Array<[string, string]> = [
@@ -85,19 +83,20 @@ export const submitFeedback = onCall({
   ].join('\n');
 
   try {
-    const response = await resend.emails.send({
-      from: fromAddress,
+    const result = await sendTransactionalEmail({
       to: FEEDBACK_TO,
       replyTo: userEmail,
       subject,
       html,
       text,
+      category: 'internal',
+      meta: { uid },
     });
-    if (response.error) {
-      logger.error('submitFeedback: resend error', { uid, error: response.error });
-      throw new HttpsError('internal', response.error.message);
-    }
-    logger.info('submitFeedback: sent', { uid, resendId: response.data?.id });
+    logger.info('submitFeedback: sent', {
+      uid,
+      provider: result.provider,
+      messageId: result.id,
+    });
     return { success: true };
   } catch (error) {
     if (error instanceof HttpsError) throw error;

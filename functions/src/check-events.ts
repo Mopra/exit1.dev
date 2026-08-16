@@ -1,14 +1,16 @@
 import * as logger from "firebase-functions/logger";
-import { Resend } from "resend";
 import { createCheckHistoryRecord } from "./check-utils";
 import { insertCheckHistory } from "./bigquery";
 import { firestore } from "./init";
-import { getResendCredentials, RESEND_API_KEY, RESEND_FROM } from "./env";
+import { RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM } from "./env";
 import { EmailSettings, Website } from "./types";
 import { isEmailSuppressedCached } from "./email-suppression";
+import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 
-// Re-export secrets for consumers that need them
-export { RESEND_API_KEY, RESEND_FROM };
+// Re-export secrets for consumers that need them. Both providers' credentials
+// travel together: any function that can send must be able to reach whichever
+// one the flag selects, or flipping it would silently break that path.
+export { RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM };
 
 const resolveDisabledEmailRecipient = async (website: Website): Promise<string | null> => {
   const settingsSnap = await firestore.collection("emailSettings").doc(website.userId).get();
@@ -84,9 +86,8 @@ const sendDisabledEmail = async (website: Website, disabledReason: string, disab
     return;
   }
 
-  const { apiKey, fromAddress } = getResendCredentials();
-  if (!apiKey) {
-    logger.warn("Skipping disabled email: RESEND_API_KEY not configured", {
+  if (!isTransactionalEmailConfigured()) {
+    logger.warn("Skipping disabled email: no email provider is configured", {
       checkId: website.id,
       userId: website.userId,
     });
@@ -94,13 +95,13 @@ const sendDisabledEmail = async (website: Website, disabledReason: string, disab
   }
 
   const { subject, html } = buildDisabledEmail(website, disabledReason, disabledAt);
-  const resend = new Resend(apiKey);
 
-  await resend.emails.send({
-    from: fromAddress,
+  await sendTransactionalEmail({
     to: recipient,
     subject,
     html,
+    category: 'account',
+    meta: { checkId: website.id, userId: website.userId, disabledReason },
   });
 };
 

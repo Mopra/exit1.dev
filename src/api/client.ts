@@ -19,7 +19,8 @@ import type {
   CreateApiKeyResponse,
   OrganizationBillingProfile,
   McpAuthorizationRequest,
-  McpConnection
+  McpConnection,
+  EmailProviderSettingsInput
 } from './types';
 import type { DomainExpiry, DomainIntelligenceItem } from '../types';
 
@@ -461,6 +462,16 @@ export class Exit1ApiClient {
       "toggleHeartbeatDefer",
       { enabled },
       `Failed to ${enabled ? 'enable' : 'disable'} heartbeat-defer`,
+    );
+  }
+
+  // ---- Transactional email provider switch (admin only) ----
+
+  setEmailProvider(settings: EmailProviderSettingsInput) {
+    return this.call<{ settings: EmailProviderSettingsInput }>(
+      "setEmailProvider",
+      settings,
+      'Failed to update the email provider',
     );
   }
 

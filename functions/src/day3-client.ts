@@ -56,6 +56,30 @@ const CONFLICT_BACKOFF_MS = [3_000, 8_000, 20_000, 30_000];
 // into a conflict. Reads have nothing in flight and can come back quickly.
 const TRANSIENT_BASE_MS = { read: 500, write: 2_000 };
 
+/**
+ * Timing knobs for the retry loop. The defaults above are tuned for the
+ * contact backfill, whose writes run ~10s server-side and hold the idempotency
+ * lock for that long. A latency-sensitive caller (a transactional send inside
+ * the alert path) settles in well under a second and cannot afford a 30s
+ * conflict wait, so it supplies a tighter profile instead.
+ */
+export interface Day3RetryProfile {
+  maxAttempts?: number;
+  /** Base for the exponential 5xx/network backoff, per method class. */
+  transientBaseMs?: { read: number; write: number };
+  /** Wait schedule for `idempotency_conflict`; the tail value repeats. */
+  conflictBackoffMs?: number[];
+  /** Ceiling on a single honoured `Retry-After`, in seconds. */
+  maxRetryAfterS?: number;
+}
+
+const DEFAULT_RETRY_PROFILE: Required<Day3RetryProfile> = {
+  maxAttempts: MAX_ATTEMPTS,
+  transientBaseMs: TRANSIENT_BASE_MS,
+  conflictBackoffMs: CONFLICT_BACKOFF_MS,
+  maxRetryAfterS: MAX_RETRY_AFTER_S,
+};
+
 export interface RetryDecision {
   retry: boolean;
   waitMs: number;
@@ -73,26 +97,30 @@ export function classifyRetry(input: {
   hasIdempotencyKey: boolean;
   attempt: number;
   retryAfterS: number | null;
+  profile?: Day3RetryProfile;
 }): RetryDecision {
   const noRetry: RetryDecision = { retry: false, waitMs: 0 };
+  const conflictBackoff = input.profile?.conflictBackoffMs ?? CONFLICT_BACKOFF_MS;
+  const transientBase = input.profile?.transientBaseMs ?? TRANSIENT_BASE_MS;
+  const maxRetryAfterS = input.profile?.maxRetryAfterS ?? MAX_RETRY_AFTER_S;
 
   // Replaying a write without a key would write twice.
   if (input.isWrite && !input.hasIdempotencyKey) return noRetry;
 
   if (input.code === IDEMPOTENCY_CONFLICT) {
-    const index = Math.min(input.attempt, CONFLICT_BACKOFF_MS.length - 1);
-    return { retry: true, waitMs: CONFLICT_BACKOFF_MS[index] };
+    const index = Math.min(input.attempt, conflictBackoff.length - 1);
+    return { retry: true, waitMs: conflictBackoff[index] };
   }
 
   if (input.status === 429) {
     const seconds = input.retryAfterS !== null && Number.isFinite(input.retryAfterS)
       ? input.retryAfterS
       : 1;
-    return { retry: true, waitMs: Math.min(seconds, MAX_RETRY_AFTER_S) * 1000 };
+    return { retry: true, waitMs: Math.min(seconds, maxRetryAfterS) * 1000 };
   }
 
   if (input.status === 0 || input.status >= 500) {
-    const base = input.isWrite ? TRANSIENT_BASE_MS.write : TRANSIENT_BASE_MS.read;
+    const base = input.isWrite ? transientBase.write : transientBase.read;
     return { retry: true, waitMs: 2 ** input.attempt * base };
   }
 
@@ -109,6 +137,8 @@ export interface Day3RequestOptions {
    */
   idempotencyKey?: string;
   query?: Record<string, string | number | boolean | undefined>;
+  /** Override the retry timings. Omit for the backfill-tuned defaults. */
+  retry?: Day3RetryProfile;
 }
 
 const buildUrl = (path: string, query?: Day3RequestOptions["query"]): string => {
@@ -153,11 +183,13 @@ export async function day3Request<T>(
   const method = options.method ?? "GET";
   const url = buildUrl(path, options.query);
   const isWrite = method !== "GET";
+  const profile = { ...DEFAULT_RETRY_PROFILE, ...options.retry };
+  const maxAttempts = Math.max(1, profile.maxAttempts);
 
   let lastError: Day3Error = { code: "internal_error", message: "no attempt made" };
   let lastStatus = 0;
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let status = 0;
     let text = "";
     let retryAfter: number | null = null;
@@ -209,8 +241,9 @@ export async function day3Request<T>(
       hasIdempotencyKey: Boolean(options.idempotencyKey),
       attempt,
       retryAfterS: retryAfter,
+      profile,
     });
-    const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
+    const isLastAttempt = attempt === maxAttempts - 1;
 
     if (!decision.retry || isLastAttempt) break;
 

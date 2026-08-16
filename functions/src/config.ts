@@ -387,6 +387,10 @@ export const CONFIG = {
   PEER_CONFIRM_CIRCUIT_THRESHOLD: 15,       // open after 15 consecutive errors — transient transatlantic spikes shouldn't trip it
   PEER_CONFIRM_CIRCUIT_COOLDOWN_MS: 60_000, // half-open after 60s
   PEER_SETTINGS_CACHE_TTL_MS: 30_000,       // Firestore flag cache TTL on the runner
+  // Transactional email provider flag (system_settings/email_provider). Read on
+  // every send, so it is cached; 30s matches the peer-settings TTL and the
+  // runner's /admin/refresh-flags busts it instantly for an emergency rollback.
+  EMAIL_PROVIDER_CACHE_TTL_MS: 30_000,
   
   // SUSPICIOUS PATTERN DETECTION
   MAX_SIMILAR_URLS_PER_USER: 50, // Max URLs with same domain per user

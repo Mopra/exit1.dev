@@ -21,7 +21,14 @@ import {
   RdapDomainInfo
 } from "./rdap-client";
 import { triggerDomainAlert, triggerDomainRenewalAlert } from "./alert";
-import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import {
+  CLERK_SECRET_KEY_PROD,
+  CLERK_SECRET_KEY_DEV,
+  RESEND_API_KEY,
+  RESEND_FROM,
+  DAY3_API_KEY,
+  DAY3_FROM,
+} from "./env";
 import { TIER_LIMITS } from "./config";
 
 // Configuration
@@ -45,6 +52,13 @@ export const checkDomainExpiry = onSchedule({
   timeoutSeconds: DI_SCHEDULER_TIMEOUT_SECONDS,
   memory: DI_SCHEDULER_MEMORY,
   maxInstances: 1,
+  // This scheduler is the only caller of triggerDomainAlert /
+  // triggerDomainRenewalAlert, both of which send email. It ran with no
+  // secrets bound at all, so every domain-expiry and domain-renewal email
+  // died inside alert-domain.ts's catch as a logger.warn — silently, since
+  // that path never surfaced the failure. Binding the credentials is what
+  // makes those alerts actually send.
+  secrets: [RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM],
 }, async () => {
   const now = Date.now();
   const startTime = now;

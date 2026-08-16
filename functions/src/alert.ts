@@ -27,6 +27,7 @@ import * as smsModule from './alert-sms';
 import { CONFIG } from './config';
 import { firestore } from './init';
 import { decideSSLAlertTransition, type SSLAlertState } from './ssl-alert-state';
+import { sendTransactionalEmail } from './email-send';
 
 // Re-exported so external consumers can `import { SSLAlertState } from './alert'`.
 export type { SSLAlertState } from './ssl-alert-state';
@@ -189,7 +190,6 @@ function maybeNotifyOperator(): void {
   if (!operatorEmail) return;
 
   try {
-    const { resend, fromAddress } = helpers.getResendClient();
     // Prefer the snapshot captured at trip time; fall back to live counts
     // for robustness if the snapshot is somehow missing.
     const distinctUsers = systemHealthGate.lastTripStats?.distinctUsers
@@ -199,9 +199,9 @@ function maybeNotifyOperator(): void {
     const windowSec = CONFIG.SYSTEM_HEALTH_GATE_WINDOW_MS / 1000;
     const cooldownMin = CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS / 60000;
 
-    resend.emails.send({
-      from: fromAddress,
+    sendTransactionalEmail({
       to: operatorEmail,
+      category: 'internal',
       subject: `[exit1] System health gate tripped — ${distinctUsers} distinct users / ${totalChecks} checks DOWN`,
       html: `
         <div style="font-family:monospace;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
