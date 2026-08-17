@@ -1969,6 +1969,20 @@ export async function processOneCheck(
     // — regardless of direction. Any state change that would have happened
     // during the deploy window is dropped on the floor. The next probe of
     // this check resumes normal alerting against the new baseline.
+    //
+    // KNOWN BUG (2026-08-16, not yet fixed): this predicate is wrong whenever
+    // system_settings/heartbeat_defer is on. It asks "has this check run since
+    // the deploy?" by reading Firestore's lastChecked, but heartbeat-defer
+    // exists precisely to STOP writing that field for steady-state probes. So
+    // a check that has been probed hundreds of times since the deploy still
+    // reports a stale lastChecked, the predicate stays true until that check's
+    // next material state change, and that change is exactly the transition we
+    // wanted to alert on. Net effect: the first real alert per check after any
+    // deploy can be silently dropped on every channel, for up to the defer
+    // flush interval rather than one probe. Verified in production: a DOWN at
+    // 13:09:46 was suppressed by a deploy window that had closed at 13:06:50.
+    // Fix is to track "probed since resume" in runner memory instead.
+    // Full write-up: Docs/deploy-baseline-missed-alerts.md (gitignored).
     const lastChecked = Number(check.lastChecked ?? 0);
     const isPostDeployBaseline = deployModeDisabledAt > 0 && lastChecked < deployModeDisabledAt;
 
