@@ -59,7 +59,18 @@ export function ForgotPasswordForm({
       });
       setStep('code');
     } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Failed to send reset code. Please try again.');
+      // Same trap as the sign-in form. Accounts with no password normally keep
+      // `reset_password_email_code`, so this path is their way back in, but an
+      // account that lacks it (a purely social sign-up, say) throws
+      // `strategy_for_user_invalid`. Without this branch Clerk's raw "Invalid
+      // verification strategy" would be shown to the user verbatim.
+      if (err.errors?.[0]?.code === 'strategy_for_user_invalid') {
+        setError(
+          'Password reset is not available for this account. If you signed in with Google, GitHub, or Discord, use that button on the sign-in page. Otherwise contact connect@exit1.dev.'
+        );
+      } else {
+        setError(err.errors?.[0]?.message || 'Failed to send reset code. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

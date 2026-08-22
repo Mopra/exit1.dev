@@ -310,6 +310,17 @@ export function LoginForm({
         await trySignUpFallback();
       } else if (code === 'form_password_incorrect') {
         setError('Incorrect email or password.');
+      } else if (code === 'strategy_for_user_invalid') {
+        // The account has no password set, so `password` is not among its
+        // supported first factors and Clerk rejects the attempt. Clerk's raw
+        // message is the bare string "Invalid verification strategy", which
+        // tells the user nothing. This hits accounts created without a password
+        // (email code only, invitation, or Backend API). Point them at the reset
+        // flow, which sets a password via `reset_password_email_code`, rather
+        // than leaving them to guess.
+        setError(
+          'This account does not have a password set. Use "Forgot your password?" below to create one, or sign in with Google, GitHub, or Discord if you used one of those.'
+        );
       } else {
         setError(msg || 'An error occurred during sign in.');
       }
