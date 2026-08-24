@@ -57,26 +57,35 @@ const PATH_CODE = `${INLINE_CODE} break-all`;
 /** The prompt from the marketing hero. Kept identical so both surfaces teach the same flow. */
 const SETUP_PROMPT = `Set up uptime monitoring for this project with Exit1.
 
-1. Connect the MCP server. In Claude Code:
-     claude mcp add --transport http exit1 ${REMOTE_URL}
-   Other tools: add the same HTTP MCP server however your tool does it.
+1. Check whether the Exit1 tools (get_account, list_checks, create_check) are
+   available to you. If they are, go to step 2.
 
-   Connecting needs a one-time browser sign-in. Most AI tools CANNOT open that
-   sign-in from inside a conversation turn. If the connection isn't
-   authenticated, don't retry or improvise — stop and tell me to run /mcp (or my
-   tool's equivalent), authenticate in the browser, and come back to you. Then
-   carry on from step 2.
+   If they are not, do NOT try to connect from inside this session, and do not
+   improvise with the raw API. Most AI tools load MCP servers only at startup
+   and cannot open a browser sign-in mid-conversation, so a server added now
+   stays unusable until I restart. Instead:
+     - In Claude Code: run
+         claude mcp add --transport http exit1 ${REMOTE_URL}
+       then tell me to quit, run \`claude mcp login exit1\` in my terminal (my
+       browser opens to sign in or sign up), and resume you with
+       \`claude --continue\`. If my version has no \`mcp login\`, I
+       authenticate via /mcp after restarting instead.
+     - In other tools: tell me to add the HTTP MCP server
+       ${REMOTE_URL} the way my tool does it, restart it, and
+       paste this prompt again.
+   While you wait, do step 3 now and show me the checks you intend to create,
+   so my first message after reconnecting can be "go".
 
 2. Call get_account to see my plan limits, and list_checks to see what's
    already monitored.
 
-3. Work out what's worth monitoring by reading this project — don't ask me for
+3. Work out what's worth monitoring by reading this project. Don't ask me for
    URLs you can find yourself. Depending on the stack, look at deploy and
    infra config, environment files and examples, the README, DNS or domain
    config, container healthchecks, CI/CD workflows, and route or endpoint
    definitions. You're looking for:
      - the production site or app, and staging if there is one
-     - health/status endpoints (these are the most valuable — assert on the
+     - health/status endpoints (these are the most valuable; assert on the
        response body, not just a 200, since a 200 with a dead database is
        still a 200)
      - public APIs and webhook receivers other systems depend on
@@ -167,8 +176,8 @@ const REMOTE_CLIENTS: Client[] = [
   {
     id: "claude-code",
     label: "Claude Code",
-    hint: "One command. Your browser opens for sign-in the first time a tool is called.",
-    code: `claude mcp add --transport http exit1 ${REMOTE_URL}`,
+    hint: "Two commands, before starting a session. The second opens your browser to sign in (or sign up). Then start claude and paste the prompt.",
+    code: `claude mcp add --transport http exit1 ${REMOTE_URL}\nclaude mcp login exit1`,
   },
   {
     id: "claude-desktop",
@@ -560,8 +569,9 @@ export default function Mcp() {
                 Set up monitoring from your editor
               </CardTitle>
               <CardDescription>
-                Paste this into your assistant from inside your project. It reads the repo, works
-                out what should be monitored, and finishes by sending you a real test alert.
+                Connect the server first (above), then paste this into your assistant from inside
+                your project. It reads the repo, works out what should be monitored, and finishes
+                by sending you a real test alert.
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-3">
