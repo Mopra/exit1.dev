@@ -124,6 +124,12 @@ interface PlanCardProps {
   /** Marks the card as the user's current plan (adds ring + inline badge). */
   isCurrent?: boolean
   cta: ReactNode
+  /**
+   * Small reassurance line under the CTA (e.g. the free-trial terms). The slot
+   * is always reserved, so cards with and without a note keep their feature
+   * lists on the same baseline across the grid.
+   */
+  ctaNote?: ReactNode
   /** Optional content rendered below the feature list (e.g. a testimonial). */
   footer?: ReactNode
 }
@@ -134,6 +140,7 @@ export function PlanCard({
   highlighted = false,
   isCurrent = false,
   cta,
+  ctaNote,
   footer,
 }: PlanCardProps) {
   const tierVisual = getTierVisual(entry.tier)
@@ -182,7 +189,16 @@ export function PlanCard({
 
       <PlanPrice entry={entry} period={billingPeriod} />
 
-      <div className="mt-4 mb-4">{cta}</div>
+      <div className="mt-4 mb-4">
+        {cta}
+        <div className="min-h-[1.125rem] mt-1.5">
+          {ctaNote && (
+            <p className="text-[11px] leading-tight text-center text-muted-foreground">
+              {ctaNote}
+            </p>
+          )}
+        </div>
+      </div>
 
       <ul className="space-y-2 flex-1">
         {entry.features.map((f) => (

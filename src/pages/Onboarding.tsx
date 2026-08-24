@@ -46,6 +46,8 @@ import {
   PLAN_MATRIX,
   TIER_BUTTON_PRIMARY,
   findClerkPlan,
+  trialNote,
+  TRIAL_CTA_LABEL,
   type BillingPeriod,
   type PlanKey,
   type PlanMatrixEntry,
@@ -822,6 +824,7 @@ export default function Onboarding() {
                   entry={entry}
                   billingPeriod={billingPeriod}
                   highlighted={entry.key === 'pro'}
+                  ctaNote={trialNote(entry, billingPeriod)}
                   cta={renderOnboardingCta({
                     entry,
                     billingPeriod,
@@ -966,9 +969,13 @@ function ProTestimonial() {
   );
 }
 
-// Render the CTA for a plan card in the onboarding step-5 grid. Free → inline
-// "Continue with Free" button (submits + bounces to the default next page);
-// paid plans → CheckoutButton wired up with onboarding-completion handlers.
+// Render the CTA for a plan card in the onboarding step-5 grid. Free: inline
+// "Continue with Free" button (submits + bounces to the default next page).
+// Paid plans: CheckoutButton wired up with onboarding-completion handlers.
+// Step 5 only runs for users with no active subscription, and in practice only
+// once per account, so every paid card here is a free-trial entry point and
+// carries the trial label. (Billing does the stricter check against payment
+// history, which matters there because churned users come back to that page.)
 function renderOnboardingCta({
   entry,
   billingPeriod,
@@ -1022,7 +1029,7 @@ function renderOnboardingCta({
         newSubscriptionRedirectUrl="/checks"
       >
         <Button variant="default" className={primaryClass} disabled={submitting}>
-          Get {entry.name}
+          {TRIAL_CTA_LABEL}
           <ArrowRight className="h-4 w-4" />
         </Button>
       </CheckoutButton>
@@ -1038,7 +1045,7 @@ function renderOnboardingCta({
       onClick={() => onFallback(paidKey)}
       disabled={submitting}
     >
-      Get {entry.name}
+      {TRIAL_CTA_LABEL}
       <ArrowRight className="h-4 w-4" />
     </Button>
   );

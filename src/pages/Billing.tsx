@@ -55,6 +55,8 @@ import {
   TIER_BUTTON_PRIMARY,
   TIER_RANK,
   findClerkPlan,
+  trialNote,
+  TRIAL_CTA_LABEL,
   type BillingPeriod,
   type ClerkPlan,
   type PlanFeatureRow,
@@ -227,6 +229,15 @@ export default function Billing() {
   }, [isPaymentMethodsLoading, paymentMethods])
 
   const paymentAttemptItems = paymentAttempts ?? []
+
+  // Clerk grants a free trial only to accounts that have never paid, so a
+  // churned user coming back to Free must not be shown trial wording. Any
+  // settled payment on the account rules the trial out. `usePaymentAttempts`
+  // above pages at 6, which is enough: a returning subscriber's recent history
+  // carries their old charges. While it is still loading we assume they have
+  // paid, so the CTA never over-promises on first paint.
+  const hasEverPaid =
+    isPaymentAttemptsLoading || paymentAttemptItems.some((p) => Boolean(p.paidAt))
 
   return (
     <PageContainer>
@@ -622,6 +633,7 @@ export default function Billing() {
                       foundersPeriod={foundersPeriod}
                       billingPeriod={billingPeriod}
                       clerkPlans={clerkPlans}
+                      hasEverPaid={hasEverPaid}
                       onRequestDowngrade={() => setDowngradeOpen(true)}
                     />
 
@@ -697,6 +709,8 @@ interface PlanMatrixProps {
   foundersPeriod: BillingPeriod
   billingPeriod: BillingPeriod
   clerkPlans: ClerkPlan[] | null | undefined
+  /** Whether the account has any settled payment (blocks trial wording). */
+  hasEverPaid: boolean
   onRequestDowngrade: () => void
 }
 
@@ -706,6 +720,7 @@ function PlanMatrix({
   foundersPeriod,
   billingPeriod,
   clerkPlans,
+  hasEverPaid,
   onRequestDowngrade,
 }: PlanMatrixProps) {
   // Founders users see the Founders card in place of the Pro card — they
@@ -716,6 +731,9 @@ function PlanMatrix({
   const makeCard = (entry: PlanMatrixEntry, highlighted = false) => {
     const isCurrent = !isFounders && realTier === entry.tier
     const clerkPlan = findClerkPlan(clerkPlans, entry.clerkSlugs)
+    // Only a free user starting their first paid subscription gets the trial.
+    // See the note on TRIAL_DAYS in plan-matrix-data.ts.
+    const isTrialCta = isTrialEligible(realTier, isFounders, hasEverPaid, entry)
     return (
       <PlanCard
         key={entry.key}
@@ -723,6 +741,7 @@ function PlanMatrix({
         billingPeriod={billingPeriod}
         highlighted={highlighted}
         isCurrent={isCurrent}
+        ctaNote={isTrialCta ? trialNote(entry, billingPeriod) : null}
         cta={
           <PlanCTA
             entry={entry}
@@ -731,6 +750,7 @@ function PlanMatrix({
             isCurrent={isCurrent}
             clerkPlan={clerkPlan}
             billingPeriod={billingPeriod}
+            hasEverPaid={hasEverPaid}
             onRequestDowngrade={onRequestDowngrade}
           />
         }
@@ -763,6 +783,7 @@ function PlanCTA({
   isCurrent,
   clerkPlan,
   billingPeriod,
+  hasEverPaid,
   onRequestDowngrade,
 }: {
   entry: PlanMatrixEntry
@@ -771,6 +792,7 @@ function PlanCTA({
   isCurrent: boolean
   clerkPlan: ClerkPlan | null
   billingPeriod: BillingPeriod
+  hasEverPaid: boolean
   onRequestDowngrade: () => void
 }) {
   if (isCurrent) {
@@ -826,12 +848,17 @@ function PlanCTA({
     )
   }
 
-  // Free user — direct checkout.
+  // Free user, direct checkout. Trial wording only if they have never paid
+  // before; the matching terms line lives on the card's `ctaNote`.
+  const startLabel = isTrialEligible(realTier, isFounders, hasEverPaid, entry)
+    ? TRIAL_CTA_LABEL
+    : `Get ${entry.name}`
+
   if (clerkPlan?.id) {
     return (
       <CheckoutButton planId={clerkPlan.id} planPeriod={billingPeriod}>
         <Button variant="default" className={primaryClass}>
-          Get {entry.name}
+          {startLabel}
         </Button>
       </CheckoutButton>
     )
@@ -841,9 +868,24 @@ function PlanCTA({
   return (
     <SubscriptionDetailsButton>
       <Button variant="default" className={primaryClass}>
-        Get {entry.name}
+        {startLabel}
       </Button>
     </SubscriptionDetailsButton>
+  )
+}
+
+// Clerk grants a free trial only on a first paid subscription, so trial copy is
+// limited to free (non-Founders) users looking at a paid plan who have never
+// paid us before. Everyone else is switching or resuming a subscription and gets
+// billed right away.
+function isTrialEligible(
+  realTier: Tier,
+  isFounders: boolean,
+  hasEverPaid: boolean,
+  entry: PlanMatrixEntry,
+): boolean {
+  return (
+    !isFounders && realTier === "free" && !hasEverPaid && entry.priceMonthly > 0
   )
 }
 

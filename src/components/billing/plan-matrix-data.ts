@@ -124,6 +124,36 @@ export const PLAN_MATRIX: PlanMatrixEntry[] = [
 
 export const TIER_RANK: Record<Tier, number> = { free: 0, indie: 1, nano: 2, pro: 3 }
 
+// ---- Free trial ----
+//
+// Every paid plan starts with a free trial. The trial itself is configured per
+// plan in the Clerk Dashboard (Subscription plans -> free trial); the constant
+// below is display-only copy and changing it does not change what Clerk
+// charges. Keep the two in step, and keep this in step with TRIAL_DAYS in the
+// website repo (src/components/PricingCards.tsx).
+//
+// Clerk only grants a trial to users who have never paid and never trialed, so
+// trial wording belongs on a first-checkout CTA only. Plan switches for
+// existing subscribers are charged (prorated) straight away.
+export const TRIAL_DAYS = 7
+
+export const TRIAL_CTA_LABEL = `Start ${TRIAL_DAYS}-day trial`
+
+/**
+ * Reassurance line rendered under a trial CTA, e.g. "7 days free, then $20/mo".
+ * Returns null for the Free row, which has nothing to trial. The price quoted
+ * matches what `PlanPrice` shows for the same period.
+ */
+export function trialNote(
+  entry: PlanMatrixEntry,
+  period: BillingPeriod,
+): string | null {
+  if (entry.priceMonthly === 0) return null
+  const effectiveMonthly =
+    period === "annual" ? Math.round(entry.priceAnnual / 12) : entry.priceMonthly
+  return `${TRIAL_DAYS} days free, then $${effectiveMonthly}/mo`
+}
+
 // Per-tier styling for the plan cards. Colors flow from the --tier-* CSS
 // tokens (see src/style.css) so the entire tier palette can be re-skinned in
 // one place. The shared `tier-visual.tsx` palette is tuned for small badges
