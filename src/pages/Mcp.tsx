@@ -105,11 +105,14 @@ Prefer a few meaningful checks over many shallow ones.`;
 
 function CodeBlock({
   code,
+  copyText,
   className,
   copyLabel = "Copy",
   track,
 }: {
   code: string;
+  /** Clipboard payload when it must differ from the displayed code. */
+  copyText?: string;
   className?: string;
   copyLabel?: string;
   /**
@@ -123,7 +126,7 @@ function CodeBlock({
   const [copied, setCopied] = React.useState(false);
 
   async function onCopy() {
-    const ok = await copyToClipboard(code);
+    const ok = await copyToClipboard(copyText ?? code);
     setCopied(ok);
     if (ok && track) trackEvent("mcp_setup_copied", track);
     window.setTimeout(() => setCopied(false), 900);
@@ -169,6 +172,8 @@ type Client = {
   label: string;
   hint: React.ReactNode;
   code: string;
+  /** Clipboard payload when it must differ from the displayed code (e.g. a trailing newline). */
+  copyText?: string;
   copyLabel?: string;
 };
 
@@ -178,6 +183,9 @@ const REMOTE_CLIENTS: Client[] = [
     label: "Claude Code",
     hint: "Two commands, before starting a session. The second opens your browser to sign in (or sign up). Then start claude and paste the prompt.",
     code: `claude mcp add --transport http exit1 ${REMOTE_URL}\nclaude mcp login exit1`,
+    // Trailing newline so a terminal paste executes BOTH lines. Without it the
+    // login command sits unexecuted at the prompt and the flow looks half-run.
+    copyText: `claude mcp add --transport http exit1 ${REMOTE_URL}\nclaude mcp login exit1\n`,
   },
   {
     id: "claude-desktop",
@@ -548,6 +556,7 @@ export default function Mcp() {
                     <div className="text-sm text-muted-foreground">{c.hint}</div>
                     <CodeBlock
                       code={c.code}
+                      copyText={c.copyText}
                       copyLabel={c.copyLabel}
                       track={{ transport: "hosted", client: c.id }}
                     />
