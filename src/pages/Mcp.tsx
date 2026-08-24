@@ -52,7 +52,6 @@ const PACKAGE = "exit1-mcp";
 const KEY_PLACEHOLDER = "ek_live_your_key_here";
 
 const INLINE_CODE = "px-1 py-0.5 rounded bg-muted text-xs";
-const PATH_CODE = `${INLINE_CODE} break-all`;
 
 /** The prompt from the marketing hero. Kept identical so both surfaces teach the same flow. */
 const SETUP_PROMPT = `Set up uptime monitoring for this project with Exit1.
@@ -195,16 +194,13 @@ const REMOTE_CLIENTS: Client[] = [
     label: "Claude Desktop",
     hint: (
       <>
-        Add to <code className={PATH_CODE}>%APPDATA%\Claude\claude_desktop_config.json</code>{" "}
-        (Windows) or{" "}
-        <code className={PATH_CODE}>
-          ~/Library/Application Support/Claude/claude_desktop_config.json
-        </code>{" "}
-        (macOS), then restart.
+        Go to <span className="font-medium text-foreground">Settings &rsaquo; Connectors &rsaquo; Add
+        custom connector</span>, paste this URL, and sign in when prompted. The config-file JSON
+        route is for local stdio servers; remote servers connect here.
       </>
     ),
-    code: remoteJson,
-    copyLabel: "Copy JSON",
+    code: REMOTE_URL,
+    copyLabel: "Copy URL",
   },
   {
     id: "cursor",
