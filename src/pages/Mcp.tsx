@@ -181,11 +181,14 @@ const REMOTE_CLIENTS: Client[] = [
   {
     id: "claude-code",
     label: "Claude Code",
-    hint: "Two commands, before starting a session. The second opens your browser to sign in (or sign up). Then start claude and paste the prompt.",
-    code: `claude mcp add --transport http exit1 ${REMOTE_URL}\nclaude mcp login exit1`,
-    // Trailing newline so a terminal paste executes BOTH lines. Without it the
-    // login command sits unexecuted at the prompt and the flow looks half-run.
-    copyText: `claude mcp add --transport http exit1 ${REMOTE_URL}\nclaude mcp login exit1\n`,
+    hint: "One paste, before starting a session. The login opens your browser to sign in (or sign up). Then start claude and paste the prompt.",
+    // One line chained with && on purpose: pasting two lines into cmd.exe lets
+    // the first command's process swallow the second line from console input,
+    // so the login silently never runs. The trailing newline in copyText makes
+    // the one-liner execute on paste. Old Windows PowerShell (5.1) rejects &&;
+    // those users run the halves separately.
+    code: `claude mcp add --transport http exit1 ${REMOTE_URL} && claude mcp login exit1`,
+    copyText: `claude mcp add --transport http exit1 ${REMOTE_URL} && claude mcp login exit1\n`,
   },
   {
     id: "claude-desktop",
