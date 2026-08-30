@@ -570,7 +570,7 @@ const Status: React.FC = () => {
                 {statusPageUpsell}
               </p>
               <Button asChild size="sm" className="cursor-pointer gap-1.5">
-                <Link to="/billing">
+                <Link to="/billing?tab=plans">
                   <Sparkles className="w-3.5 h-3.5" />
                   Upgrade to {nextStatusPageTier?.name ?? 'Nano'}
                 </Link>
@@ -803,7 +803,7 @@ const Status: React.FC = () => {
                           </div>
                         </div>
                         <Button asChild size="sm" className="shrink-0 cursor-pointer gap-1.5">
-                          <Link to="/billing">
+                          <Link to="/billing?tab=plans">
                             <Sparkles className="w-3.5 h-3.5" />
                             Upgrade to {nextStatusPageTier?.name ?? 'Nano'}
                           </Link>
@@ -1154,7 +1154,7 @@ const Status: React.FC = () => {
                           </label>
                           {!statusPageBuilder && (
                             <Button asChild size="sm" className="cursor-pointer shrink-0 h-7 text-xs">
-                              <Link to="/billing">Upgrade</Link>
+                              <Link to="/billing?tab=plans">Upgrade</Link>
                             </Button>
                           )}
                         </div>
@@ -1230,7 +1230,7 @@ const Status: React.FC = () => {
                         </div>
                         {!statusPageBuilder && (
                           <Button asChild size="sm" className="cursor-pointer h-7 text-xs">
-                            <Link to="/billing">Upgrade</Link>
+                            <Link to="/billing?tab=plans">Upgrade</Link>
                           </Button>
                         )}
                       </div>

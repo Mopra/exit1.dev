@@ -3,8 +3,10 @@
  * Used by CheckFolderView, CheckTimelineView, CheckTable, CheckCard, and useChecks
  */
 
-// Maximum folder nesting depth (1 = flat, 2 = parent/child)
-export const MAX_FOLDER_DEPTH = 2;
+// Maximum folder nesting depth. Deep nesting is allowed: this is a sanity
+// ceiling on pathological paths, not a design constraint. The folder tree,
+// rename, delete and drag handling are all depth-agnostic.
+export const MAX_FOLDER_DEPTH = 10;
 
 // Maximum length of a single folder NAME (path segment). The limit is
 // per-segment, not per-path, so a long parent name doesn't eat the
@@ -227,6 +229,19 @@ export function getParentPath(path: string): string | null {
 }
 
 /**
+ * Every proper ancestor of a path, outermost first.
+ * "a/b/c" -> ["a", "a/b"]. Root-level paths have none.
+ */
+export function getAncestorPaths(path: string): string[] {
+  const parts = splitFolderPath(path);
+  const ancestors: string[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    ancestors.push(joinPath(parts.slice(0, i)));
+  }
+  return ancestors;
+}
+
+/**
  * Get just the folder name (last part of the path)
  */
 export function getFolderName(path: string): string {
@@ -307,9 +322,10 @@ export function buildFolderList(
       folderCounts.set(folder, (folderCounts.get(folder) ?? 0) + 1);
       allPaths.add(folder);
 
-      // Also add parent paths to ensure hierarchy is complete
-      const parent = getParentPath(folder);
-      if (parent) allPaths.add(parent);
+      // Add every ancestor so the hierarchy is complete at any depth. Only
+      // backfilling the immediate parent orphans "a/b/c" when nothing lives
+      // in "a/b", and the whole subtree then fails to render.
+      for (const ancestor of getAncestorPaths(folder)) allPaths.add(ancestor);
     }
   }
 
@@ -318,8 +334,7 @@ export function buildFolderList(
     const normalized = normalizeFolder(f);
     if (normalized) {
       allPaths.add(normalized);
-      const parent = getParentPath(normalized);
-      if (parent) allPaths.add(parent);
+      for (const ancestor of getAncestorPaths(normalized)) allPaths.add(ancestor);
     }
   }
 

@@ -91,7 +91,7 @@ export function FeatureGate({
             <Link to={ctaHref}>{resolvedCtaLabel}</Link>
           </Button>
           <Button asChild variant="outline" className="cursor-pointer">
-            <Link to="/billing">See plans</Link>
+            <Link to="/billing?tab=plans">See plans</Link>
           </Button>
         </div>
       </div>

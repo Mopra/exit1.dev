@@ -71,7 +71,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                           variant="outline"
                           className="btn-upgrade-shine h-6 px-2 text-xs font-medium cursor-pointer bg-tier-nano/15 border-tier-nano/40 text-tier-nano hover:bg-tier-nano/25 hover:border-tier-nano/60 hover:text-tier-nano touch-manipulation whitespace-nowrap hidden sm:inline-flex"
                         >
-                          <Link to="/billing">Upgrade</Link>
+                          <Link to="/billing?tab=plans">Upgrade</Link>
                         </Button>
                       </>
                     )}

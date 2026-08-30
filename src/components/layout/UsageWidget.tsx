@@ -208,7 +208,7 @@ export function UsageWidget() {
             {!paid && (
               <div className="mt-4 pt-3 border-t">
                 <Button asChild size="sm" className="w-full gap-1.5 cursor-pointer h-8 text-xs">
-                  <Link to="/billing">
+                  <Link to="/billing?tab=plans">
                     <Sparkles className="w-3 h-3" />
                     Upgrade for more email alerts
                   </Link>

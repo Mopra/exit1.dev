@@ -108,32 +108,38 @@ export function buildPushoverUrl(creds: PushoverCredentials): string {
 //   P5 → Lowest (-2).
 // This is what lets a user mark their VPS as "page me until I ack" (P1) and a
 // dev site as "don't wake me" (P4/P5) on a single integration. The mapped
-// level is a HARD CAP for every alert the check emits — a P3 check never
+// level is a HARD CAP for every alert the check emits: a P3 check never
 // sends anything above Normal (no quiet-hours bypass), including SSL/domain
-// expiry and DNS events. Non-critical events are capped further still:
-// - Warnings (ssl_warning, domain_expiring, dns_record_changed) cap at High.
-//   They're not an outage, but "cert expires in 3 days" is still worth a
-//   quiet-hours bypass on a P1 check.
-// - Recoveries (website_up, domain_renewed) cap at NORMAL. An all-clear is
-//   good news; waking someone for it is the one thing they didn't ask for by
-//   setting P1. (Capping recoveries at High shipped originally only to stop
-//   Emergency's repeat-until-ack on a site that's already back — but it left
-//   a P1 check sending *louder* recoveries than the same integration with no
-//   severity set, which reads as a bug to users.)
+// expiry and DNS events. Non-critical events are capped further still, at
+// NORMAL:
+// - Warnings (ssl_warning, domain_expiring, dns_record_changed) are advance
+//   notice, not an outage. Nothing about "cert expires in 30 days" is more
+//   actionable at 3am than at 8am, and the loud escalation moment already
+//   exists: when the condition turns critical (ssl_error, domain_expired)
+//   the alert rides at the check's full severity. (Warnings originally
+//   capped at High so an expiring cert could cut through quiet hours on a
+//   P1 check; direct user feedback said the opposite: "if you've had
+//   warnings, the one that wakes you up is your website is down".)
+// - Recoveries (website_up, domain_renewed) for the same reason: an
+//   all-clear is good news; waking someone for it is the one thing they
+//   didn't ask for by setting P1.
 //
-// Severity unset (null/undefined — the "use default priority" state) keeps
+// Severity unset (null/undefined, the "use default priority" state) keeps
 // the legacy default-based mapping:
 // - Critical events (outages, errors, expired) are always sent at least at
 //   High so users who never made an explicit choice don't sleep through
-//   them — uptime tools are useless otherwise. They use the user's default
+//   them; uptime tools are useless otherwise. They use the user's default
 //   if it's already High or Emergency.
-// - Warnings follow the user's default, capped at High.
-// - Recoveries follow the user's default, capped at Normal — same reasoning
-//   as the severity path. Someone picking an Emergency default is saying
-//   "page me for outages", not "wake me when it comes back".
+// - Warnings follow the user's default, capped at High. Unlike the severity
+//   path, an explicit priority=1 default on the integration is an expressed
+//   "everything High" preference, so it is respected here.
+// - Recoveries follow the user's default, capped at Normal. Someone picking
+//   an Emergency default is saying "page me for outages", not "wake me when
+//   it comes back".
 //
-// So, across both paths: only a critical event can reach Emergency, only a
-// critical or a warning can bypass quiet hours, and a recovery never does.
+// So, across both paths: only a critical event can reach Emergency, a
+// recovery never bypasses quiet hours, and with an explicit severity only a
+// critical event can.
 export function mapEventToPushoverPriority(
   event: WebhookEvent,
   defaultPriority: PushoverPriority,
@@ -150,8 +156,9 @@ export function mapEventToPushoverPriority(
   if (severity != null) {
     const base = (3 - severity) as PushoverPriority;
     if (isCritical) return base;
-    // Recoveries never bypass quiet hours; warnings still may.
-    return Math.min(base, isRecovery ? 0 : 1) as PushoverPriority;
+    // Warnings and recoveries never bypass quiet hours; the loud moment for
+    // a warning is when it turns critical (ssl_error / domain_expired).
+    return Math.min(base, 0) as PushoverPriority;
   }
   if (isCritical) {
     return defaultPriority < 1 ? 1 : defaultPriority;

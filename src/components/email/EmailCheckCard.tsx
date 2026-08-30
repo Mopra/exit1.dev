@@ -327,7 +327,7 @@ export const EmailCheckCard = memo(function EmailCheckCard({
                     </PopoverContent>
                   </Popover>
                 ) : (
-                  <Link to="/billing" title="Upgrade to Pro to add extra recipients">
+                  <Link to="/billing?tab=plans" title="Upgrade to Pro to add extra recipients">
                     <Badge
                       variant="outline"
                       className="text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"

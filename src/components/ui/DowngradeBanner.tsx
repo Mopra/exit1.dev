@@ -16,7 +16,7 @@ export const DowngradeBanner: React.FC<DowngradeBannerProps> = ({ message, onDis
       <AlertDescription className={`text-sm text-foreground flex items-center gap-3 flex-wrap ${onDismiss ? 'pr-8' : ''}`}>
         <span>{message}</span>
         <Button asChild size="sm" className="cursor-pointer w-fit shrink-0">
-          <Link to="/billing">Upgrade to Nano</Link>
+          <Link to="/billing?tab=plans">View plans</Link>
         </Button>
       </AlertDescription>
       {onDismiss && (

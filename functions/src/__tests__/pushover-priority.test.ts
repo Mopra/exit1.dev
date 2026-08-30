@@ -3,16 +3,17 @@ import assert from "node:assert/strict";
 
 import { mapEventToPushoverPriority } from "../alert-pushover";
 
-// Check severity (P1–P5) maps one-to-one onto Pushover's five priorities for
-// critical events. Non-critical events are capped further: warnings at High,
-// recoveries at Normal — an all-clear must never bypass quiet hours. An
-// explicit severity — including P3 — is a hard cap on every alert the check
-// emits. Only UNSET severity ("use default priority") keeps the legacy
-// default-based mapping with criticals floored at High.
+// Check severity (P1-P5) maps one-to-one onto Pushover's five priorities for
+// critical events. Non-critical events (warnings AND recoveries) are capped
+// at Normal: with an explicit severity, only a critical event may bypass
+// quiet hours. An explicit severity, P3 included, is a hard cap on every
+// alert the check emits. Only UNSET severity ("use default priority") keeps
+// the legacy default-based mapping with criticals floored at High and
+// warnings following the integration default capped at High.
 
-test("P1 pages at Emergency, warns at High, recovers at Normal", () => {
+test("P1 pages at Emergency, warns at Normal, recovers at Normal", () => {
   assert.equal(mapEventToPushoverPriority("website_down", 0, 1), 2);
-  assert.equal(mapEventToPushoverPriority("ssl_warning", 0, 1), 1);
+  assert.equal(mapEventToPushoverPriority("ssl_warning", 0, 1), 0);
   assert.equal(mapEventToPushoverPriority("website_up", 0, 1), 0);
 });
 
@@ -38,12 +39,23 @@ test("recoveries never bypass quiet hours at any severity", () => {
   assert.equal(mapEventToPushoverPriority("domain_renewed", 0, 5), -2);
 });
 
-test("warnings keep the High cap so an expiring cert can still cut through", () => {
+// The kairandles report, round two: a P1 check's ssl_warning arrived at High
+// and bypassed quiet hours, and NO severity value could express "downs page
+// me, warnings can wait until morning". With severity set, a warning is never
+// worth waking anyone: the escalation to loud is the critical event
+// (ssl_error / domain_expired) at full severity.
+test("warnings never bypass quiet hours when severity is set", () => {
   for (const event of ["ssl_warning", "domain_expiring", "dns_record_changed"] as const) {
-    assert.equal(mapEventToPushoverPriority(event, 0, 1), 1, `${event} at P1`);
-    assert.equal(mapEventToPushoverPriority(event, 0, 2), 1, `${event} at P2`);
+    assert.equal(mapEventToPushoverPriority(event, 0, 1), 0, `${event} at P1`);
+    assert.equal(mapEventToPushoverPriority(event, 0, 2), 0, `${event} at P2`);
     assert.equal(mapEventToPushoverPriority(event, 0, 3), 0, `${event} at P3`);
+    // Quiet checks stay below Normal rather than snapping up to it.
+    assert.equal(mapEventToPushoverPriority(event, 0, 4), -1, `${event} at P4`);
   }
+  // Severity unset keeps the legacy High cap: an explicit priority=1 default
+  // on the integration is an expressed "everything High" preference.
+  assert.equal(mapEventToPushoverPriority("ssl_warning", 1), 1);
+  assert.equal(mapEventToPushoverPriority("ssl_warning", 2), 1);
 });
 
 test("explicit P3 caps everything at Normal — no quiet-hours bypass", () => {
@@ -97,6 +109,10 @@ test("only criticals reach Emergency; recoveries never bypass quiet hours", () =
           assert.ok(p < 2, `${event} reached Emergency (sev=${severity}, default=${defaultPriority})`);
         }
         if (recovery.includes(event)) {
+          assert.ok(p <= 0, `${event} bypassed quiet hours at ${p} (sev=${severity}, default=${defaultPriority})`);
+        }
+        // With an explicit severity, ONLY a critical event may bypass quiet hours.
+        if (severity != null && !critical.includes(event)) {
           assert.ok(p <= 0, `${event} bypassed quiet hours at ${p} (sev=${severity}, default=${defaultPriority})`);
         }
       }

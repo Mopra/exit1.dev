@@ -299,7 +299,7 @@ const EmailFolderView = memo(function EmailFolderView({
                                       </Button>
                                     </div>
                                   ) : (
-                                    <Link to="/billing" className="mt-2 inline-block" title="Upgrade to Pro to add folder recipients">
+                                    <Link to="/billing?tab=plans" className="mt-2 inline-block" title="Upgrade to Pro to add folder recipients">
                                       <Badge
                                         variant="outline"
                                         className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"

@@ -1623,7 +1623,7 @@ export default function CheckForm({
                                       <Info className="h-3 w-3 text-muted-foreground cursor-help" />
                                     </TooltipTrigger>
                                     <TooltipContent side="top" className="max-w-[260px]">
-                                      <p className="text-xs">How important this check is. Severity caps every alert this check sends — Pushover pages P1 outages at Emergency until acknowledged, P2 always alerts, P3 never goes above Normal, and P4–P5 stay quiet without waking you.</p>
+                                      <p className="text-xs">How important this check is. Severity caps every alert this check sends: Pushover pages P1 outages at Emergency until acknowledged, P2 outages alert at High, P3 never goes above Normal, and P4-P5 stay quiet. Warnings (like an expiring certificate) and recoveries never bypass quiet hours.</p>
                                     </TooltipContent>
                                   </Tooltip>
                                 </FormLabel>

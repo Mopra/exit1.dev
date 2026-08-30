@@ -69,7 +69,7 @@ export function TierBadge(props: TierBadgeProps) {
 
   if (asLink) {
     return (
-      <Link to="/billing" className="cursor-pointer">
+      <Link to="/billing?tab=plans" className="cursor-pointer">
         {badge}
       </Link>
     )

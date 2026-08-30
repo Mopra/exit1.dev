@@ -1,4 +1,5 @@
-import { useMemo, useState, type ComponentProps } from "react"
+import { useCallback, useMemo, useState, type ComponentProps } from "react"
+import { useSearchParams } from "react-router-dom"
 import {
   SignedIn,
   SignedOut,
@@ -64,7 +65,12 @@ import {
 } from "@/components/billing/plan-matrix-data"
 import { usePlan, type Tier } from "@/hooks/usePlan"
 import { getActivePaidSubscriptionItem } from "@/lib/subscription"
-import { formatEmailBudget, formatRetentionForTier, getMaxChecksForTier } from "@/lib/subscription"
+import {
+  formatEmailBudget,
+  formatRetentionForTier,
+  getMaxChecksForTier,
+  getMinCheckIntervalSecondsForTier,
+} from "@/lib/subscription"
 import { downloadPaymentReceipt, buildOrganizationAddressLines } from "@/lib/pdf-receipt"
 import type { BillingRecipient } from "@/lib/pdf-receipt"
 import { parseOrganizationBillingProfile } from "@/lib/billing-profile"
@@ -76,6 +82,34 @@ import { cn } from "@/lib/utils"
 const FOUNDERS_FEATURES: PlanFeatureRow[] = PLAN_MATRIX.find(
   (p) => p.key === "pro",
 )!.features
+
+// Tabs that exist for each audience. Used to validate `?tab=` before trusting
+// it, so a stale link can never select a tab that isn't rendered.
+const PAID_TABS = ["overview", "plans", "payment-methods", "history", "organization"]
+const FREE_TABS = ["plans"]
+
+/**
+ * A plan change that needs the user to confirm something Clerk's checkout
+ * cannot tell them before we hand it over.
+ *
+ * - `cancel`: dropping to Free. Ends in Clerk's subscription drawer, which is
+ *   the only surface that can cancel.
+ * - `downgrade`: moving to a cheaper paid plan. Clerk explains the billing
+ *   side; only we can explain that monitors get disabled and intervals widen.
+ * - `founders`: any switch away from the grandfathered Founders price, which
+ *   is one-way and cannot be restored by re-subscribing.
+ *
+ * Upgrades are deliberately absent: they go straight to checkout with no
+ * interstitial, because nothing is lost and friction there costs conversions.
+ */
+type PlanAction =
+  | { kind: "cancel" }
+  | {
+      kind: "downgrade" | "founders"
+      entry: PlanMatrixEntry
+      planId: string
+      period: BillingPeriod
+    }
 
 // ---- UI helpers ----
 
@@ -164,10 +198,44 @@ export default function Billing() {
   const showPaidTabs = realNano
   const defaultTab = showPaidTabs ? "overview" : "plans"
 
+  // Tab selection lives in the URL so every upgrade CTA in the app can deep
+  // link straight to the plan grid (`/billing?tab=plans`). Without this a paid
+  // user following an "Upgrade to Pro" prompt landed on Overview, which has no
+  // plan picker, and had to discover the Plans tab on their own.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get("tab")
+  const availableTabs = showPaidTabs ? PAID_TABS : FREE_TABS
+  const activeTab =
+    requestedTab && availableTabs.includes(requestedTab) ? requestedTab : defaultTab
+
+  const handleTabChange = useCallback(
+    (next: string) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev)
+          params.set("tab", next)
+          return params
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
+
   // Founders users keep their $4/mo or $36/yr price. `nanoItem.planPeriod` is
   // `"month" | "annual"` when resolved from Clerk.
   const foundersPeriod: BillingPeriod =
     nanoItem?.planPeriod === "annual" ? "annual" : "month"
+
+  // The cadence the user is actually paying on, or null when they are on Free.
+  // Drives the "Switch to annual" CTA on their own plan card: without it a
+  // Nano-monthly subscriber who toggles to Annual sees their card greyed out
+  // as "Current plan" and has no way to take the discount.
+  const subscribedPeriod: BillingPeriod | null = !realNano
+    ? null
+    : nanoItem?.planPeriod === "annual"
+      ? "annual"
+      : "month"
 
   // Default the plan-grid toggle to the user's current billing cadence so the
   // displayed price matches what they're already paying. Fall back to annual
@@ -179,11 +247,8 @@ export default function Billing() {
   // Clerk plan catalogue — used to resolve plan IDs for CheckoutButton.
   const { data: clerkPlans } = usePlans()
 
-  // Downgrade-from-paid warning dialog. Triggered by "Cancel subscription"
-  // buttons on plan cards. We surface the actual side-effects Phase A's
-  // enforcement handlers apply (interval clamp, check pruning, etc.) in plain
-  // English before bouncing the user to Clerk's cancel flow.
-  const [downgradeOpen, setDowngradeOpen] = useState(false)
+  // Confirmation gate for the plan changes that lose something. See PlanAction.
+  const [planAction, setPlanAction] = useState<PlanAction | null>(null)
 
   // Compute billing recipient from org metadata (source of truth) for PDF receipts.
   // Use stable primitive keys to avoid re-computing on every Clerk object re-creation.
@@ -277,7 +342,7 @@ export default function Billing() {
           </SignedOut>
 
           <SignedIn>
-            <Tabs key={showPaidTabs ? "paid" : "free"} defaultValue={defaultTab} className="w-full">
+            <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
               <TabsList className="w-full sm:w-fit h-auto sm:h-10 mb-6">
                 {showPaidTabs && (
                   <TabsTrigger value="overview" className={TAB_TRIGGER_CLASS}>
@@ -381,19 +446,30 @@ export default function Billing() {
 
                       <Separator />
 
+                      {/* "Change plan" is first and primary: upgrading is the
+                          action most people arrive here wanting, and before
+                          this existed the Overview tab offered no route to the
+                          plan grid at all. Cancelling is demoted to ghost. */}
                       <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="default"
+                          className="cursor-pointer"
+                          onClick={() => handleTabChange("plans")}
+                        >
+                          Change plan
+                        </Button>
                         <SubscriptionDetailsButton>
-                          <Button variant="default" className="cursor-pointer">
-                            Manage subscription
+                          <Button variant="outline" className="cursor-pointer">
+                            Subscription details
                           </Button>
                         </SubscriptionDetailsButton>
                         {realNano && (
                           <Button
-                            variant="outline"
-                            className="cursor-pointer"
-                            onClick={() => setDowngradeOpen(true)}
+                            variant="ghost"
+                            className="cursor-pointer text-muted-foreground hover:text-foreground"
+                            onClick={() => setPlanAction({ kind: "cancel" })}
                           >
-                            Cancel or downgrade
+                            Cancel subscription
                           </Button>
                         )}
                       </div>
@@ -632,9 +708,10 @@ export default function Billing() {
                       isFounders={isFounders}
                       foundersPeriod={foundersPeriod}
                       billingPeriod={billingPeriod}
+                      subscribedPeriod={subscribedPeriod}
                       clerkPlans={clerkPlans}
                       hasEverPaid={hasEverPaid}
-                      onRequestDowngrade={() => setDowngradeOpen(true)}
+                      onRequestAction={setPlanAction}
                     />
 
                     <p className="text-center text-xs text-muted-foreground">
@@ -651,53 +728,136 @@ export default function Billing() {
               </TabsContent>
             </Tabs>
 
-            <AlertDialog open={downgradeOpen} onOpenChange={setDowngradeOpen}>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    {isFounders
-                      ? "Cancel Founders subscription?"
-                      : "Downgrade your subscription?"}
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {isFounders ? (
-                      <>
-                        Canceling your Founders plan forfeits your grandfathered
-                        $4/mo pricing and Pro features. If you resubscribe, new
-                        pricing applies — Indie at $4/mo, Nano at $9/mo, or Pro
-                        at $24/mo. You'll keep access until the end of the billing
-                        period, then drop to Free ({getMaxChecksForTier('free')} monitors,
-                        5-minute intervals, {formatRetentionForTier('free')} retention).
-                      </>
-                    ) : (
-                      <>
-                        Canceling or downgrading may prune monitors, widen your check
-                        interval, disable SMS and API access, and reduce retention to
-                        match your new plan's limits. Excess webhooks and status
-                        pages are disabled (not deleted). You'll keep access until
-                        the end of the current billing period.
-                      </>
-                    )}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Keep my plan</AlertDialogCancel>
-                  <SubscriptionDetailsButton>
-                    <Button
-                      variant="default"
-                      className="cursor-pointer"
-                      onClick={() => setDowngradeOpen(false)}
-                    >
-                      Continue in Clerk
-                    </Button>
-                  </SubscriptionDetailsButton>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <PlanActionDialog
+              action={planAction}
+              isFounders={isFounders}
+              onOpenChange={(open) => {
+                if (!open) setPlanAction(null)
+              }}
+            />
           </SignedIn>
         </div>
       </div>
     </PageContainer>
+  )
+}
+
+// ---- Plan change confirmation ----
+
+/** "15 seconds" / "1 minute" / "5 minutes" for a tier's interval floor. */
+function formatIntervalForTier(tier: Tier): string {
+  const seconds = getMinCheckIntervalSecondsForTier(tier)
+  if (seconds < 60) return `${seconds}-second`
+  const minutes = Math.round(seconds / 60)
+  return `${minutes}-minute`
+}
+
+/**
+ * Confirms the plan changes that cost the user something. Upgrades never reach
+ * this: they go straight to Clerk checkout, which already shows the prorated
+ * credit and the amount due.
+ */
+function PlanActionDialog({
+  action,
+  isFounders,
+  onOpenChange,
+}: {
+  action: PlanAction | null
+  isFounders: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const title =
+    action?.kind === "cancel"
+      ? isFounders
+        ? "Cancel Founders subscription?"
+        : "Cancel your subscription?"
+      : action?.kind === "founders"
+        ? `Give up Founders pricing for ${action.entry.name}?`
+        : action
+          ? `Downgrade to ${action.entry.name}?`
+          : ""
+
+  return (
+    <AlertDialog open={action !== null} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {action?.kind === "cancel" && isFounders && (
+              <>
+                Canceling your Founders plan forfeits your grandfathered $4/mo
+                pricing and Pro features. If you resubscribe, new pricing
+                applies: Indie at $4/mo, Nano at $9/mo, or Pro at $24/mo. You'll
+                keep access until the end of the billing period, then drop to
+                Free ({getMaxChecksForTier("free")} monitors,{" "}
+                {formatIntervalForTier("free")} intervals,{" "}
+                {formatRetentionForTier("free")} retention).
+              </>
+            )}
+            {action?.kind === "cancel" && !isFounders && (
+              <>
+                You'll keep your current plan until the end of the billing
+                period, then drop to Free: {getMaxChecksForTier("free")}{" "}
+                monitors, {formatIntervalForTier("free")} intervals, and{" "}
+                {formatRetentionForTier("free")} of history. Monitors beyond the
+                Free cap are disabled, never deleted, and extra webhooks, API
+                keys and status pages are switched off. Everything comes back if
+                you resubscribe.
+              </>
+            )}
+            {action?.kind === "founders" && (
+              <>
+                Switching to {action.entry.name} ends your grandfathered $4/mo
+                Founders pricing permanently. It cannot be restored, even if you
+                switch back. {action.entry.name} costs $
+                {action.period === "annual"
+                  ? `${action.entry.priceAnnual}/year`
+                  : `${action.entry.priceMonthly}/month`}
+                .
+              </>
+            )}
+            {action?.kind === "downgrade" && (
+              <>
+                You'll keep your current plan until the end of the billing
+                period, then move to {action.entry.name}:{" "}
+                {getMaxChecksForTier(action.entry.tier)} monitors,{" "}
+                {formatIntervalForTier(action.entry.tier)} intervals, and{" "}
+                {formatRetentionForTier(action.entry.tier)} of history. Monitors
+                beyond the new cap are disabled, never deleted, and extra
+                webhooks, API keys and status pages are switched off. Everything
+                comes back if you move up again.
+              </>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep my plan</AlertDialogCancel>
+          {action?.kind === "cancel" ? (
+            // Cancelling is the one thing checkout cannot do, so this is the
+            // only remaining hand-off to Clerk's subscription drawer.
+            <SubscriptionDetailsButton>
+              <Button
+                variant="default"
+                className="cursor-pointer"
+                onClick={() => onOpenChange(false)}
+              >
+                Continue to cancel
+              </Button>
+            </SubscriptionDetailsButton>
+          ) : action ? (
+            <CheckoutButton planId={action.planId} planPeriod={action.period}>
+              <Button
+                variant="default"
+                className="cursor-pointer"
+                onClick={() => onOpenChange(false)}
+              >
+                Continue to {action.entry.name}
+              </Button>
+            </CheckoutButton>
+          ) : null}
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -708,10 +868,12 @@ interface PlanMatrixProps {
   isFounders: boolean
   foundersPeriod: BillingPeriod
   billingPeriod: BillingPeriod
+  /** The cadence the user pays on today, or null on Free. */
+  subscribedPeriod: BillingPeriod | null
   clerkPlans: ClerkPlan[] | null | undefined
   /** Whether the account has any settled payment (blocks trial wording). */
   hasEverPaid: boolean
-  onRequestDowngrade: () => void
+  onRequestAction: (action: PlanAction) => void
 }
 
 function PlanMatrix({
@@ -719,16 +881,22 @@ function PlanMatrix({
   isFounders,
   foundersPeriod,
   billingPeriod,
+  subscribedPeriod,
   clerkPlans,
   hasEverPaid,
-  onRequestDowngrade,
+  onRequestAction,
 }: PlanMatrixProps) {
+  const plansLoaded = Array.isArray(clerkPlans) && clerkPlans.length > 0
+
   // Founders users see the Founders card in place of the Pro card — they
   // already have Pro entitlements at a grandfathered price, so showing Pro
   // would just be a more expensive version of what they have.
   const cards: React.ReactNode[] = []
 
   const makeCard = (entry: PlanMatrixEntry, highlighted = false) => {
+    // The badge and ring mark the tier the user is on, regardless of which
+    // cadence the toggle is showing — it is still their plan. Whether the CTA
+    // is inert is a separate question, answered in PlanCTA.
     const isCurrent = !isFounders && realTier === entry.tier
     const clerkPlan = findClerkPlan(clerkPlans, entry.clerkSlugs)
     // Only a free user starting their first paid subscription gets the trial.
@@ -749,9 +917,11 @@ function PlanMatrix({
             isFounders={isFounders}
             isCurrent={isCurrent}
             clerkPlan={clerkPlan}
+            plansLoaded={plansLoaded}
             billingPeriod={billingPeriod}
+            subscribedPeriod={subscribedPeriod}
             hasEverPaid={hasEverPaid}
-            onRequestDowngrade={onRequestDowngrade}
+            onRequestAction={onRequestAction}
           />
         }
       />
@@ -782,28 +952,29 @@ function PlanCTA({
   isFounders,
   isCurrent,
   clerkPlan,
+  plansLoaded,
   billingPeriod,
+  subscribedPeriod,
   hasEverPaid,
-  onRequestDowngrade,
+  onRequestAction,
 }: {
   entry: PlanMatrixEntry
   realTier: Tier
   isFounders: boolean
   isCurrent: boolean
   clerkPlan: ClerkPlan | null
+  /** False until Clerk's plan catalogue has answered. */
+  plansLoaded: boolean
   billingPeriod: BillingPeriod
+  subscribedPeriod: BillingPeriod | null
   hasEverPaid: boolean
-  onRequestDowngrade: () => void
+  onRequestAction: (action: PlanAction) => void
 }) {
-  if (isCurrent) {
-    return (
-      <Button variant="outline" className="w-full cursor-not-allowed" disabled>
-        Current plan
-      </Button>
-    )
-  }
+  const primaryClass = cn("w-full cursor-pointer", TIER_BUTTON_PRIMARY[entry.tier])
+  const outlineClass = cn("w-full cursor-pointer", TIER_BUTTON_OUTLINE[entry.tier])
 
-  // The Free row for paid users is a downgrade entry-point.
+  // The Free row is never a checkout target: leaving a paid plan means
+  // cancelling, which only Clerk's subscription drawer can do.
   if (entry.key === "free") {
     if (realTier === "free" && !isFounders) {
       return (
@@ -816,61 +987,114 @@ function PlanCTA({
       <Button
         variant="outline"
         className="w-full cursor-pointer"
-        onClick={onRequestDowngrade}
+        onClick={() => onRequestAction({ kind: "cancel" })}
       >
         Cancel subscription
       </Button>
     )
   }
 
-  // Paid plans. For paid users, plan switches go through Clerk's subscription
-  // management flow (handles proration + confirmation correctly). For free
-  // users signing up, use CheckoutButton for a direct checkout experience.
-  const targetRank = TIER_RANK[entry.tier]
-  const currentRank = TIER_RANK[realTier]
-  const isUpgrade = targetRank > currentRank
-  const label = isUpgrade ? `Upgrade to ${entry.name}` : `Switch to ${entry.name}`
-
-  const isPaidUser = realTier !== "free"
-  const primaryClass = cn("w-full cursor-pointer", TIER_BUTTON_PRIMARY[entry.tier])
-  const outlineClass = cn("w-full cursor-pointer", TIER_BUTTON_OUTLINE[entry.tier])
-
-  if (isPaidUser || isFounders) {
-    return (
-      <SubscriptionDetailsButton>
-        <Button
-          variant={isUpgrade ? "default" : "outline"}
-          className={isUpgrade ? primaryClass : outlineClass}
-        >
-          {label}
+  // Without a resolved Clerk plan id there is nothing to check out into.
+  // Normally that just means `usePlans` hasn't answered yet. If the catalogue
+  // did load and still has no match, the slugs in PLAN_MATRIX have drifted from
+  // the Clerk dashboard — say so instead of sitting on "Loading…" forever.
+  if (!clerkPlan?.id) {
+    if (!plansLoaded) {
+      return (
+        <Button variant="outline" className="w-full" disabled>
+          Loading…
         </Button>
-      </SubscriptionDetailsButton>
+      )
+    }
+    return (
+      <Button asChild variant="outline" className="w-full cursor-pointer">
+        <a href={`mailto:connect@exit1.dev?subject=${encodeURIComponent(`${entry.name} plan`)}`}>
+          Contact us
+        </a>
+      </Button>
     )
   }
 
-  // Free user, direct checkout. Trial wording only if they have never paid
-  // before; the matching terms line lives on the card's `ctaNote`.
-  const startLabel = isTrialEligible(realTier, isFounders, hasEverPaid, entry)
-    ? TRIAL_CTA_LABEL
-    : `Get ${entry.name}`
-
-  if (clerkPlan?.id) {
+  // The user's own tier. Same cadence means there is genuinely nothing to do;
+  // the other cadence is a real, and previously unreachable, switch.
+  if (isCurrent) {
+    if (!subscribedPeriod || subscribedPeriod === billingPeriod) {
+      return (
+        <Button variant="outline" className="w-full cursor-not-allowed" disabled>
+          Current plan
+        </Button>
+      )
+    }
     return (
       <CheckoutButton planId={clerkPlan.id} planPeriod={billingPeriod}>
         <Button variant="default" className={primaryClass}>
-          {startLabel}
+          {billingPeriod === "annual" ? "Switch to annual" : "Switch to monthly"}
         </Button>
       </CheckoutButton>
     )
   }
 
-  // Plan catalogue hasn't loaded yet — fall back to subscription management.
-  return (
-    <SubscriptionDetailsButton>
-      <Button variant="default" className={primaryClass}>
-        {startLabel}
+  const isUpgrade = TIER_RANK[entry.tier] > TIER_RANK[realTier]
+  const isPaidUser = realTier !== "free"
+
+  // Founders are on a grandfathered price that cannot be recovered once they
+  // leave it, so every switch away from it is confirmed first.
+  if (isFounders) {
+    return (
+      <Button
+        variant="outline"
+        className={outlineClass}
+        onClick={() =>
+          onRequestAction({
+            kind: "founders",
+            entry,
+            planId: clerkPlan.id,
+            period: billingPeriod,
+          })
+        }
+      >
+        Switch to {entry.name}
       </Button>
-    </SubscriptionDetailsButton>
+    )
+  }
+
+  // Moving to a cheaper paid plan. Clerk's checkout explains the billing side
+  // ("you keep your current plan until the end of the cycle"), but only we can
+  // say which monitors stop running, so confirm before handing over.
+  if (isPaidUser && !isUpgrade) {
+    return (
+      <Button
+        variant="outline"
+        className={outlineClass}
+        onClick={() =>
+          onRequestAction({
+            kind: "downgrade",
+            entry,
+            planId: clerkPlan.id,
+            period: billingPeriod,
+          })
+        }
+      >
+        Downgrade to {entry.name}
+      </Button>
+    )
+  }
+
+  // Everything left is revenue-positive: a free user subscribing or a paid user
+  // moving up. Straight to checkout, no interstitial. Clerk prorates the
+  // remainder of the current cycle and shows the credit on the way through.
+  const label = isPaidUser
+    ? `Upgrade to ${entry.name}`
+    : isTrialEligible(realTier, isFounders, hasEverPaid, entry)
+      ? TRIAL_CTA_LABEL
+      : `Get ${entry.name}`
+
+  return (
+    <CheckoutButton planId={clerkPlan.id} planPeriod={billingPeriod}>
+      <Button variant="default" className={primaryClass}>
+        {label}
+      </Button>
+    </CheckoutButton>
   )
 }
 

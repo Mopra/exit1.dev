@@ -1,5 +1,6 @@
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
+import { isTransition, mergeLastWritten, type LastWrittenState } from "./status-transition";
 
 // Type definition for status updates
 export interface StatusUpdateData {
@@ -275,8 +276,8 @@ export const setStatusUpdateHook = (hook: typeof onStatusUpdateHook) => { onStat
 // When enabled, only state-transition updates go through the main flush
 // path. Heartbeat-style updates (same status, just lastChecked moving)
 // accumulate in `deferredHeartbeatBuffer` and flush on the VPS-side timer
-// (HEARTBEAT_DEFER_FLUSH_INTERVAL_MS in vps/src/runner.ts — 15 min as of
-// firestore-write-reduction.md Tier 1). This trades fallback freshness
+// (HEARTBEAT_DEFER_FLUSH_INTERVAL_MS in vps/src/runner.ts, 60 min default,
+// env-overridable). This trades fallback freshness
 // (`lastChecked` in Firestore stale up to one flush interval) for the
 // dominant share of Firestore writes on the `checks` collection. Phases
 // 1–6 made the frontend stop depending on Firestore for live freshness,
@@ -287,20 +288,10 @@ export const setStatusUpdateHook = (hook: typeof onStatusUpdateHook) => { onStat
 // operators can flip the switch without redeploying. Disabling drains
 // the deferred buffer immediately so subsequent writes flow through the
 // existing path with no gap.
-// INVARIANT: every field consulted by isTransition below MUST also be part
-// of materialHashOf. A transition-classified update whose deciding field
-// weren't material would be routed to the immediate flush path and then
-// steady-skipped there (unchanged material hash + fresh writtenAt) —
-// silently dropping a write the classifier promised was immediate.
-interface LastWrittenState {
-  status?: StatusUpdateData['status'];
-  detailedStatus?: StatusUpdateData['detailedStatus'];
-  disabled?: StatusUpdateData['disabled'];
-  maintenanceMode?: StatusUpdateData['maintenanceMode'];
-  lastError?: StatusUpdateData['lastError'];
-  consecutiveFailures?: StatusUpdateData['consecutiveFailures'];
-}
-
+// INVARIANT: every field consulted by isTransition MUST also be part of
+// materialHashOf, and every field alerting reads back from Firestore must
+// classify as a transition when it changes. The classifier itself lives in
+// status-transition.ts (pure, unit-tested); see the module comment there.
 const lastWrittenSnapshot = new Map<string, LastWrittenState>();
 const deferredHeartbeatBuffer = new Map<string, StatusUpdateData>();
 let heartbeatDeferEnabled = false;
@@ -310,54 +301,8 @@ let writesPromotedFromDeferred = 0;
 let writesSkippedSteadyState = 0;
 let lastDeferredFlushAt = 0;
 
-/**
- * Decide whether an incoming update is a state transition (must write
- * immediately) or a heartbeat (eligible for deferral). The first
- * observation of a check is always treated as a transition so the
- * baseline `lastWrittenSnapshot` gets seeded before any heartbeat can
- * be deferred.
- *
- * `consecutiveFailures` crosses zero is the only count-based transition
- * trigger — going from 0→1 (started failing) or N→0 (recovered) flips
- * downstream alerting, so it can't wait 5 min.
- */
-function isTransition(checkId: string, data: StatusUpdateData): boolean {
-  const prev = lastWrittenSnapshot.get(checkId);
-  if (!prev) return true;
-
-  if (data.status !== undefined && data.status !== prev.status) return true;
-  if (data.detailedStatus !== undefined && data.detailedStatus !== prev.detailedStatus) return true;
-  if (data.disabled !== undefined && data.disabled !== prev.disabled) return true;
-  if (data.maintenanceMode !== undefined && data.maintenanceMode !== prev.maintenanceMode) return true;
-
-  // lastError: null vs string vs different string all count as transitions.
-  // Normalize undefined to null for the comparison so a missing field
-  // doesn't show up as a transition every cycle.
-  if ('lastError' in data) {
-    const prevErr = prev.lastError ?? null;
-    const newErr = data.lastError ?? null;
-    if (prevErr !== newErr) return true;
-  }
-
-  if (data.consecutiveFailures !== undefined) {
-    const prevCount = prev.consecutiveFailures ?? 0;
-    const newCount = data.consecutiveFailures;
-    if ((prevCount === 0) !== (newCount === 0)) return true;
-  }
-
-  return false;
-}
-
 function recordLastWritten(checkId: string, data: StatusUpdateData): void {
-  const prev = lastWrittenSnapshot.get(checkId) ?? {};
-  lastWrittenSnapshot.set(checkId, {
-    status: data.status ?? prev.status,
-    detailedStatus: data.detailedStatus ?? prev.detailedStatus,
-    disabled: data.disabled ?? prev.disabled,
-    maintenanceMode: data.maintenanceMode ?? prev.maintenanceMode,
-    lastError: 'lastError' in data ? data.lastError : prev.lastError,
-    consecutiveFailures: data.consecutiveFailures ?? prev.consecutiveFailures,
-  });
+  lastWrittenSnapshot.set(checkId, mergeLastWritten(lastWrittenSnapshot.get(checkId), data));
 }
 
 /**
@@ -436,7 +381,7 @@ export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): 
   // Phase 7: route heartbeat-style updates to the deferred buffer when
   // the flag is enabled. Transitions stay on the immediate path so
   // alerting/state changes still write within ~1.5s.
-  if (heartbeatDeferEnabled && !isTransition(checkId, data)) {
+  if (heartbeatDeferEnabled && !isTransition(lastWrittenSnapshot.get(checkId), data)) {
     const existing = deferredHeartbeatBuffer.get(checkId);
     deferredHeartbeatBuffer.set(checkId, existing ? { ...existing, ...data } : data);
     writesDeferred++;

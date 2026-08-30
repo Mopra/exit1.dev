@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import type { NotificationUsage } from '../../lib/notification-shared';
 import { usePlan } from '../../hooks/usePlan';
-import { formatEmailBudgetForTier } from '../../lib/subscription';
+import { formatEmailBudgetForTier, nextTierWithMore } from '../../lib/subscription';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -57,8 +57,6 @@ export interface SettingsSummaryStripProps {
   monthlyResetLabel: string;
   /** Whether the settings have been initialized from the server */
   isInitialized: boolean;
-  /** Whether the user is on a free (non-nano) plan */
-  isFree: boolean;
   /** Called to reset per-check settings to default */
   onResetToDefault: () => void;
   /** Whether a reset is possible */
@@ -171,7 +169,6 @@ const ExpandedPanel = memo(function ExpandedPanel({
   monthlyReached,
   monthlyResetLabel,
   isInitialized,
-  isFree,
   onResetToDefault,
   canReset,
   onTest,
@@ -184,6 +181,8 @@ const ExpandedPanel = memo(function ExpandedPanel({
   // old copy was wrong for Indie and Pro, and went stale the moment the budgets
   // moved.
   const { tier } = usePlan();
+  // Cheapest plan above the user's that raises the monthly email budget.
+  const emailUpgrade = nextTierWithMore(tier, "emailsPerMonth");
 
   const handleAddEmail = () => {
     const trimmed = newEmail.trim();
@@ -279,9 +278,16 @@ const ExpandedPanel = memo(function ExpandedPanel({
                     <AlertTitle>Email limit reached</AlertTitle>
                     <AlertDescription className="flex flex-col gap-2">
                       <span>You've reached your monthly email limit.</span>
-                      {isFree && (
+                      {/* Name the cheapest plan that actually raises this cap.
+                          Hardcoding "Nano for 1000 emails" pushed the people
+                          who hit this wall at a $9 plan when Indie at $4 fixes
+                          it, and quoted a budget the backend never honoured. */}
+                      {emailUpgrade && (
                         <Button asChild size="sm" variant="outline" className="w-fit cursor-pointer">
-                          <Link to="/billing">Upgrade to Nano for 1000 emails/month</Link>
+                          <Link to="/billing?tab=plans">
+                            Upgrade to {emailUpgrade.name} for{" "}
+                            {emailUpgrade.max.toLocaleString()} emails/month
+                          </Link>
                         </Button>
                       )}
                     </AlertDescription>

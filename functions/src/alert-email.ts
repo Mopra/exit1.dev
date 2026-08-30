@@ -632,7 +632,9 @@ export const sendLimitReachedEmail = async (
     }
 
     const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
-    const billingUrl = `${baseUrl}/billing`;
+    // Straight to the plan grid. Plain /billing drops a paying user on the
+    // Overview tab, which has no plan picker.
+    const billingUrl = `${baseUrl}/billing?tab=plans`;
     const channelLabel = channel === 'email' ? 'email' : 'SMS';
 
     const subject = `Your monthly ${channelLabel} notification limit has been reached`;

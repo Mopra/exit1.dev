@@ -224,6 +224,8 @@ type CountableDimension =
   | "maxStatusPages"
   | "maxApiKeys"
   | "retentionDays"
+  | "emailsPerMonth"
+  | "emailsPerHour"
 
 type BooleanDimension = {
   [K in keyof TierLimitsRow]: TierLimitsRow[K] extends boolean ? K : never
