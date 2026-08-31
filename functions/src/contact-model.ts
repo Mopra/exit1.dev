@@ -49,6 +49,22 @@ export const PROPERTY_DEFS: PropertyDef[] = [
   { key: "signup_date", type: "string", fallbackValue: "" },
   { key: "plan_tier", type: "string", fallbackValue: "free" },
   { key: "team_size", type: "string", fallbackValue: "" },
+  // ---- Activation state ----
+  //
+  // Everything above describes who the user said they were at signup. These five
+  // describe what they have actually done, which is what decides whether they
+  // stay. Without them you can segment "solo developers from Reddit" but not
+  // "signed up eight days ago, owns one monitor, cannot be alerted", and the
+  // second list is the one worth emailing.
+  //
+  // Refreshed by the lifecycle sweep (functions/src/lifecycle.ts), not on write,
+  // so they lag by up to a day. Strings only: Day3 rejects a whole batch if any
+  // attribute value is a number or boolean.
+  { key: "check_count", type: "string", fallbackValue: "0" },
+  { key: "checks_alertable", type: "string", fallbackValue: "0" },
+  { key: "has_alert_channel", type: "string", fallbackValue: "false" },
+  { key: "first_incident_date", type: "string", fallbackValue: "" },
+  { key: "last_active_date", type: "string", fallbackValue: "" },
   ...SOURCE_KEYS.map((k) => ({
     key: `source_${k}`,
     type: "string" as const,
@@ -69,10 +85,31 @@ export interface OnboardingAnswers {
   teamSize: string | null;
 }
 
+/**
+ * What the user has actually done. Every field is optional: omitting one leaves
+ * the provider's existing value alone, which matters because the onboarding
+ * submit path knows the answers but not the activation state, and the lifecycle
+ * sweep knows the activation state but should not clobber the answers.
+ */
+export interface ActivationState {
+  checkCount?: number;
+  checksAlertable?: number;
+  hasAlertChannel?: boolean;
+  /**
+   * Milliseconds, or null when no outage has ever been observed. Derived from
+   * `lastDowntime`, so the presence of a value is exact and the date is a lower
+   * bound. See UserCoverage.firstIncidentAt in alert-coverage.ts.
+   */
+  firstIncidentAt?: number | null;
+  /** Milliseconds of last sign-in, or null when unknown. */
+  lastActiveAt?: number | null;
+}
+
 export interface ContactPropertiesInput {
   signupDate?: string | null;
   tier: UserTier;
   onboarding?: OnboardingAnswers | null;
+  activation?: ActivationState | null;
 }
 
 export const sleep = (ms: number) =>
@@ -111,6 +148,27 @@ export function buildPropertiesForUser(
     const useCaseSet = new Set(onboarding.useCases);
     for (const key of USE_CASE_KEYS) {
       props[`use_case_${key}`] = useCaseSet.has(key) ? "true" : "false";
+    }
+  }
+
+  const activation = input.activation;
+  if (activation) {
+    if (typeof activation.checkCount === "number") {
+      props.check_count = String(activation.checkCount);
+    }
+    if (typeof activation.checksAlertable === "number") {
+      props.checks_alertable = String(activation.checksAlertable);
+    }
+    if (typeof activation.hasAlertChannel === "boolean") {
+      props.has_alert_channel = activation.hasAlertChannel ? "true" : "false";
+    }
+    // `undefined` means "not known, leave it alone"; explicit `null` means
+    // "known to have never happened", which is a real value worth writing.
+    if (activation.firstIncidentAt !== undefined) {
+      props.first_incident_date = formatSignupDate(activation.firstIncidentAt) ?? "";
+    }
+    if (activation.lastActiveAt !== undefined) {
+      props.last_active_date = formatSignupDate(activation.lastActiveAt) ?? "";
     }
   }
 

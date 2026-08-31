@@ -231,16 +231,11 @@ export const submitOnboardingResponse = onCall(
       ? data.planChoice
       : null;
 
-  if (sources.length === 0) {
-    throw new HttpsError("invalid-argument", "At least one source is required");
-  }
-  if (useCases.length === 0) {
-    throw new HttpsError("invalid-argument", "At least one use case is required");
-  }
-  if (!teamSize) {
-    throw new HttpsError("invalid-argument", "teamSize is required");
-  }
-
+  // The three survey answers are analytics, not entitlements, and they are now
+  // skippable in the UI. Rejecting an empty answer set here would leave a user who
+  // skipped with no completion marker at all, which drags them back through the
+  // whole flow on their next sign-in. Record whatever was given and move on: the
+  // admin dashboard already renders an explicit "(none)" bucket for these.
   const submittedAt = Date.now();
 
   await ensureTable();

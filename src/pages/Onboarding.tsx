@@ -31,12 +31,16 @@ import {
   Zap,
   Loader2,
   AlertCircle,
+  BellRing,
+  Mail,
+  ChevronDown,
+  ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { CheckoutButton, usePlans } from '@clerk/clerk-react/experimental';
-import { collection, getDocs, limit, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
 import { db } from '@/firebase';
 import { apiClient } from '@/api/client';
 import { generateFriendlyName } from '@/lib/check-utils';
@@ -45,15 +49,30 @@ import { BillingPeriodToggle, PlanCard } from '@/components/billing/plan-matrix'
 import {
   PLAN_MATRIX,
   TIER_BUTTON_PRIMARY,
+  annualisedPrice,
   findClerkPlan,
+  findPlanEntry,
+  paidCtaLabel,
+  recommendPlans,
   trialNote,
-  TRIAL_CTA_LABEL,
   type BillingPeriod,
   type PlanKey,
   type PlanMatrixEntry,
 } from '@/components/billing/plan-matrix-data';
+import { DEFAULT_NOTIFICATION_EVENTS } from '@/lib/notification-shared';
+import { getMinCheckIntervalSecondsForTier } from '@/lib/subscription';
 import { cn } from '@/lib/utils';
-import { trackSignUp, type SignUpMethod } from '@/lib/analytics';
+import {
+  trackBeginCheckout,
+  trackOnboardingAlertsEnabled,
+  trackOnboardingComplete,
+  trackOnboardingSkip,
+  trackOnboardingStep,
+  trackPurchase,
+  trackSignUp,
+  type OnboardingStepName,
+  type SignUpMethod,
+} from '@/lib/analytics';
 
 const PREFILL_WEBSITE_URL_KEY = 'exit1_website_url';
 
@@ -87,23 +106,95 @@ const USE_CASE_OPTIONS: { value: string; label: string; icon: React.ReactNode }[
 
 const TEAM_SIZE_OPTIONS: { value: string; label: string; detail: string; icon: React.ReactNode }[] = [
   { value: 'solo', label: 'Just me', detail: 'Solo developer', icon: <User className="h-4 w-4" /> },
-  { value: '2_5', label: '2–5 people', detail: 'Small team', icon: <Users2 className="h-4 w-4" /> },
-  { value: '6_20', label: '6–20 people', detail: 'Growing team', icon: <UsersRound className="h-4 w-4" /> },
-  { value: '21_100', label: '21–100 people', detail: 'Mid-sized company', icon: <Users className="h-4 w-4" /> },
+  { value: '2_5', label: '2 to 5 people', detail: 'Small team', icon: <Users2 className="h-4 w-4" /> },
+  { value: '6_20', label: '6 to 20 people', detail: 'Growing team', icon: <UsersRound className="h-4 w-4" /> },
+  { value: '21_100', label: '21 to 100 people', detail: 'Mid-sized company', icon: <Users className="h-4 w-4" /> },
   { value: '100_plus', label: '100+ people', detail: 'Large organization', icon: <Building className="h-4 w-4" /> },
 ];
 
-const ALL_STEPS = [1, 2, 3, 4, 5] as const;
-// Steps 1-3 are the survey, 4 is "add your first check", 5 is plan selection.
-// Step 4 is dropped only for users who already have a check (returning users in
-// the force=1 preview, or anyone who added one elsewhere) — there's nothing to
-// add. A prefilled marketing URL keeps step 4: we pre-run that check in the
-// background so the step shows a finished result instead of asking again.
-const STEPS_WITHOUT_FIRST_CHECK = [1, 2, 3, 5] as const;
+// Steps 1-3 are the survey, 4 adds the first check, 5 turns on alerts, 6 picks a
+// plan.
+//
+// Step 5 is the important one and it did not used to exist. The flow got a monitor
+// running, printed "we'll alert you the moment anything changes" on step 4, and
+// then never wired up a channel. An audit of production found 380 of 588 users
+// holding a live check with no reachable channel at all: no email settings, no
+// webhook, no SMS. Free users who went through this flow were covered 19.6% of the
+// time against 38.6% for users who predate it, because the one-click first check
+// removed the fumbling that used to make people find the Emails page.
+const STEP_SOURCES = 1;
+const STEP_USE_CASES = 2;
+const STEP_TEAM_SIZE = 3;
+const STEP_FIRST_CHECK = 4;
+const STEP_ALERTS = 5;
+const STEP_PLAN = 6;
 
-// Onboarding shows the four live plans — Founders (legacy `nano` plan key) is
-// intentionally hidden. New users can only pick from plans currently for sale.
+const ALL_STEPS = [
+  STEP_SOURCES, STEP_USE_CASES, STEP_TEAM_SIZE, STEP_FIRST_CHECK, STEP_ALERTS, STEP_PLAN,
+] as const;
+
+const SURVEY_STEPS: readonly number[] = [STEP_SOURCES, STEP_USE_CASES, STEP_TEAM_SIZE];
+
+/** Stable analytics slugs. Keyed by step id so a reorder cannot mislabel a step. */
+const STEP_NAMES: Record<number, OnboardingStepName> = {
+  [STEP_SOURCES]: 'sources',
+  [STEP_USE_CASES]: 'use_cases',
+  [STEP_TEAM_SIZE]: 'team_size',
+  [STEP_FIRST_CHECK]: 'first_check',
+  [STEP_ALERTS]: 'alerts',
+  [STEP_PLAN]: 'plan',
+};
+
+// Onboarding shows the four live plans. Founders (legacy `nano` plan key) is
+// intentionally hidden: new users can only pick from plans currently for sale.
 // Plan data lives in `plan-matrix.tsx` so Billing and Onboarding stay in sync.
+
+// Answers and current step survive a reload and a re-login, per user. Before this,
+// state lived in component `useState` alone, so anyone who dropped at step 3 and
+// came back landed on step 1 with everything gone, facing the same three screens
+// again with no way past them.
+const PROGRESS_KEY_PREFIX = 'exit1_onboarding_progress:';
+
+type StoredProgress = { step: number; answers: Answers };
+
+function readProgress(userId: string | null | undefined): StoredProgress | null {
+  if (!userId) return null;
+  try {
+    const raw = localStorage.getItem(`${PROGRESS_KEY_PREFIX}${userId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredProgress>;
+    const a = parsed.answers;
+    if (!a || !Array.isArray(a.sources) || !Array.isArray(a.useCases)) return null;
+    return {
+      step: typeof parsed.step === 'number' && ALL_STEPS.includes(parsed.step as 1) ? parsed.step : 1,
+      answers: {
+        sources: a.sources.filter((s): s is string => typeof s === 'string'),
+        useCases: a.useCases.filter((s): s is string => typeof s === 'string'),
+        teamSize: typeof a.teamSize === 'string' ? a.teamSize : null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeProgress(userId: string | null | undefined, value: StoredProgress): void {
+  if (!userId) return;
+  try {
+    localStorage.setItem(`${PROGRESS_KEY_PREFIX}${userId}`, JSON.stringify(value));
+  } catch {
+    // Private mode or quota. Losing resume is survivable; failing the flow is not.
+  }
+}
+
+function clearProgress(userId: string | null | undefined): void {
+  if (!userId) return;
+  try {
+    localStorage.removeItem(`${PROGRESS_KEY_PREFIX}${userId}`);
+  } catch {
+    /* ignore */
+  }
+}
 
 function ProgressIndicator({ currentIndex, total }: { currentIndex: number; total: number }) {
   return (
@@ -224,6 +315,12 @@ export default function Onboarding() {
   // (returning users in force=1 preview, or users who signed up, bounced, and
   // came back after adding a check elsewhere). Null = still probing.
   const [hasExistingChecks, setHasExistingChecks] = useState<boolean | null>(null);
+  // Same idea for the alert step: someone who already put an address on the Emails
+  // page does not need to be asked again. Read direct from Firestore rather than
+  // through a callable so the probe finishes inside the survey, before the step
+  // could render. Null = still probing.
+  const [hasExistingAlertChannel, setHasExistingAlertChannel] = useState<boolean | null>(null);
+
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
@@ -237,14 +334,34 @@ export default function Onboarding() {
         if (!cancelled) setHasExistingChecks(false);
       }
     })();
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'emailSettings', userId));
+        const data = snap.exists() ? (snap.data() as {
+          enabled?: boolean;
+          recipient?: string;
+          recipients?: string[];
+        }) : null;
+        const recipientCount = data?.recipients?.length ?? (data?.recipient ? 1 : 0);
+        if (!cancelled) setHasExistingAlertChannel(Boolean(data) && data?.enabled !== false && recipientCount > 0);
+      } catch {
+        // Fail open: showing the alert step to someone who already set it up is a
+        // wasted click. Skipping it for someone who has not is a silent monitor.
+        if (!cancelled) setHasExistingAlertChannel(false);
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [userId]);
 
   const steps = useMemo<readonly number[]>(
-    () => (hasExistingChecks ? STEPS_WITHOUT_FIRST_CHECK : ALL_STEPS),
-    [hasExistingChecks]
+    () => ALL_STEPS.filter((s) => {
+      if (s === STEP_FIRST_CHECK) return hasExistingChecks !== true;
+      if (s === STEP_ALERTS) return hasExistingAlertChannel !== true;
+      return true;
+    }),
+    [hasExistingChecks, hasExistingAlertChannel]
   );
 
   // Preview mode for manual testing — lets an already-completed user re-view the
@@ -275,18 +392,56 @@ export default function Onboarding() {
     teamSize: null,
   });
 
+  // Resume where they left off. Runs once per user id: `userId` is null on the
+  // first render while Clerk resolves, so this cannot go in the initialiser.
+  const progressRestoredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!userId || progressRestoredRef.current === userId) return;
+    progressRestoredRef.current = userId;
+    // `?force=1` exists to re-view the flow from the top; restoring saved progress
+    // there would defeat the point of the preview.
+    if (forcePreview) return;
+    const stored = readProgress(userId);
+    if (!stored) return;
+    setAnswers(stored.answers);
+    setStep(stored.step);
+  }, [userId, forcePreview]);
+
+  // Persist on every change. Cheap, and the alternative is losing the answers on a
+  // refresh in the middle of a mandatory survey.
+  useEffect(() => {
+    if (!userId || progressRestoredRef.current !== userId) return;
+    writeProgress(userId, { step, answers });
+  }, [userId, step, answers]);
+
   // First-check step state. Seed the input with the prefilled URL right away so
-  // it's already showing the moment the step renders — no empty-then-fill flash.
+  // it's already showing the moment the step renders: no empty-then-fill flash.
   const [firstCheckUrl, setFirstCheckUrl] = useState(prefilledWebsiteUrl ?? '');
   const [firstCheckLoading, setFirstCheckLoading] = useState(false);
   const [firstCheckPhase, setFirstCheckPhase] = useState<'adding' | 'running'>('adding');
   const [firstCheckError, setFirstCheckError] = useState<string | null>(null);
   const [firstCheckResult, setFirstCheckResult] = useState<
-    | { status: string; url: string; responseTime?: number; detailedStatus?: string }
+    | { id: string; status: string; url: string; responseTime?: number; detailedStatus?: string }
     | null
   >(null);
   const prefillHandledRef = useRef(false);
   const firstCheckInputRef = useRef<HTMLInputElement>(null);
+
+  // Alert step state. The recipient is seeded from the Clerk primary email, which
+  // is the address they just verified to get here, so the common path is one click
+  // with nothing to type.
+  const clerkEmail = user?.primaryEmailAddress?.emailAddress ?? '';
+  const [alertEmail, setAlertEmail] = useState('');
+  const [alertEmailTouched, setAlertEmailTouched] = useState(false);
+  const [alertsSaving, setAlertsSaving] = useState(false);
+  const [alertsEnabled, setAlertsEnabled] = useState(false);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
+
+  // Seed once Clerk has the user, without stomping on anything typed since.
+  useEffect(() => {
+    if (!clerkEmail || alertEmailTouched) return;
+    setAlertEmail((prev) => (prev ? prev : clerkEmail));
+  }, [clerkEmail, alertEmailTouched]);
 
   const handleFirstCheckUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value;
@@ -340,6 +495,7 @@ export default function Onboarding() {
       }
 
       setFirstCheckResult({
+        id: addRes.data.id,
         status: addRes.data.status ?? 'unknown',
         url,
         responseTime: addRes.data.responseTime,
@@ -373,9 +529,43 @@ export default function Onboarding() {
     }
   }, [prefilledWebsiteUrl, hasExistingChecks, runFirstCheck]);
 
+  // Turn on email alerts for every check, now and in future.
+  //
+  // `mode: 'all'` is the whole point. The app's own default is `'include'`, which
+  // only delivers for checks the user has individually ticked, so saving a
+  // recipient without also flipping the filter produces a settings page that looks
+  // configured and sends nothing. 386 of the 404 existing settings documents are in
+  // include mode, which is why so many users with an address on file still get no
+  // alerts.
+  const enableAlerts = useCallback(async () => {
+    const email = alertEmail.trim();
+    if (!email) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAlertsError('That does not look like an email address.');
+      return;
+    }
+    setAlertsSaving(true);
+    setAlertsError(null);
+    try {
+      const res = await apiClient.enableEmailAlertsForAllChecks([email], DEFAULT_NOTIFICATION_EVENTS);
+      if (!res.success) {
+        setAlertsError(res.error || 'Could not turn on alerts. Please try again.');
+        return;
+      }
+      setAlertsEnabled(true);
+      trackOnboardingAlertsEnabled('button');
+    } catch (err) {
+      setAlertsError(err instanceof Error ? err.message : 'Could not turn on alerts.');
+    } finally {
+      setAlertsSaving(false);
+    }
+  }, [alertEmail]);
+
   // Onboarding always shows annual by default (matches the best per-month
   // price), but users can switch to monthly before checkout.
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>('annual');
+  // The picker leads with two recommended cards; this reveals all four.
+  const [showAllPlans, setShowAllPlans] = useState(false);
 
   const toggleMulti = (key: 'sources' | 'useCases', value: string) => {
     setAnswers((prev) => {
@@ -392,17 +582,16 @@ export default function Onboarding() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // The submit must complete server-side BEFORE we navigate — otherwise a
-  // failed network call leaves the user marked complete only in localStorage,
-  // and they'll be re-shown the flow on their next device/browser. One retry
-  // covers transient cold-start timeouts; on hard failure we surface the
-  // error and stay on the page so the user can retry.
+  // The submit must complete server-side BEFORE we navigate, otherwise a failed
+  // network call leaves the user marked complete only in localStorage, and they'll
+  // be re-shown the flow on their next device or browser. One retry covers
+  // transient cold-start timeouts; on hard failure we surface the error and stay on
+  // the page so the user can retry.
   const submitResponse = useCallback(
     async (choice: PlanKey): Promise<boolean> => {
       // The backend `submitOnboardingResponse` callable still uses the legacy
-      // 'personal' | 'nano' enum — collapse indie/nano/pro down to 'nano' so
-      // any paid choice still counts as "paid" without needing a Phase A api
-      // contract bump.
+      // 'personal' | 'nano' enum, so collapse indie/nano/pro down to 'nano': any
+      // paid choice still counts as "paid" without needing an api contract bump.
       const planChoice: 'personal' | 'nano' = choice === 'free' ? 'personal' : 'nano';
       const payload = {
         sources: answers.sources,
@@ -422,9 +611,51 @@ export default function Onboarding() {
   );
 
   const finishOnboarding = (destination: string) => {
-    if (userId) markOnboardingCompleteLocally(userId);
+    if (userId) {
+      markOnboardingCompleteLocally(userId);
+      clearProgress(userId);
+    }
     navigate(destination, { replace: true });
   };
+
+  /**
+   * Speed the onboarding check up to what the new plan actually allows.
+   *
+   * Step 4 creates the check at 5 minutes, the best the free tier permits, and
+   * `enforceTierCeiling` on the backend only ever clamps intervals DOWN on a tier
+   * change. Correct in general, wrong here: someone who buys Pro for 15-second
+   * checks otherwise walks away with a single monitor still polling every five
+   * minutes and nothing telling them to change it. Best-effort, and deliberately
+   * not blocking: a failure here must never strand a user who has just paid.
+   */
+  const upgradeFirstCheckInterval = useCallback(
+    async (choice: Exclude<PlanKey, 'free'>) => {
+      const check = firstCheckResult;
+      if (!check) return;
+      const minSeconds = getMinCheckIntervalSecondsForTier(choice);
+      if (minSeconds >= 300) return; // no improvement over what step 4 created
+      try {
+        // `updateCheck` re-validates and rewrites url and name, so both have to be
+        // sent. generateFriendlyName is the same call step 4 made on the same url,
+        // so the name cannot drift.
+        //
+        // The callable re-reads the tier live and clamps to that tier's floor. If
+        // Clerk has not finished propagating the new subscription this is refused
+        // or clamped, and the check simply stays at 5 minutes. That is why this is
+        // best-effort and swallowed: a failure here must not strand someone who
+        // has just paid.
+        await apiClient.updateWebsite({
+          id: check.id,
+          url: check.url,
+          name: generateFriendlyName(check.url),
+          checkFrequency: minSeconds / 60,
+        });
+      } catch {
+        // Check keeps running at 5 minutes; they can change it on the check itself.
+      }
+    },
+    [firstCheckResult],
+  );
 
   const runSubmitAndFinish = useCallback(
     async (choice: PlanKey, destination: string) => {
@@ -434,18 +665,22 @@ export default function Onboarding() {
         const ok = await submitResponse(choice);
         if (!ok) {
           setSubmitError(
-            "We couldn't save your answers — please check your connection and try again.",
+            "We couldn't save your answers. Please check your connection and try again.",
           );
           return;
         }
+        if (choice !== 'free') {
+          await upgradeFirstCheckInterval(choice);
+        }
+        trackOnboardingComplete(choice, Boolean(firstCheckResult), alertsEnabled);
         finishOnboarding(destination);
       } finally {
         setSubmitting(false);
       }
     },
-    // finishOnboarding closes over `userId` and `navigate`; both are stable
-    // enough that re-creating this callback per change is fine.
-    [submitResponse, userId, navigate],
+    // finishOnboarding closes over `userId` and `navigate`; both are stable enough
+    // that re-creating this callback per change is fine.
+    [submitResponse, upgradeFirstCheckInterval, firstCheckResult, alertsEnabled, userId, navigate],
   );
 
   const handleContinueFree = () => {
@@ -453,6 +688,8 @@ export default function Onboarding() {
   };
 
   const handlePaidCheckoutComplete = (choice: Exclude<PlanKey, 'free'>) => {
+    const entry = findPlanEntry(choice);
+    trackPurchase(choice, billingPeriod, annualisedPrice(entry, billingPeriod));
     void runSubmitAndFinish(choice, nextDestination);
   };
 
@@ -460,10 +697,20 @@ export default function Onboarding() {
     void runSubmitAndFinish(choice, '/billing');
   };
 
+  const handleBeginCheckout = (choice: Exclude<PlanKey, 'free'>) => {
+    const entry = findPlanEntry(choice);
+    trackBeginCheckout(choice, billingPeriod, annualisedPrice(entry, billingPeriod));
+  };
+
+  // The survey is no longer a gate: every one of its steps has a Skip. The three
+  // questions are analytics, and putting three mandatory your-benefit screens
+  // between signup and any value bought drop-off for nothing. Continue stays
+  // primary while an answer is selected so the intended path still reads as the
+  // obvious one.
   const canAdvance =
-    (step === 1 && answers.sources.length > 0) ||
-    (step === 2 && answers.useCases.length > 0) ||
-    (step === 3 && answers.teamSize !== null);
+    (step === STEP_SOURCES && answers.sources.length > 0) ||
+    (step === STEP_USE_CASES && answers.useCases.length > 0) ||
+    (step === STEP_TEAM_SIZE && answers.teamSize !== null);
 
   const goBack = () =>
     setStep((s) => {
@@ -476,6 +723,12 @@ export default function Onboarding() {
       return i >= 0 && i < steps.length - 1 ? steps[i + 1] : s;
     });
 
+  const skipStep = () => {
+    const name = STEP_NAMES[step];
+    if (name) trackOnboardingSkip(name);
+    goNext();
+  };
+
   // If we're sitting on a step that's no longer part of the active list (e.g.,
   // the probe resolves and it turns out the user has checks while we were on
   // step 4), jump forward to the next valid step.
@@ -485,6 +738,29 @@ export default function Onboarding() {
       setStep(next);
     }
   }, [steps, step]);
+
+  // One view event per step, per arrival. Without this the funnel had a signal at
+  // the start and a signal at the end and nothing in between, so a drop-off could
+  // be counted but never located.
+  const lastTrackedStepRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!steps.includes(step)) return;
+    if (lastTrackedStepRef.current === step) return;
+    const name = STEP_NAMES[step];
+    if (!name) return;
+    lastTrackedStepRef.current = step;
+    trackOnboardingStep(name, steps.indexOf(step), steps.length);
+  }, [step, steps]);
+
+  // Someone arriving at the alert step who is already covered should not be asked;
+  // record that they were covered so the funnel can tell "enabled here" from
+  // "already had it".
+  const alreadyCoveredTrackedRef = useRef(false);
+  useEffect(() => {
+    if (hasExistingAlertChannel !== true || alreadyCoveredTrackedRef.current) return;
+    alreadyCoveredTrackedRef.current = true;
+    trackOnboardingAlertsEnabled('already_configured');
+  }, [hasExistingAlertChannel]);
 
   // Before the server status has hydrated, returning-onboarded users would
   // briefly see step 1 before the redirect effect fires. Gate on hydration
@@ -525,15 +801,27 @@ export default function Onboarding() {
     );
   }
 
-  // Step 5's plan grid needs more room than the narrative steps above — four
-  // cards at 240px each start getting squeezed below max-w-2xl. Paid users
-  // never reach the 4-card layout (they see the short "already subscribed"
-  // confirmation), so only widen when we're actually rendering the grid.
-  const isPlanGridVisible = step === 5 && !paid;
+  // The plan grid needs more room than the narrative steps above. Two recommended
+  // cards fit max-w-4xl comfortably; all four need the full width. Paid users never
+  // reach either layout (they see the short "already subscribed" confirmation), so
+  // only widen when we're actually rendering the grid.
+  const isPlanGridVisible = step === STEP_PLAN && !paid;
+  const planWidthClass = !isPlanGridVisible
+    ? 'max-w-2xl'
+    : showAllPlans ? 'max-w-7xl' : 'max-w-4xl';
+
+  // Which two cards to lead with, from the answers given two screens earlier.
+  const recommendation = recommendPlans({
+    useCases: answers.useCases,
+    teamSize: answers.teamSize,
+  });
+  const visiblePlans = showAllPlans
+    ? PLAN_MATRIX
+    : [findPlanEntry(recommendation.primary), findPlanEntry(recommendation.secondary)];
 
   return (
     <div className="flex flex-col items-center px-4 py-6 sm:py-10 overflow-y-auto">
-      <div className={cn('w-full', isPlanGridVisible ? 'max-w-7xl' : 'max-w-2xl')}>
+      <div className={cn('w-full transition-[max-width] duration-300', planWidthClass)}>
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
           <div className="flex items-center justify-center gap-2 mb-3">
@@ -545,10 +833,10 @@ export default function Onboarding() {
           />
         </div>
 
-        {step === 1 && (
+        {step === STEP_SOURCES && (
           <StepShell
             title="Where did you find us?"
-            subtitle="Pick any that apply — it helps us know which channels actually work."
+            subtitle="Pick any that apply. It helps us know which channels actually work."
           >
             <OptionGrid
               options={SOURCE_OPTIONS}
@@ -559,10 +847,10 @@ export default function Onboarding() {
           </StepShell>
         )}
 
-        {step === 2 && (
+        {step === STEP_USE_CASES && (
           <StepShell
             title="What will you be using this for?"
-            subtitle="Select everything that fits — we'll tune the defaults accordingly."
+            subtitle="Select everything that fits. We use this to pick the right plan for you next."
           >
             <OptionGrid
               options={USE_CASE_OPTIONS}
@@ -573,10 +861,10 @@ export default function Onboarding() {
           </StepShell>
         )}
 
-        {step === 3 && (
+        {step === STEP_TEAM_SIZE && (
           <StepShell
             title="Are you an individual or a team?"
-            subtitle="This stays between us — it helps us build the right things next."
+            subtitle="This stays between us. It decides which plan we recommend on the last step."
           >
             <OptionGrid
               options={TEAM_SIZE_OPTIONS}
@@ -587,7 +875,7 @@ export default function Onboarding() {
           </StepShell>
         )}
 
-        {step === 4 && (
+        {step === STEP_FIRST_CHECK && (
           <div>
             {!firstCheckResult && (
               <div className="text-center mb-6 sm:mb-8">
@@ -707,10 +995,22 @@ export default function Onboarding() {
                           <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mb-1">
                             {isUp ? "It's up" : "It's down"}
                           </h2>
+                          {/*
+                            This line used to promise "we'll alert you the moment
+                            anything changes" unconditionally, before any channel
+                            existed, which made it false for most people who read
+                            it. Now it only claims what is true: the alert promise
+                            belongs to the next step, unless the user already has a
+                            channel and that step is being skipped.
+                          */}
                           <p className="text-sm text-muted-foreground">
-                            {isUp
-                              ? "We'll alert you the moment anything changes."
-                              : "We've got you — we'll alert you the moment it's back."}
+                            {steps.includes(STEP_ALERTS)
+                              ? isUp
+                                ? "We're checking it every 5 minutes. Alerts are the next step."
+                                : "We're on it. Set up alerts next and we'll tell you when it's back."
+                              : isUp
+                                ? "We'll alert you the moment anything changes."
+                                : "We've got you. We'll alert you the moment it's back."}
                           </p>
                         </div>
                         {hasMetric && (
@@ -747,7 +1047,120 @@ export default function Onboarding() {
           </div>
         )}
 
-        {step === 5 && paid && (
+        {step === STEP_ALERTS && (
+          <div>
+            {!alertsEnabled ? (
+              <>
+                <div className="text-center mb-6 sm:mb-8">
+                  <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <BellRing className="h-5 w-5" />
+                  </div>
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
+                    Where should we reach you?
+                  </h1>
+                  <p className="text-muted-foreground text-base">
+                    Monitoring without alerts is just a graph. We'll email this address the
+                    moment something goes down, and again when it recovers.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      placeholder="you@example.com"
+                      value={alertEmail}
+                      onChange={(e) => {
+                        setAlertEmailTouched(true);
+                        setAlertEmail(e.target.value);
+                        if (alertsError) setAlertsError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && alertEmail.trim() && !alertsSaving) {
+                          e.preventDefault();
+                          void enableAlerts();
+                        }
+                      }}
+                      disabled={alertsSaving}
+                      className="h-12 pl-10 text-base"
+                    />
+                  </div>
+
+                  {alertsError && (
+                    <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+                      <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>{alertsError}</span>
+                    </div>
+                  )}
+
+                  <Button
+                    type="button"
+                    size="lg"
+                    onClick={() => void enableAlerts()}
+                    disabled={!alertEmail.trim() || alertsSaving}
+                    className="w-full cursor-pointer gap-2 font-semibold disabled:cursor-not-allowed"
+                  >
+                    {alertsSaving ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Turning on alerts…
+                      </>
+                    ) : (
+                      <>
+                        Email me when something breaks
+                        <ArrowRight className="h-4 w-4" />
+                      </>
+                    )}
+                  </Button>
+
+                  <p className="text-center text-xs text-muted-foreground">
+                    Down and recovery alerts, plus SSL and domain expiry. Change any of it
+                    later on the Emails page.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="relative overflow-hidden rounded-2xl border border-success/30 bg-gradient-to-br from-success/[0.09] via-success/[0.04] to-transparent p-6 sm:p-7 animate-in fade-in zoom-in-95 duration-500 ease-out">
+                  <div className="flex items-center gap-2.5 mb-5">
+                    <ShieldCheck className="h-4 w-4 text-success" />
+                    <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-success">
+                      Alerts on
+                    </span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mb-1">
+                    You're covered
+                  </h2>
+                  <p className="text-sm text-muted-foreground mb-5">
+                    Every check on your account, including ones you add later, will email
+                    you when it goes down and when it recovers.
+                  </p>
+                  <div className="flex items-center gap-2 rounded-lg bg-black/30 border border-border/40 px-3 py-2 font-mono text-xs sm:text-sm">
+                    <Mail className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="truncate text-foreground/80">{alertEmail.trim()}</span>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={goNext}
+                  className="w-full cursor-pointer gap-2 font-semibold"
+                >
+                  Continue
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {step === STEP_PLAN && paid && (
           <div>
             <div className="text-center mb-8">
               <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">
@@ -795,14 +1208,16 @@ export default function Onboarding() {
           </div>
         )}
 
-        {step === 5 && !paid && (
+        {step === STEP_PLAN && !paid && (
           <div>
             <div className="text-center mb-6">
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
-                Choose your plan
+                {showAllPlans ? 'Choose your plan' : 'Our pick for you'}
               </h1>
               <p className="text-muted-foreground text-base">
-                You can change this anytime from the billing page.
+                {showAllPlans
+                  ? 'You can change this anytime from the billing page.'
+                  : recommendation.reason}
               </p>
             </div>
 
@@ -817,13 +1232,20 @@ export default function Onboarding() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
-              {PLAN_MATRIX.map((entry) => (
+            <div
+              className={cn(
+                'grid grid-cols-1 gap-4 w-full',
+                showAllPlans ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-2',
+              )}
+            >
+              {visiblePlans.map((entry) => (
                 <PlanCard
                   key={entry.key}
                   entry={entry}
                   billingPeriod={billingPeriod}
-                  highlighted={entry.key === 'pro'}
+                  highlighted={
+                    showAllPlans ? entry.key === 'pro' : entry.key === recommendation.primary
+                  }
                   ctaNote={trialNote(entry, billingPeriod)}
                   cta={renderOnboardingCta({
                     entry,
@@ -831,6 +1253,7 @@ export default function Onboarding() {
                     clerkPlans: plans,
                     submitting,
                     onContinueFree: handleContinueFree,
+                    onBeginCheckout: handleBeginCheckout,
                     onCheckoutComplete: handlePaidCheckoutComplete,
                     onFallback: handlePaidFallback,
                   })}
@@ -838,36 +1261,66 @@ export default function Onboarding() {
                 />
               ))}
             </div>
+
+            {/*
+              Nothing is hidden, it is just not all shown at once. Four
+              near-identical cards is four times the reading for a decision that in
+              practice resolves to Free or Pro: on the current lineup Indie has one
+              customer and Nano has four.
+            */}
+            {!showAllPlans && (
+              <div className="flex justify-center mt-5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setShowAllPlans(true)}
+                  className="gap-1.5 cursor-pointer text-muted-foreground"
+                >
+                  Compare all {PLAN_MATRIX.length} plans
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Nav controls — steps 4 and 5 use their own CTAs */}
-        {step < 4 && (
-          <div className="flex items-center justify-between mt-6 sm:mt-8">
+        {/* Nav controls. The check, alert and plan steps use their own CTAs. */}
+        {SURVEY_STEPS.includes(step) && (
+          <div className="flex items-center justify-between gap-3 mt-6 sm:mt-8">
             <Button
               type="button"
               variant="ghost"
               onClick={goBack}
-              disabled={step === 1}
+              disabled={steps.indexOf(step) === 0}
               className="gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
-            <Button
-              type="button"
-              onClick={goNext}
-              disabled={!canAdvance}
-              size="lg"
-              className="gap-2 cursor-pointer disabled:cursor-not-allowed font-semibold"
-            >
-              Continue
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1 sm:gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={skipStep}
+                className="cursor-pointer text-muted-foreground"
+              >
+                Skip
+              </Button>
+              <Button
+                type="button"
+                onClick={goNext}
+                disabled={!canAdvance}
+                size="lg"
+                className="gap-2 cursor-pointer disabled:cursor-not-allowed font-semibold"
+              >
+                Continue
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === STEP_FIRST_CHECK && (
           <div className="flex items-center justify-between mt-6">
             <Button
               type="button"
@@ -882,7 +1335,7 @@ export default function Onboarding() {
               <Button
                 type="button"
                 variant="ghost"
-                onClick={goNext}
+                onClick={skipStep}
                 className="cursor-pointer text-muted-foreground"
               >
                 Add later
@@ -891,7 +1344,29 @@ export default function Onboarding() {
           </div>
         )}
 
-        {step === 5 && (
+        {step === STEP_ALERTS && !alertsEnabled && (
+          <div className="flex items-center justify-between mt-6">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={goBack}
+              className="gap-2 cursor-pointer text-muted-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={skipStep}
+              className="cursor-pointer text-muted-foreground"
+            >
+              Not now
+            </Button>
+          </div>
+        )}
+
+        {step === STEP_PLAN && (
           <div className="flex items-center justify-center mt-6">
             <Button
               type="button"
@@ -982,6 +1457,7 @@ function renderOnboardingCta({
   clerkPlans,
   submitting,
   onContinueFree,
+  onBeginCheckout,
   onCheckoutComplete,
   onFallback,
 }: {
@@ -990,6 +1466,7 @@ function renderOnboardingCta({
   clerkPlans: ReturnType<typeof usePlans>['data'];
   submitting: boolean;
   onContinueFree: () => void;
+  onBeginCheckout: (choice: Exclude<PlanKey, 'free'>) => void;
   onCheckoutComplete: (choice: Exclude<PlanKey, 'free'>) => void;
   onFallback: (choice: Exclude<PlanKey, 'free'>) => void;
 }) {
@@ -1020,6 +1497,11 @@ function renderOnboardingCta({
   );
   const clerkPlan = findClerkPlan(clerkPlans, entry.clerkSlugs);
 
+  // Trial wording only when that plan really has a trial configured in Clerk. See
+  // TRIAL_PLAN_KEYS: nothing at runtime can verify the dashboard toggle, so the
+  // claim is opt-in rather than assumed.
+  const label = paidCtaLabel(entry);
+
   if (clerkPlan?.id) {
     return (
       <CheckoutButton
@@ -1028,24 +1510,35 @@ function renderOnboardingCta({
         onSubscriptionComplete={() => onCheckoutComplete(paidKey)}
         newSubscriptionRedirectUrl="/checks"
       >
-        <Button variant="default" className={primaryClass} disabled={submitting}>
-          {TRIAL_CTA_LABEL}
+        <Button
+          variant="default"
+          className={primaryClass}
+          disabled={submitting}
+          // Fires as the Clerk checkout drawer opens. Paired with `purchase` in
+          // onCheckoutComplete, this is what makes the plan step measurable: the
+          // gap between the two is the checkout abandon rate.
+          onClick={() => onBeginCheckout(paidKey)}
+        >
+          {label}
           <ArrowRight className="h-4 w-4" />
         </Button>
       </CheckoutButton>
     );
   }
 
-  // Plan catalogue hasn't loaded (or the slug isn't in Clerk yet) — fall back
-  // to the billing page so the user can finish checkout there.
+  // Plan catalogue hasn't loaded, or the slug isn't in Clerk yet. Fall back to the
+  // billing page so the user can finish checkout there.
   return (
     <Button
       variant="default"
       className={primaryClass}
-      onClick={() => onFallback(paidKey)}
+      onClick={() => {
+        onBeginCheckout(paidKey);
+        onFallback(paidKey);
+      }}
       disabled={submitting}
     >
-      {TRIAL_CTA_LABEL}
+      {label}
       <ArrowRight className="h-4 w-4" />
     </Button>
   );

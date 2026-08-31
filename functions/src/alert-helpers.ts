@@ -310,6 +310,15 @@ export function getEmailRecipientsForCheck(settings: EmailSettings, checkId: str
   return deduplicated;
 }
 
+/**
+ * Would an email actually be delivered for `event` on this check?
+ *
+ * Re-exported from `email-gate.ts`, which holds the logic with no firestore import
+ * so it can be unit-tested. See that file for the precedence rules and for why the
+ * hot alert paths below still carry their own inline copies.
+ */
+export { eventAllowedForCheck as emailEventAllowedForCheck } from './email-gate';
+
 // ============================================================================
 // ADMIN & TIER RESOLUTION
 // ============================================================================

@@ -118,7 +118,7 @@ export {
 
 // Custom components using shadcn/ui
 export { default as Pagination } from './PaginationWrapper';
-export { default as CheckIntervalSelector, CHECK_INTERVALS } from './CheckIntervalSelector';
+export { default as CheckIntervalSelector, CHECK_INTERVALS, formatIntervalLabel } from './CheckIntervalSelector';
 export { default as ConfirmationModal } from './ConfirmationModal';
 export { default as EmptyState } from './EmptyState';
 export { ErrorModal } from './ErrorModal';

@@ -41,7 +41,13 @@ export const EmailEmptyState = memo(function EmailEmptyState({
     );
   }
 
-  // Variant 3: no checks exist — onboarding
+  // Variant 3: no checks exist, so this is the first-run explainer.
+  //
+  // Step 3 used to read "Alerts are automatically enabled for new checks", which
+  // is the opposite of what happens: the check filter defaults to 'Selected only',
+  // so a new check is excluded until it is ticked or the filter is switched to
+  // 'All checks'. Someone who read that line and left got no alerts at all, and
+  // believed they had them, which is worse than never visiting this page.
   const steps = [
     {
       label: 'Add your email address above',
@@ -52,8 +58,8 @@ export const EmailEmptyState = memo(function EmailEmptyState({
       done: false,
     },
     {
-      label: 'Alerts are automatically enabled for new checks',
-      done: false,
+      label: "Set the filter to 'All checks' so new checks are covered automatically",
+      done: checkFilterMode === 'all',
     },
   ];
 

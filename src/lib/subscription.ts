@@ -281,3 +281,22 @@ export function nextTierWithFlag(
 export function getMinCheckIntervalSecondsForTier(tier: TierKey): number {
   return getTierLimits(tier).minCheckIntervalSeconds
 }
+
+/**
+ * Cheapest tier that permits `seconds`, or null when nothing does.
+ *
+ * Interval speed is the headline difference between every tier, and the interval
+ * dropdown used to FILTER faster options out of the list entirely. A free user
+ * therefore never learned that 30-second monitoring existed inside the product
+ * they were already using: 2,439 of 4,021 checks sit at exactly the free floor of
+ * 5 minutes, and only 78 run sub-minute. This is what lets the picker show the
+ * locked options honestly and name the tier that unlocks each one.
+ */
+export function cheapestTierForIntervalSeconds(seconds: number): { tier: TierKey; name: string } | null {
+  for (const candidate of TIER_LADDER) {
+    if (TIER_LIMITS_MIRROR[candidate].minCheckIntervalSeconds <= seconds) {
+      return { tier: candidate, name: TIER_DISPLAY_NAME[candidate] }
+    }
+  }
+  return null
+}

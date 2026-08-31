@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import * as z from 'zod';
 import {
   Button,
+  formatIntervalLabel,
   Input,
   CheckIntervalSelector,
   Select,
@@ -61,7 +62,9 @@ import {
   HeartPulse,
   FileBadge,
   Sparkles,
+  Lock,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { BadgeEmbed } from './BadgeEmbed';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -337,6 +340,11 @@ export default function CheckForm({
   const { tier, paid, regionChoice } = usePlan();
   const { isAdmin } = useAdmin();
   const minCheckIntervalSeconds = getMinCheckIntervalSecondsForTier(tier);
+  // Set when the user picks an interval their plan does not allow. The faster
+  // options used to be filtered out of the dropdown entirely, so the main thing
+  // the paid tiers sell was invisible to free users at the exact moment they were
+  // choosing how fast to check something.
+  const [lockedInterval, setLockedInterval] = useState<{ seconds: number; tierName: string } | null>(null);
   // Region pinning is Nano and up (TIER_LIMITS.regionChoice). Everyone else is
   // locked to vps-eu-1 — this used to read `pro`, which hid the picker from the
   // Nano users the entitlement moved down to.
@@ -1490,11 +1498,33 @@ export default function CheckForm({
                             <FormControl>
                               <CheckIntervalSelector
                                 value={field.value}
-                                onChange={field.onChange}
+                                onChange={(next) => {
+                                  setLockedInterval(null);
+                                  field.onChange(next);
+                                }}
                                 label=""
                                 minSeconds={minCheckIntervalSeconds}
+                                onLockedSelect={(seconds, tierName) =>
+                                  setLockedInterval({ seconds, tierName })}
                               />
                             </FormControl>
+                            {lockedInterval && (
+                              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs">
+                                <Lock className="size-3.5 shrink-0 text-primary" />
+                                <span className="text-foreground">
+                                  {formatIntervalLabel(lockedInterval.seconds)} checks are on{' '}
+                                  {lockedInterval.tierName} and up.
+                                </span>
+                                <Button
+                                  asChild
+                                  size="sm"
+                                  variant="link"
+                                  className="h-auto p-0 text-xs font-semibold cursor-pointer"
+                                >
+                                  <Link to="/billing?tab=plans">See plans</Link>
+                                </Button>
+                              </div>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}

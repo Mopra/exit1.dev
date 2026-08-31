@@ -614,3 +614,56 @@ export interface EmailProviderSettingsDoc extends EmailProviderSettingsInput {
   updatedAt?: number;
   updatedBy?: string;
 }
+
+
+// Alert coverage and activation lifecycle (admin only)
+
+/** One cohort's coverage: how many have a working alert path. */
+export interface AlertCoverageBucket {
+  users: number;
+  covered: number;
+}
+
+/**
+ * Output of `getAlertCoverageReport`. Computed with the real delivery gate, so
+ * `usersCovered` is who would genuinely receive a down email, not who has an
+ * address saved. Those numbers differ by a lot: most saved settings documents are
+ * in 'Selected only' mode and deliver nothing.
+ */
+export interface AlertCoverageReport {
+  usersWithEnabledChecks: number;
+  usersCovered: number;
+  usersUncovered: number;
+  enabledChecks: number;
+  emailCoveredChecks: number;
+  byCohort: {
+    onboardedPaid: AlertCoverageBucket;
+    onboardedFree: AlertCoverageBucket;
+    preOnboarding: AlertCoverageBucket;
+  };
+}
+
+/** Output of `notifyUsersWithoutAlertChannel`. On a dry run `sent` is the count it would have sent. */
+export interface NoChannelNotifyResult {
+  dryRun: boolean;
+  candidates: number;
+  sent: number;
+  skippedAlreadyNotified: number;
+  skippedTooNew: number;
+  skippedSuppressed: number;
+  skippedNoEmail: number;
+  failed: number;
+  coverage: Omit<AlertCoverageReport, 'byCohort'>;
+  sampleUserIds: string[];
+}
+
+/** Output of `runLifecycleSweep`. */
+export interface LifecycleSweepResult {
+  dryRun: boolean;
+  usersExamined: number;
+  firstIncidentEvents: number;
+  noChannelEvents: number;
+  propertiesSynced: number;
+  errors: number;
+  coverage: Omit<AlertCoverageReport, 'byCohort'>;
+}

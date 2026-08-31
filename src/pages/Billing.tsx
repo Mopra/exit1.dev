@@ -56,6 +56,7 @@ import {
   TIER_BUTTON_PRIMARY,
   TIER_RANK,
   findClerkPlan,
+  planHasTrial,
   trialNote,
   TRIAL_CTA_LABEL,
   type BillingPeriod,
@@ -1109,7 +1110,15 @@ function isTrialEligible(
   entry: PlanMatrixEntry,
 ): boolean {
   return (
-    !isFounders && realTier === "free" && !hasEverPaid && entry.priceMonthly > 0
+    !isFounders
+    && realTier === "free"
+    && !hasEverPaid
+    && entry.priceMonthly > 0
+    // Clerk decides eligibility per user, but whether the plan has a trial at all
+    // is a dashboard setting nothing here can read. TRIAL_PLAN_KEYS is the manual
+    // mirror of it: drop a key there and this card stops claiming a trial rather
+    // than promising one the customer will not get.
+    && planHasTrial(entry.key)
   )
 }
 

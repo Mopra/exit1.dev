@@ -20,7 +20,11 @@ import type {
   OrganizationBillingProfile,
   McpAuthorizationRequest,
   McpConnection,
-  EmailProviderSettingsInput
+  EmailProviderSettingsInput,
+  WebhookEvent,
+  AlertCoverageReport,
+  NoChannelNotifyResult,
+  LifecycleSweepResult
 } from './types';
 import type { DomainExpiry, DomainIntelligenceItem } from '../types';
 
@@ -584,6 +588,28 @@ export class Exit1ApiClient {
 
   // ---- Onboarding ----
 
+  /**
+   * Turn on email alerts for every check, present and future.
+   *
+   * Used by the onboarding alert step. `checkFilter.mode: 'all'` is the load-bearing
+   * part: the app's default is `'include'`, which only alerts on checks the user has
+   * explicitly ticked, so a saved recipient with the default filter still delivers
+   * nothing. Both `events` and `checkFilter.defaultEvents` are sent because the
+   * delivery gate reads whichever is present.
+   */
+  enableEmailAlertsForAllChecks(recipients: string[], events: WebhookEvent[]) {
+    return this.call<{ success: boolean }>(
+      "saveEmailSettings",
+      {
+        recipients,
+        enabled: true,
+        events,
+        checkFilter: { mode: "all", defaultEvents: events },
+      },
+      'Failed to turn on email alerts',
+    );
+  }
+
   submitOnboardingResponse(request: {
     sources: string[];
     useCases: string[];
@@ -598,6 +624,38 @@ export class Exit1ApiClient {
   getOnboardingStatus() {
     return this.call<{ completed: boolean; completedAt: number | null }>(
       "getOnboardingStatus", {}, 'Failed to fetch onboarding status',
+    );
+  }
+
+  // ---- Alert coverage (admin) ----
+
+  /** How many users can actually receive a down alert. Read-only, sends nothing. */
+  getAlertCoverageReport() {
+    return this.call<AlertCoverageReport>(
+      "getAlertCoverageReport", {}, 'Failed to load alert coverage',
+    );
+  }
+
+  /**
+   * Email users who own a live check with no reachable alert channel.
+   *
+   * `dryRun` defaults to true here as well as on the server: this reaches hundreds
+   * of real inboxes and is not retractable, so the send has to be typed out.
+   */
+  notifyUsersWithoutAlertChannel(options: { dryRun: boolean; limit?: number }) {
+    return this.call<NoChannelNotifyResult>(
+      "notifyUsersWithoutAlertChannel",
+      { dryRun: options.dryRun !== false, limit: options.limit ?? 1000 },
+      'Failed to run the alert-coverage notifier',
+    );
+  }
+
+  /** Fire pending lifecycle events and refresh activation contact properties. */
+  runLifecycleSweep(options: { dryRun: boolean }) {
+    return this.call<LifecycleSweepResult>(
+      "runLifecycleSweep",
+      { dryRun: options.dryRun !== false },
+      'Failed to run the lifecycle sweep',
     );
   }
 

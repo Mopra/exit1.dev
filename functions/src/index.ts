@@ -233,6 +233,16 @@ export {
   backfillOnboardingMetadata,
 } from './onboarding';
 
+// Activation lifecycle: fires user.first_incident_caught and
+// user.no_alert_channel, and keeps the activation contact properties current.
+// getAlertCoverageReport answers "how many users can actually be alerted?".
+export {
+  lifecycleSweep,
+  runLifecycleSweep,
+  notifyUsersWithoutAlertChannel,
+  getAlertCoverageReport,
+} from './lifecycle';
+
 // In-app feedback (emails connect@exit1.dev via Resend)
 export { submitFeedback } from './feedback';
 

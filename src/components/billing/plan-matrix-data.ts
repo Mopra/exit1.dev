@@ -137,7 +137,31 @@ export const TIER_RANK: Record<Tier, number> = { free: 0, indie: 1, nano: 2, pro
 // existing subscribers are charged (prorated) straight away.
 export const TRIAL_DAYS = 7
 
+/**
+ * Which plans genuinely have a trial configured in Clerk.
+ *
+ * The trial CTA used to promise a trial on every paid card unconditionally, which
+ * is a promise this codebase cannot verify: the Clerk plan objects returned by
+ * `usePlans()` carry no trial field, so nothing at runtime can tell whether the
+ * dashboard toggle is actually on. If a plan's trial is off, the card lies and the
+ * user is charged immediately.
+ *
+ * Remove a key here and that card falls back to plain "Upgrade to X" copy with no
+ * trial claim. It is the one lever that makes the CTA honest without a deploy of
+ * new logic.
+ */
+export const TRIAL_PLAN_KEYS: PlanKey[] = ["indie", "nano", "pro"]
+
+export function planHasTrial(key: PlanKey): boolean {
+  return TRIAL_PLAN_KEYS.includes(key)
+}
+
 export const TRIAL_CTA_LABEL = `Start ${TRIAL_DAYS}-day trial`
+
+/** CTA label for a paid card, trial wording only when the plan actually has one. */
+export function paidCtaLabel(entry: PlanMatrixEntry): string {
+  return planHasTrial(entry.key) ? TRIAL_CTA_LABEL : `Upgrade to ${entry.name}`
+}
 
 /**
  * Reassurance line rendered under a trial CTA, e.g. "7 days free, then $20/mo".
@@ -149,9 +173,109 @@ export function trialNote(
   period: BillingPeriod,
 ): string | null {
   if (entry.priceMonthly === 0) return null
-  const effectiveMonthly =
-    period === "annual" ? Math.round(entry.priceAnnual / 12) : entry.priceMonthly
+  const effectiveMonthly = effectiveMonthlyPrice(entry, period)
+  if (!planHasTrial(entry.key)) return `$${effectiveMonthly}/mo, cancel anytime`
   return `${TRIAL_DAYS} days free, then $${effectiveMonthly}/mo`
+}
+
+/** Monthly-equivalent price for a period, matching what `PlanPrice` renders. */
+export function effectiveMonthlyPrice(
+  entry: PlanMatrixEntry,
+  period: BillingPeriod,
+): number {
+  return period === "annual" ? Math.round(entry.priceAnnual / 12) : entry.priceMonthly
+}
+
+/** What a purchase is worth over twelve months. Used as the GA4 `value`. */
+export function annualisedPrice(entry: PlanMatrixEntry, period: BillingPeriod): number {
+  return period === "annual" ? entry.priceAnnual : entry.priceMonthly * 12
+}
+
+// ---- Plan recommendation ----
+//
+// The onboarding survey asks team size and use case on the two screens directly
+// before the plan picker, and the picker then showed all four cards identically to
+// everyone. Measured against the first 259 users through the flow, those answers
+// are the strongest conversion predictors available: teams of 6 to 20 converted at
+// 45% and 2 to 5 at 22%, against 6% for solo; client-sites and SaaS use cases at
+// 18% each, against 2% for personal or side projects.
+//
+// So the picker now leads with two cards chosen from the answers, with the full
+// four behind a "compare all plans" toggle. Nothing is hidden, and nobody is
+// pitched a team plan for a hobby project or shown Free first when they just said
+// they run a twenty-person agency.
+
+export interface PlanRecommendation {
+  /** Highlighted first card. */
+  primary: PlanKey
+  /** Shown beside the primary. Always a genuine alternative, never a duplicate. */
+  secondary: PlanKey
+  /** One line under the heading explaining why these two. */
+  reason: string
+}
+
+const TEAM_ANSWERS_MEANING_TEAM = new Set(["2_5", "6_20", "21_100", "100_plus"])
+const USE_CASES_MEANING_BUSINESS = new Set(["client_sites", "saas", "agency", "ecommerce"])
+
+/**
+ * Pick the two plans to lead with. Falls back to Free plus Pro when the survey was
+ * skipped, which is also the honest default: those are the two tiers with real
+ * customers behind them.
+ */
+export function recommendPlans(answers: {
+  useCases: string[]
+  teamSize: string | null
+}): PlanRecommendation {
+  const isTeam = answers.teamSize !== null && TEAM_ANSWERS_MEANING_TEAM.has(answers.teamSize)
+  const isBusiness = answers.useCases.some((u) => USE_CASES_MEANING_BUSINESS.has(u))
+  const isPersonalOnly =
+    answers.useCases.length > 0 && answers.useCases.every((u) => u === "personal")
+
+  // A team running customer-facing work is the segment that actually buys Pro, and
+  // the one that needs the things only Pro has: extra recipients, SMS, all channels.
+  if (isTeam && isBusiness) {
+    return {
+      primary: "pro",
+      secondary: "nano",
+      reason: "Built for teams watching customer-facing services.",
+    }
+  }
+  if (isTeam) {
+    return {
+      primary: "pro",
+      secondary: "free",
+      reason: "Shared alerting and faster checks for a team.",
+    }
+  }
+  // Solo, but running something real for someone else. Nano is the destination
+  // tier: 30-second checks, domain intelligence, region pinning.
+  if (isBusiness) {
+    return {
+      primary: "nano",
+      secondary: "free",
+      reason: "Faster checks and domain alerts for work that has customers.",
+    }
+  }
+  // Explicitly a hobby. Pitching Pro here converted 2% of 95 people; lead with the
+  // free tier and offer the cheap step up rather than the team plan.
+  if (isPersonalOnly) {
+    return {
+      primary: "free",
+      secondary: "indie",
+      reason: "Free covers side projects properly. Indie just makes them faster.",
+    }
+  }
+  return {
+    primary: "free",
+    secondary: "pro",
+    reason: "Start free, or go straight to everything.",
+  }
+}
+
+export function findPlanEntry(key: PlanKey): PlanMatrixEntry {
+  const found = PLAN_MATRIX.find((p) => p.key === key)
+  if (!found) throw new Error(`Unknown plan key: ${key}`)
+  return found
 }
 
 // Per-tier styling for the plan cards. Colors flow from the --tier-* CSS

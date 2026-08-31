@@ -30,6 +30,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart';
 import GlowCard from '@/components/ui/glow-card';
+import { AlertCoveragePanel } from '@/components/admin/AlertCoveragePanel';
 import { Check, ClipboardList, Copy, RefreshCw, Shield, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -529,7 +530,15 @@ const AdminOnboarding: React.FC = () => {
         </div>
       )}
 
+      {/*
+        Coverage sits above the survey distributions on purpose: the answers tell
+        you who signed up, this tells you whether the product is working for them.
+      */}
       <div className="px-2 sm:px-4 md:px-6 pt-2 sm:pt-4 md:pt-6">
+        <AlertCoveragePanel />
+      </div>
+
+      <div className="px-2 sm:px-4 md:px-6 pt-3">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <DistributionChart
             title="Sources"

@@ -10,6 +10,8 @@ import { useCheckStream } from '../hooks/useCheckStream';
 import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnectionStatus';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { useMobile } from '../hooks/useMobile';
+import { useAlertCoverage } from '../hooks/useAlertCoverage';
+import { NoAlertChannelBanner } from '../components/check/NoAlertChannelBanner';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
@@ -48,7 +50,7 @@ const Checks: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const [pendingCheck, setPendingCheck] = useState<{ name: string; url: string } | null>(null);
-  const { nano, pro, tier, maxChecks } = usePlan();
+  const { nano, pro, tier, maxChecks, smsAlerts } = usePlan();
   const [isExporting, setIsExporting] = useState(false);
   const { preferences, loading: preferencesLoading, updateSorting } = useUserPreferences(userId);
   // Local state for immediate UI updates - Firestore is only for persistence
@@ -136,6 +138,12 @@ const Checks: React.FC = () => {
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)
   ), [checks]);
+
+  // Are these monitors able to tell anyone anything? Evaluated with the real
+  // delivery gate, not "is there an address saved", because those are very
+  // different questions: most saved settings documents are in 'Selected only' mode
+  // and deliver nothing.
+  const alertCoverage = useAlertCoverage(userId, checks, smsAlerts);
 
   // Per-user check cap, from usePlan() — mirrors TIER_LIMITS[tier].maxChecks
   // (Free 50, Indie 100, Nano 250, Pro 1000). Must not be a paid/free boolean:
@@ -655,6 +663,16 @@ const Checks: React.FC = () => {
         onChange={setSearchQuery}
         placeholder="Search checks..."
       />
+
+      {/*
+        Above the plan banners on purpose. "Your monitors cannot notify anyone" is a
+        more urgent fact than "you have reached your check limit".
+      */}
+      {alertCoverage.hasBlindSpot && (
+        <div className="px-2 sm:px-4 md:px-6 pt-3">
+          <NoAlertChannelBanner checkCount={alertCoverage.enabledCheckCount} />
+        </div>
+      )}
 
       {hasDowngradedChecks && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
