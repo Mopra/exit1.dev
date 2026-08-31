@@ -25,7 +25,6 @@ export const auth = getAuth();
 
 // Initialize Clerk clients for dual-instance support (dev and prod)
 // Environment variables:
-// - CLERK_SECRET_KEY: Production instance secret key (backward compatibility)
 // - CLERK_SECRET_KEY_PROD: Production instance secret key (explicit)
 // - CLERK_SECRET_KEY_DEV: Development instance secret key
 // 
@@ -42,7 +41,7 @@ try {
   // Initialize production client
   // Firebase Functions v2 automatically makes secrets available as environment variables
   // Secrets set via 'firebase functions:secrets:set' are accessible via process.env
-  const secretKey = process.env.CLERK_SECRET_KEY || process.env.CLERK_SECRET_KEY_PROD;
+  const secretKey = process.env.CLERK_SECRET_KEY_PROD;
 
   if (secretKey) {
     clerkClientProd = createClerkClient({

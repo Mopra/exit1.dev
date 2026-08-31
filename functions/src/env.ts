@@ -21,7 +21,6 @@ export const DAY3_FROM = defineSecret('DAY3_FROM');
 export const DAY3_WEBHOOK_SECRET = defineSecret('DAY3_WEBHOOK_SECRET');
 export const CLERK_SECRET_KEY_PROD = defineSecret('CLERK_SECRET_KEY_PROD');
 export const CLERK_SECRET_KEY_DEV = defineSecret('CLERK_SECRET_KEY_DEV');
-export const CLERK_SECRET_KEY = defineSecret('CLERK_SECRET_KEY');
 export const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
 export const TWILIO_FROM_NUMBER = defineSecret('TWILIO_FROM_NUMBER');

@@ -118,7 +118,7 @@ function readClerkSecret(): string | null {
       // Not bound to this function; fall through to the env read below.
     }
   }
-  const envVal = process.env.CLERK_SECRET_KEY_PROD?.trim() || process.env.CLERK_SECRET_KEY?.trim();
+  const envVal = process.env.CLERK_SECRET_KEY_PROD?.trim();
   return envVal ? envVal : null;
 }
 
