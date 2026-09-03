@@ -4,6 +4,7 @@ import { createHmac } from "crypto";
 
 import {
   cleanReport,
+  provenanceSentence,
   internalLinks,
   isPublicHostname,
   parseEvidenceRequest,
@@ -217,6 +218,8 @@ function body() {
     evidenceUrl: "https://exit1.dev/probe/01234567-89ab-cdef-0123-456789abcdef",
     firstName: "Priya",
     addressSource: "I found your address published on your own site.",
+    productName: "Meterbase",
+    source: "show_hn",
   });
 }
 
@@ -302,6 +305,8 @@ test("the html escapes the finding text", () => {
     evidenceUrl: "https://exit1.dev/probe/01234567-89ab-cdef-0123-456789abcdef",
     firstName: null,
     addressSource: "I found your address published on your own site.",
+    productName: "Meterbase",
+    source: "show_hn",
   });
   assert.ok(!html.includes("<script>"));
   assert.ok(html.includes("&lt;script&gt;"));
@@ -378,6 +383,7 @@ test("the clean report quotes what was measured, not adjectives", () => {
   // is the whole reason this is not a pretext.
   assert.match(finding.detail, /200/);
   assert.match(finding.detail, /412ms/);
+  assert.doesNotMatch(finding.detail, /europe-west1/);
   assert.match(finding.detail, /70 days/);
   assert.match(finding.detail, /2026-11-12/);
   assert.match(finding.detail, /9 internal links/);
@@ -411,6 +417,8 @@ test("the clean report renders a body that passes the same copy rules", () => {
     evidenceUrl: "https://probe.exit1.dev/e/01234567-89ab-cdef-0123-456789abcdef",
     firstName: "Morten",
     addressSource: "I found your address published on your own site.",
+    productName: "Taonere",
+    source: "show_hn",
   });
   assert.ok(text.startsWith(finding.headline));
   assert.doesNotMatch(text, /^(hi|hey|hello|dear|congrats)/i);
@@ -420,4 +428,47 @@ test("the clean report renders a body that passes the same copy rules", () => {
   // No question mark anywhere: 9.2 forbids a closing ask, and "nothing to fix"
   // copy is exactly where one would sneak in.
   assert.doesNotMatch(text, /\?/);
+});
+
+test("a slow first byte is read as seconds, not milliseconds", () => {
+  const finding = cleanReport({ ...OBSERVED, ttfbMs: 1324 });
+  assert.ok(finding);
+  assert.match(finding.detail, /1\.3 seconds/);
+  assert.doesNotMatch(finding.detail, /1324/);
+});
+
+test("the clean report mentions a severity 2 note rather than hiding it", () => {
+  // "everything came back clean" next to a 1.3 second first byte would be
+  // wrong. It is not a defect and it is not nothing.
+  const slow: Finding = {
+    severity: 2,
+    kind: "slow_ttfb",
+    subject: "x",
+    headline: "x",
+    detail: "x",
+    fix: "x",
+    meta: { ttfb_ms: 1324 },
+  };
+  const finding = cleanReport({ ...OBSERVED, ttfbMs: 1324 }, [slow]);
+  assert.ok(finding);
+  assert.match(finding.detail, /keep half an eye on/);
+  assert.match(finding.detail, /slow side/);
+});
+
+test("no severity 2 notes means no hedging sentence", () => {
+  const finding = cleanReport(OBSERVED, []);
+  assert.ok(finding);
+  assert.doesNotMatch(finding.detail, /keep half an eye on/);
+});
+
+test("provenance names the real source rather than assuming a launch", () => {
+  assert.match(provenanceSentence("Taonere", "show_hn"), /I saw Taonere on Show HN/);
+  assert.match(provenanceSentence("Taonere", "product_hunt"), /on Product Hunt/);
+  // Unknown source: vague rather than wrong.
+  assert.match(provenanceSentence("Taonere", "manual"), /I came across Taonere/);
+  assert.match(provenanceSentence("Taonere", null), /I came across Taonere/);
+  for (const src of ["show_hn", "manual", null]) {
+    assert.doesNotMatch(provenanceSentence("Taonere", src), /launched/);
+    assert.doesNotMatch(provenanceSentence("Taonere", src), /this morning/);
+  }
 });

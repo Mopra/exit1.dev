@@ -577,7 +577,7 @@ export async function findFindings(
  * Returns null when there is not enough to say. A site we could not measure
  * gets no email, which is where "no proof, no send" still bites.
  */
-export function cleanReport(o: Observed): Finding | null {
+export function cleanReport(o: Observed, notes: Finding[] = []): Finding | null {
   // Nothing measured, nothing to report. A landing page that did not answer is
   // a severity 1 finding elsewhere and never reaches here.
   if (o.status === null) return null;
@@ -586,23 +586,26 @@ export function cleanReport(o: Observed): Finding | null {
   checks.push(
     o.redirects > 0
       ? `${o.finalUrl} answered ${o.status} after ${o.redirects} redirect${o.redirects === 1 ? "" : "s"}`
-      : `${o.finalUrl} answered ${o.status} directly, with no redirect`,
+      : `${o.finalUrl} answered ${o.status} with no redirect`,
   );
   if (o.ttfbMs !== null) {
-    checks.push(`first byte in ${o.ttfbMs}ms from europe-west1`);
+    // No region codes. "europe-west1" is a Google Cloud identifier and means
+    // nothing to a founder reading their inbox; "from Europe" carries the part
+    // that actually matters, which is that this is one sample from one place.
+    checks.push(`the first byte came back in ${formatMs(o.ttfbMs)}, measured once from Europe`);
   }
   if (o.certValidTo && o.certDaysLeft !== null) {
     checks.push(
-      `the TLS certificate${o.certIssuer ? ` from ${o.certIssuer}` : ""} is valid for another ` +
-        `${o.certDaysLeft} days, until ${o.certValidTo.slice(0, 10)}`,
+      `the TLS certificate${o.certIssuer ? ` from ${o.certIssuer}` : ""} has ${o.certDaysLeft} ` +
+        `days left on it, expiring ${o.certValidTo.slice(0, 10)}`,
     );
   }
   if (o.counterpartHost && o.counterpartOk === true) {
-    checks.push(`${o.counterpartHost} resolves and answers rather than erroring`);
+    checks.push(`${o.counterpartHost} answers rather than erroring`);
   }
   if (o.linksChecked > 0) {
     checks.push(
-      `all ${o.linksChecked} internal link${o.linksChecked === 1 ? "" : "s"} on the page resolve`,
+      `all ${o.linksChecked} internal link${o.linksChecked === 1 ? "" : "s"} I followed resolve`,
     );
   }
 
@@ -610,20 +613,31 @@ export function cleanReport(o: Observed): Finding | null {
   // read as filler around a pitch, which is exactly what this must not be.
   if (checks.length < 2) return null;
 
+  // Severity 2 findings are never an email on their own, but suppressing them
+  // inside a report that says "everything came back clean" would make the
+  // report wrong. A 1.3 second first byte is not a defect and it is not
+  // nothing, and the honest email is the one that mentions it in passing.
+  const watch = notes.filter((n) => n.severity === 2).map(watchPhrase).filter((p) => p.length > 0);
+
+  const detail =
+    `Here is what I actually measured: ${joinList(checks)}.` +
+    (watch.length > 0 ? ` Nothing there is broken. The only thing I would keep half an eye on is ${joinList(watch)}.` : "");
+
   return {
     severity: 0,
     kind: "all_clear",
-    subject: `I checked ${o.host} this morning and everything passed`,
+    subject: `I ran some checks on ${o.host} and everything came back clean`,
     headline:
-      `I ran a check against ${o.host} this morning and found nothing wrong with it, ` +
-      `which is rarer on launch day than it should be.`,
-    detail: `What I measured: ${joinList(checks)}.`,
+      `I pointed a few uptime checks at ${o.host} and everything came back clean, which is ` +
+      `less common than it ought to be.`,
+    detail,
     // §6 requires a fix even here. The honest one is not a repair: it is the
     // single thing this check cannot tell them, which is whether any of it is
     // still true tomorrow.
     fix:
-      `Nothing to fix. The one thing a check like this cannot tell you is whether it is still ` +
-      `true next Tuesday at 03:00, which is when certificates expire and DNS changes land.`,
+      `So there is nothing to fix, and that is genuinely the point of writing. The one thing a ` +
+      `check like this cannot tell you is whether it is all still true next Tuesday at 03:00, ` +
+      `which is when certificates quietly expire and DNS changes land.`,
     meta: {
       status: o.status,
       ttfb_ms: o.ttfbMs,
@@ -633,8 +647,29 @@ export function cleanReport(o: Observed): Finding | null {
       cert_days_left: o.certDaysLeft,
       links_checked: o.linksChecked,
       counterpart_ok: o.counterpartOk,
+      watch: notes.filter((n) => n.severity === 2).map((n) => n.kind),
     },
   };
+}
+
+/** A severity 2 finding, said in passing rather than as a complaint. */
+function watchPhrase(note: Finding): string {
+  const m = note.meta as Record<string, unknown>;
+  switch (note.kind) {
+    case "slow_ttfb":
+      return `that first byte time, which is on the slow side for a landing page`;
+    case "long_redirect_chain":
+      return `the ${String(m.hops ?? "few")} redirects it takes to get to the page`;
+    case "missing_hsts":
+      return `the missing Strict-Transport-Security header`;
+    default:
+      return "";
+  }
+}
+
+/** Milliseconds a person can read. 1324ms is a number; 1.3 seconds is a feeling. */
+function formatMs(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} seconds` : `${ms}ms`;
 }
 
 /** "a, b and c". Oxford comma deliberately absent: this is read aloud in the
@@ -672,11 +707,52 @@ function safeHost(url: string): string {
  *   - no closing question, no ask of any kind
  *   - both variants must tell the same story (a Jaccard similarity floor)
  */
+/**
+ * How a source id from probe reads to a human. probe knows where the lead came
+ * from; the recipient only cares that we can say it out loud.
+ *
+ * Anything not listed gets the neutral form, because guessing wrong about where
+ * you found someone is worse than being vague about it.
+ */
+const SOURCE_LABELS: Record<string, string> = {
+  show_hn: "Show HN",
+  product_hunt: "Product Hunt",
+  devhunt: "DevHunt",
+  uneed: "Uneed",
+  fazier: "Fazier",
+  tinylaunch: "TinyLaunch",
+  peerpush: "PeerPush",
+  openhunts: "OpenHunts",
+  trustmrr: "TrustMRR",
+  betalist: "BetaList",
+  launching_next: "Launching Next",
+};
+
+/**
+ * Where we say we found them.
+ *
+ * This used to read "You launched publicly this morning", which was an
+ * assumption in two directions: the product may have been online for years and
+ * merely posted today, and a lead that did not come from a launch directory
+ * never launched anything this morning at all. Saying "I saw it on Show HN" is
+ * both narrower and true, and it is the sentence a recipient can check.
+ */
+export function provenanceSentence(productName: string, source: string | null): string {
+  const label = source ? SOURCE_LABELS[source] : undefined;
+  return label
+    ? `I run exit1.dev, an uptime monitor. I saw ${productName} on ${label}, so I pointed the ` +
+        `same checks I run for customers at its public surface.`
+    : `I run exit1.dev, an uptime monitor. I came across ${productName} and pointed the same ` +
+        `checks I run for customers at its public surface.`;
+}
+
 export function renderBody(args: {
   finding: Finding;
   evidenceUrl: string;
   firstName: string | null;
   addressSource: string;
+  productName: string;
+  source: string | null;
 }): { text: string; html: string } {
   const { finding, evidenceUrl } = args;
 
@@ -687,9 +763,8 @@ export function renderBody(args: {
     { label: "The full check, with timings and response headers", url: evidenceUrl },
     // §9.2.4. First person, names the product exactly once, and says where the
     // address came from. This doubles as the GDPR Article 14 notice.
-    `I run exit1.dev, an uptime monitor. You launched publicly this morning, so I pointed it at ` +
-      `your public surface. ${args.addressSource} Where your data lives and how to have it deleted ` +
-      `is linked at the bottom of this email.`,
+    `${provenanceSentence(args.productName, args.source)} ${args.addressSource} Where your data ` +
+      `lives and how to have it deleted is linked at the bottom of this email.`,
     // §9.2.6, verbatim: the lint matches this sentence.
     "This is the only email you will ever get from me. No follow-ups, no sequence.",
   ];
@@ -824,7 +899,7 @@ export const probeGenerate = onRequest(
     // as the reason for writing reads as a pretext, and "everything passed" is
     // both truer and more useful than "your redirect chain is three hops".
     const defect = findings.find((f) => f.severity === 1) ?? null;
-    const best = defect ?? cleanReport(observed);
+    const best = defect ?? cleanReport(observed, findings);
 
     // 204 now means only one thing: the site could not be measured well enough
     // to say anything specific about it. Rule 1 still holds, it just no longer
@@ -847,6 +922,8 @@ export const probeGenerate = onRequest(
       evidenceUrl,
       firstName: request.recipient?.first_name ?? null,
       addressSource: ADDRESS_SOURCE_SENTENCE,
+      productName: request.product?.name?.trim() || safeHost(productUrl),
+      source: request.product?.source ?? null,
     });
 
     // The evidence page is a gift, not a funnel (§9.2.3): public, no signup, no
