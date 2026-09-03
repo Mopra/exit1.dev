@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import { createHmac } from "crypto";
 
 import {
+  cleanReport,
   internalLinks,
   isPublicHostname,
   parseEvidenceRequest,
   renderBody,
   verifyProbeSignature,
   type Finding,
+  type Observed,
 } from "../probe-generate";
 
 const SECRET = "probe-shared-secret";
@@ -341,4 +343,81 @@ test("parseEvidenceRequest rejects anything that is not a report id", () => {
   for (const path of ["/", "/nope", "/../../etc/passwd", `/${UUID}.html`, "/12345"]) {
     assert.equal(parseEvidenceRequest(path, {}).valid, false, path);
   }
+});
+
+// ---------------------------------------------------------------------------
+// The clean report (severity 0)
+// ---------------------------------------------------------------------------
+
+const OBSERVED: Observed = {
+  host: "taonere.com",
+  finalUrl: "https://taonere.com/",
+  status: 200,
+  ttfbMs: 412,
+  redirects: 0,
+  hsts: true,
+  certIssuer: "Let's Encrypt",
+  certValidTo: "2026-11-12T08:15:50.000Z",
+  certDaysLeft: 70,
+  counterpartHost: "www.taonere.com",
+  counterpartOk: true,
+  linksChecked: 9,
+};
+
+test("a clean site produces a severity 0 finding", () => {
+  const finding = cleanReport(OBSERVED);
+  assert.ok(finding);
+  assert.equal(finding.severity, 0);
+  assert.equal(finding.kind, "all_clear");
+});
+
+test("the clean report quotes what was measured, not adjectives", () => {
+  const finding = cleanReport(OBSERVED);
+  assert.ok(finding);
+  // Every one of these is verifiable by the recipient in thirty seconds, which
+  // is the whole reason this is not a pretext.
+  assert.match(finding.detail, /200/);
+  assert.match(finding.detail, /412ms/);
+  assert.match(finding.detail, /70 days/);
+  assert.match(finding.detail, /2026-11-12/);
+  assert.match(finding.detail, /9 internal links/);
+  assert.match(finding.subject, /taonere\.com/);
+});
+
+test("a site that could not be measured gets no clean report", () => {
+  // Rule 1 still bites here: no measurement, no email. It just no longer
+  // requires the measurement to be bad news.
+  assert.equal(cleanReport({ ...OBSERVED, status: null }), null);
+});
+
+test("one measurement is not a report", () => {
+  const thin: Observed = {
+    ...OBSERVED,
+    ttfbMs: null,
+    certValidTo: null,
+    certDaysLeft: null,
+    counterpartHost: null,
+    counterpartOk: null,
+    linksChecked: 0,
+  };
+  assert.equal(cleanReport(thin), null);
+});
+
+test("the clean report renders a body that passes the same copy rules", () => {
+  const finding = cleanReport(OBSERVED);
+  assert.ok(finding);
+  const { text } = renderBody({
+    finding,
+    evidenceUrl: "https://probe.exit1.dev/e/01234567-89ab-cdef-0123-456789abcdef",
+    firstName: "Morten",
+    addressSource: "I found your address published on your own site.",
+  });
+  assert.ok(text.startsWith(finding.headline));
+  assert.doesNotMatch(text, /^(hi|hey|hello|dear|congrats)/i);
+  const withoutUrls = text.replace(/https?:\/\/\S+/g, " ");
+  assert.equal((withoutUrls.match(/exit1\.dev/gi) ?? []).length, 1);
+  assert.match(text, /This is the only email you will ever get from me\./);
+  // No question mark anywhere: 9.2 forbids a closing ask, and "nothing to fix"
+  // copy is exactly where one would sneak in.
+  assert.doesNotMatch(text, /\?/);
 });

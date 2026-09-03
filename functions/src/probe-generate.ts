@@ -10,6 +10,19 @@
 // pretext, and a pretext is worse than no email for the recipient, for any
 // regulator reading intent, and for the reply rate.
 //
+// A CLEAN SITE IS A FINDING. Severity 0, the "all clear" report. The first
+// version of this returned 204 whenever nothing was broken, which threw away
+// the better half of the list: seventeen consecutive real checks found nothing,
+// because a launched product on modern hosting usually has a valid certificate,
+// a canonical redirect and working links. The founder who ships that is not a
+// worse prospect for an uptime monitor. They are the one who already cares.
+//
+// What keeps it from being a pretext is not bad news, it is specifics: the
+// clean report quotes the status, the TTFB, the certificate expiry date and the
+// number of links checked, all measured against that domain minutes earlier and
+// all verifiable in thirty seconds. 204 now means only that nothing could be
+// measured.
+//
 // WHAT COUNTS AS SEVERITY 1. Something the founder can verify in thirty seconds
 // and would want to know on launch morning:
 //   - the landing page does not answer, or answers 4xx/5xx
@@ -20,7 +33,9 @@
 //     that 404s
 //
 // WHAT IS SEVERITY 2, recorded and then dropped by probe: TTFB, missing HSTS,
-// long redirect chains. Real, pedantic, and not worth a stranger's email.
+// long redirect chains. Real, pedantic, and not worth a stranger's email. Note
+// that these same numbers appear in the severity 0 report as evidence of a
+// healthy site, which is the difference between a measurement and a complaint.
 //
 // TIMING. This runs synchronously and finishes in seconds, so it answers 200 or
 // 204 and never 202. probe's contract allows 202 + polling with a two hour
@@ -162,7 +177,16 @@ export function verifyProbeSignature(args: {
 // ---------------------------------------------------------------------------
 
 export interface Finding {
-  severity: 1 | 2;
+  /**
+   * 1: a defect worth a stranger's email. 2: real but pedantic, recorded and
+   * dropped. 0: nothing wrong, and that is the finding.
+   *
+   * Severity 0 is not a weaker 1. It is a different kind of statement: every
+   * check passed, here is what was measured, and a founder who keeps a site in
+   * that condition is exactly the person who cares whether it stays that way.
+   * probe mails severity 0 and 1 and drops 2 (generator_min_severity).
+   */
+  severity: 0 | 1 | 2;
   /** Stable id, so the copy for a kind of finding lives in one place. */
   kind: string;
   subject: string;
@@ -290,11 +314,31 @@ function counterpartUrl(url: string): string | null {
   }
 }
 
+/** What the checks actually measured, kept whether or not anything failed.
+ *  A clean report is only worth sending because it can quote these. */
+export interface Observed {
+  host: string;
+  finalUrl: string;
+  status: number | null;
+  ttfbMs: number | null;
+  redirects: number;
+  hsts: boolean;
+  certIssuer: string | null;
+  certValidTo: string | null;
+  certDaysLeft: number | null;
+  counterpartHost: string | null;
+  counterpartOk: boolean | null;
+  linksChecked: number;
+}
+
 /**
- * Runs the suite and returns every finding, strongest first. Pure enough to
- * reason about: all the IO is in probeUrl and checkSSLCertificate.
+ * Runs the suite and returns every finding, strongest first, plus what was
+ * measured along the way. Pure enough to reason about: all the IO is in
+ * probeUrl and checkSSLCertificate.
  */
-export async function findFindings(productUrl: string): Promise<Finding[]> {
+export async function findFindings(
+  productUrl: string,
+): Promise<{ findings: Finding[]; observed: Observed }> {
   const findings: Finding[] = [];
   const landing = await probeUrl(productUrl, { body: true });
   const host = safeHost(productUrl);
@@ -388,8 +432,10 @@ export async function findFindings(productUrl: string): Promise<Finding[]> {
 
   // --- 3. apex vs www -------------------------------------------------------
   const counterpart = counterpartUrl(productUrl);
+  let counterpartOk: boolean | null = null;
   if (counterpart && landing.error === null && landing.ok) {
     const other = await probeUrl(counterpart);
+    counterpartOk = other.error === null ? other.ok : null;
     // Only when OURS works and the counterpart is genuinely broken. A
     // counterpart that simply does not resolve is a deliberate choice for
     // plenty of sites, so a DNS failure is not reported: only a host that
@@ -416,8 +462,10 @@ export async function findFindings(productUrl: string): Promise<Finding[]> {
   }
 
   // --- 4. Broken links on their own launch page -----------------------------
+  let linksChecked = 0;
   if (landing.body) {
     const links = internalLinks(landing.body, landing.url);
+    linksChecked = links.length;
     const broken: Array<{ url: string; status: number | null }> = [];
     for (const link of links) {
       const result = await probeUrl(link);
@@ -485,8 +533,115 @@ export async function findFindings(productUrl: string): Promise<Finding[]> {
     }
   }
 
-  // Strongest first. probe only mails severity 1, and takes the first one.
-  return findings.sort((a, b) => a.severity - b.severity);
+  const observed: Observed = {
+    host,
+    finalUrl: landing.url,
+    status: landing.status,
+    ttfbMs: landing.ttfbMs,
+    redirects: landing.redirects.length,
+    hsts: landing.hsts,
+    certIssuer: ssl.observationFailed ? null : ssl.issuer ?? null,
+    // Epoch ms on the check result, ISO date here: the clean report quotes it
+    // to a reader, and a reader cannot verify 1794412551000 against their own
+    // certificate in thirty seconds.
+    certValidTo:
+      ssl.observationFailed || typeof ssl.validTo !== "number"
+        ? null
+        : new Date(ssl.validTo).toISOString(),
+    certDaysLeft: ssl.observationFailed ? null : ssl.daysUntilExpiry ?? null,
+    counterpartHost: counterpart ? safeHost(counterpart) : null,
+    counterpartOk,
+    linksChecked,
+  };
+
+  // Strongest first, and severity 0 is not in here: a clean report is built
+  // from `observed` only when nothing else was found (see cleanReport).
+  return { findings: findings.sort((a, b) => a.severity - b.severity), observed };
+}
+
+/**
+ * The finding for a site with nothing wrong with it.
+ *
+ * This exists because "no defect, no email" was throwing away the better half
+ * of the list. Seventeen consecutive checks found nothing, which is not a
+ * failure of the checks: it is what a launched product on modern hosting
+ * usually looks like. A founder who ships a site with a valid certificate, a
+ * canonical redirect and no broken links is not a worse prospect for an uptime
+ * monitor than one who ships a 500. They are the person who already cares.
+ *
+ * The rule it must not break: this is still a report on THEIR site, quoting
+ * numbers measured against THEIR domain minutes earlier, verifiable in thirty
+ * seconds. What makes an email a pretext is not the absence of bad news, it is
+ * the absence of specifics. So every sentence here carries one.
+ *
+ * Returns null when there is not enough to say. A site we could not measure
+ * gets no email, which is where "no proof, no send" still bites.
+ */
+export function cleanReport(o: Observed): Finding | null {
+  // Nothing measured, nothing to report. A landing page that did not answer is
+  // a severity 1 finding elsewhere and never reaches here.
+  if (o.status === null) return null;
+
+  const checks: string[] = [];
+  checks.push(
+    o.redirects > 0
+      ? `${o.finalUrl} answered ${o.status} after ${o.redirects} redirect${o.redirects === 1 ? "" : "s"}`
+      : `${o.finalUrl} answered ${o.status} directly, with no redirect`,
+  );
+  if (o.ttfbMs !== null) {
+    checks.push(`first byte in ${o.ttfbMs}ms from europe-west1`);
+  }
+  if (o.certValidTo && o.certDaysLeft !== null) {
+    checks.push(
+      `the TLS certificate${o.certIssuer ? ` from ${o.certIssuer}` : ""} is valid for another ` +
+        `${o.certDaysLeft} days, until ${o.certValidTo.slice(0, 10)}`,
+    );
+  }
+  if (o.counterpartHost && o.counterpartOk === true) {
+    checks.push(`${o.counterpartHost} resolves and answers rather than erroring`);
+  }
+  if (o.linksChecked > 0) {
+    checks.push(
+      `all ${o.linksChecked} internal link${o.linksChecked === 1 ? "" : "s"} on the page resolve`,
+    );
+  }
+
+  // Two measurements is the floor. One is a fact, not a report, and it would
+  // read as filler around a pitch, which is exactly what this must not be.
+  if (checks.length < 2) return null;
+
+  return {
+    severity: 0,
+    kind: "all_clear",
+    subject: `I checked ${o.host} this morning and everything passed`,
+    headline:
+      `I ran a check against ${o.host} this morning and found nothing wrong with it, ` +
+      `which is rarer on launch day than it should be.`,
+    detail: `What I measured: ${joinList(checks)}.`,
+    // §6 requires a fix even here. The honest one is not a repair: it is the
+    // single thing this check cannot tell them, which is whether any of it is
+    // still true tomorrow.
+    fix:
+      `Nothing to fix. The one thing a check like this cannot tell you is whether it is still ` +
+      `true next Tuesday at 03:00, which is when certificates expire and DNS changes land.`,
+    meta: {
+      status: o.status,
+      ttfb_ms: o.ttfbMs,
+      redirects: o.redirects,
+      hsts: o.hsts,
+      cert_valid_to: o.certValidTo,
+      cert_days_left: o.certDaysLeft,
+      links_checked: o.linksChecked,
+      counterpart_ok: o.counterpartOk,
+    },
+  };
+}
+
+/** "a, b and c". Oxford comma deliberately absent: this is read aloud in the
+ *  reader's head as a list of measurements, not as prose. */
+function joinList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 function safeHost(url: string): string {
@@ -648,8 +803,9 @@ export const probeGenerate = onRequest(
 
     const started = Date.now();
     let findings: Finding[];
+    let observed: Observed;
     try {
-      findings = await findFindings(productUrl);
+      ({ findings, observed } = await findFindings(productUrl));
     } catch (err) {
       logger.error("probeGenerate failed while checking", {
         leadId: request.lead_id,
@@ -660,19 +816,25 @@ export const probeGenerate = onRequest(
       return;
     }
 
-    const best = findings[0];
     const elapsedMs = Date.now() - started;
 
-    // 204 is the expected majority outcome (§15.4): most sites are clean, or
-    // merely imperfect. Returning severity 2 here would be the failure mode, so
-    // the severity gate is applied on this side too rather than relying on
-    // probe to drop it.
-    if (!best || best.severity !== 1) {
-      logger.info("probeGenerate found nothing mailable", {
+    // A severity 1 defect if there is one; otherwise the clean report, which is
+    // a finding in its own right and not a consolation prize (see cleanReport).
+    // Severity 2 never becomes an email on its own: a pedantic finding presented
+    // as the reason for writing reads as a pretext, and "everything passed" is
+    // both truer and more useful than "your redirect chain is three hops".
+    const defect = findings.find((f) => f.severity === 1) ?? null;
+    const best = defect ?? cleanReport(observed);
+
+    // 204 now means only one thing: the site could not be measured well enough
+    // to say anything specific about it. Rule 1 still holds, it just no longer
+    // requires bad news.
+    if (!best) {
+      logger.info("probeGenerate had nothing specific to say", {
         leadId: request.lead_id,
         url: productUrl,
         elapsedMs,
-        severity2: findings.filter((f) => f.severity === 2).map((f) => f.kind),
+        observed,
       });
       res.status(204).send("");
       return;
