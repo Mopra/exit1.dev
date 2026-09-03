@@ -194,6 +194,13 @@ export interface Finding {
   headline: string;
   /** What we saw, in enough detail to be verified in thirty seconds. */
   detail: string;
+  /** Optional. Rendered as a list above `detail`, in both body variants.
+   *
+   *  A clean report is five or six measurements, and as one sentence that is a
+   *  wall of prose nobody scans. One line each is the same information in the
+   *  shape a reader actually uses: skim the list, stop at the number that looks
+   *  wrong, read the sentence under it. */
+  bullets?: string[];
   /** What to do about it. §6 requires this: diagnosis without remediation is
    *  just bad news from a stranger. */
   fix: string;
@@ -620,8 +627,9 @@ export function cleanReport(o: Observed, notes: Finding[] = []): Finding | null 
   const watch = notes.filter((n) => n.severity === 2).map(watchPhrase).filter((p) => p.length > 0);
 
   const detail =
-    `Here is what I actually measured: ${joinList(checks)}.` +
-    (watch.length > 0 ? ` Nothing there is broken. The only thing I would keep half an eye on is ${joinList(watch)}.` : "");
+    watch.length > 0
+      ? `Nothing in there is broken. The only thing I would keep half an eye on is ${joinList(watch)}.`
+      : "";
 
   return {
     severity: 0,
@@ -629,7 +637,8 @@ export function cleanReport(o: Observed, notes: Finding[] = []): Finding | null 
     subject: `I ran some checks on ${o.host} and everything came back clean`,
     headline:
       `I pointed a few uptime checks at ${o.host} and everything came back clean, which is ` +
-      `less common than it ought to be.`,
+      `less common than it ought to be. Here is what I measured:`,
+    bullets: checks.map(sentenceCase),
     detail,
     // §6 requires a fix even here. The honest one is not a repair: it is the
     // single thing this check cannot tell them, which is whether any of it is
@@ -665,6 +674,20 @@ function watchPhrase(note: Finding): string {
     default:
       return "";
   }
+}
+
+/**
+ * First letter up, so a line under a bullet does not read as a fragment.
+ *
+ * Except when the line opens on a url or a hostname. "Https://taonere.com" and
+ * "Www.taonere.com" are not capitalisation, they are typos, and this email's
+ * entire claim is that it looked carefully at that exact domain.
+ */
+function sentenceCase(value: string): string {
+  if (value.length === 0) return value;
+  const firstWord = value.split(/\s/, 1)[0] ?? "";
+  if (/^https?:/i.test(firstWord) || firstWord.includes(".")) return value;
+  return value[0].toUpperCase() + value.slice(1);
 }
 
 /** Milliseconds a person can read. 1324ms is a number; 1.3 seconds is a feeling. */
@@ -756,9 +779,10 @@ export function renderBody(args: {
 }): { text: string; html: string } {
   const { finding, evidenceUrl } = args;
 
-  const paragraphs: Array<string | { label: string; url: string }> = [
+  const paragraphs: Array<string | string[] | { label: string; url: string }> = [
     finding.headline,
-    finding.detail,
+    ...(finding.bullets && finding.bullets.length > 0 ? [finding.bullets] : []),
+    ...(finding.detail.trim().length > 0 ? [finding.detail] : []),
     finding.fix,
     { label: "The full check, with timings and response headers", url: evidenceUrl },
     // §9.2.4. First person, names the product exactly once, and says where the
@@ -770,18 +794,34 @@ export function renderBody(args: {
   ];
 
   const text = paragraphs
-    .map((p) => (typeof p === "string" ? p : `${p.label}: ${p.url}`))
+    .map((p) => {
+      if (typeof p === "string") return p;
+      // A list in the plain text variant too. Both variants have to tell the
+      // same story closely enough to pass probe's Jaccard similarity floor, so
+      // prose in one and a list in the other is not an option.
+      if (Array.isArray(p)) return p.map((item) => `  - ${item}`).join("\n");
+      return `${p.label}: ${p.url}`;
+    })
     .join("\n\n");
 
   const style = "margin:0 0 16px;line-height:1.6;";
+  const listStyle = "margin:0 0 16px;padding:0 0 0 20px;line-height:1.6;";
+  const itemStyle = "margin:0 0 6px;";
   const html = [
     "<html>",
     '  <body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;">',
-    ...paragraphs.map((p) =>
-      typeof p === "string"
+    ...paragraphs.map((p) => {
+      if (Array.isArray(p)) {
+        return [
+          `    <ul style="${listStyle}">`,
+          ...p.map((item) => `      <li style="${itemStyle}">${escapeHtml(item)}</li>`),
+          "    </ul>",
+        ].join("\n");
+      }
+      return typeof p === "string"
         ? `    <p style="${style}">${escapeHtml(p)}</p>`
-        : `    <p style="${style}"><a href="${escapeHtml(p.url)}">${escapeHtml(p.label)}</a></p>`,
-    ),
+        : `    <p style="${style}"><a href="${escapeHtml(p.url)}">${escapeHtml(p.label)}</a></p>`;
+    }),
     "  </body>",
     "</html>",
   ].join("\n");
@@ -1059,6 +1099,21 @@ export const probeEvidence = onRequest(
   },
 );
 
+/**
+ * The public report, in exit1.dev's own clothes.
+ *
+ * DESIGN.md is the source of truth for every value here: the app is dark only,
+ * so this is too; Albert Sans for copy and system mono for anything the reader
+ * might compare against their own terminal; the accent is the muted teal-green
+ * at hue 167 and it is the only accent on the page; elevation comes from
+ * surface lightness and hairlines, never from a glow, because flat-mode would
+ * strip one anyway.
+ *
+ * Mobile first and genuinely so. This link is opened from an email, which means
+ * a phone more often than not. Nothing here has a fixed width, the definition
+ * list collapses to a single column under 34rem, and the only thing allowed to
+ * scroll sideways is the JSON block, inside its own box.
+ */
 function evidenceHtml(
   id: string,
   data: {
@@ -1071,8 +1126,16 @@ function evidenceHtml(
   },
 ): string {
   const finding = data.finding;
-  const checkedAt = data.createdAt?.toDate().toISOString() ?? "";
+  const checked = data.createdAt?.toDate() ?? null;
+  // An ISO string with milliseconds and a T in it is for machines. The reader
+  // is checking whether this was today.
+  const checkedAt = checked
+    ? `${checked.toISOString().slice(0, 10)} at ${checked.toISOString().slice(11, 16)} UTC`
+    : "";
   const others = (data.allFindings ?? []).filter((f) => f.kind !== finding?.kind);
+  const clean = finding?.severity === 0;
+  const host = data.productUrl ? safeHost(data.productUrl) : "";
+  const bullets = finding?.bullets ?? [];
 
   return `<!doctype html>
 <html lang="en">
@@ -1080,70 +1143,171 @@ function evidenceHtml(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="dark">
 <title>${escapeHtml(finding?.subject ?? "Check report")}</title>
+<link rel="icon" href="https://exit1.dev/e_.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: light dark; --bg:#f7f7f5; --fg:#16181c; --dim:#5c6672; --line:#dcdcd6; --warn:#b3541e; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#08090b; --fg:#e4e7eb; --dim:#98a1ae; --line:#1e232b; --warn:#e8925a; }
+  /* DESIGN.md section 3, the dark palette. The app is dark only and so is this. */
+  :root {
+    --background: #15151B;
+    --foreground: oklch(0.9851 0 0);
+    --card: oklch(0.235 0.014 285);
+    --muted: oklch(0.278 0.014 285);
+    --muted-foreground: oklch(0.7090 0 0);
+    --border: oklch(0.2768 0 0);
+    --primary: oklch(0.5854 0.1022 167.0051);
+    --success: oklch(0.78 0.17 152);
+    --warning: oklch(0.85 0.16 80);
+    --radius: 0.5rem;
+    --font-sans: "Albert Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
-  main { max-width: 44rem; margin: 0 auto; padding: 3.5rem 1.5rem 5rem; }
-  .tag { font:11px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing:.18em; text-transform:uppercase; color:var(--warn); }
-  h1 { margin:.75rem 0 1.5rem; font-size:1.6rem; font-weight:400; letter-spacing:-.01em; line-height:1.3; }
-  h2 { margin:2.5rem 0 .75rem; font-size:.75rem; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); }
-  p { margin:0 0 1rem; }
-  .dim { color:var(--dim); }
-  pre { overflow-x:auto; padding:1rem; background:rgba(127,127,127,.08); border:1px solid var(--line); font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-  hr { border:0; border-top:1px solid var(--line); margin:2.5rem 0; }
-  dl { display:grid; grid-template-columns:minmax(0,10rem) minmax(0,1fr); gap:.35rem 1rem; margin:0; font-size:.875rem; }
-  dt { color:var(--dim); }
-  dd { margin:0; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow-wrap:anywhere; }
-  a { color:inherit; }
-  footer { margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--line); font-size:.8125rem; color:var(--dim); }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    /* DESIGN.md section 4: 1.5 for body, -0.01em globally, not per element. */
+    font-size: 16px;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 42rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  @media (min-width: 40rem) { main { padding: 3.5rem 2rem 5rem; } }
+
+  .brand {
+    display: flex; align-items: center; gap: .5rem;
+    font-size: .875rem; font-weight: 500; color: var(--muted-foreground);
+    text-decoration: none; margin-bottom: 2rem;
+  }
+  .brand .mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.5rem; height: 1.5rem; border-radius: calc(var(--radius) - 4px);
+    background: var(--foreground); color: var(--background);
+    font-family: var(--font-mono); font-size: .75rem; font-weight: 700;
+  }
+
+  .status {
+    display: inline-block; padding: .25rem .625rem;
+    border-radius: calc(var(--radius) - 2px);
+    border: 1px solid var(--border); background: var(--card);
+    font-size: .75rem; font-weight: 500; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .status.clean { color: var(--success); }
+  .status.issue { color: var(--warning); }
+
+  h1 {
+    margin: 1rem 0 1.25rem;
+    /* Headlines at 1.2, fluid so a long hostname never wraps badly on a phone. */
+    font-size: clamp(1.5rem, 1.15rem + 1.6vw, 2rem);
+    font-weight: 600; line-height: 1.2;
+  }
+  h2 {
+    margin: 2.5rem 0 .75rem;
+    font-size: .8125rem; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted-foreground);
+  }
+  p { margin: 0 0 1rem; }
+  .lede { font-size: 1.0625rem; }
+  .dim { color: var(--muted-foreground); }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  ul.checks { list-style: none; margin: 0 0 1.5rem; padding: 0; }
+  ul.checks li {
+    position: relative; padding: .625rem 0 .625rem 1.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+  ul.checks li:last-child { border-bottom: 0; }
+  ul.checks li::before {
+    content: ""; position: absolute; left: .375rem; top: 1.125rem;
+    width: .375rem; height: .375rem; border-radius: 50%; background: var(--success);
+  }
+  ul.checks.neutral li::before { background: var(--muted-foreground); }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1rem 1.25rem;
+  }
+  .card p:last-child { margin-bottom: 0; }
+
+  dl { display: grid; grid-template-columns: 1fr; gap: .75rem 1.5rem; margin: 0; font-size: .875rem; }
+  @media (min-width: 34rem) { dl { grid-template-columns: 9rem minmax(0, 1fr); gap: .5rem 1.5rem; } }
+  dt { color: var(--muted-foreground); }
+  dd { margin: 0 0 .25rem; font-family: var(--font-mono); font-size: .8125rem; overflow-wrap: anywhere; }
+  @media (min-width: 34rem) { dd { margin-bottom: 0; } }
+
+  pre {
+    margin: 0; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    padding: 1rem; background: var(--muted); border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-mono); font-size: .75rem; line-height: 1.5; letter-spacing: 0;
+  }
+
+  footer {
+    margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border);
+    font-size: .8125rem; color: var(--muted-foreground);
+  }
 </style>
 </head>
 <body>
 <main>
-  <span class="tag">Check report</span>
+  <a class="brand" href="https://exit1.dev"><span class="mark" aria-hidden="true">e_</span> exit1.dev</a>
+
+  <span class="status ${clean ? "clean" : "issue"}">${clean ? "All clear" : "Needs a look"}</span>
   <h1>${escapeHtml(finding?.subject ?? "Check report")}</h1>
 
-  <p>${escapeHtml(finding?.headline ?? "")}</p>
-  <p class="dim">${escapeHtml(finding?.detail ?? "")}</p>
+  <p class="lede">${escapeHtml(finding?.headline ?? "")}</p>
+${
+  bullets.length > 0
+    ? `  <ul class="checks">
+${bullets.map((b) => `    <li>${escapeHtml(b)}</li>`).join("\n")}
+  </ul>
+`
+    : ""
+}${
+    finding?.detail && finding.detail.trim().length > 0
+      ? `  <p class="dim">${escapeHtml(finding.detail)}</p>
+`
+      : ""
+  }
+  <h2>${clean ? "What this cannot tell you" : "What to do"}</h2>
+  <div class="card"><p>${escapeHtml(finding?.fix ?? "")}</p></div>
 
-  <h2>What to do</h2>
-  <p>${escapeHtml(finding?.fix ?? "")}</p>
-
-  <h2>What was checked</h2>
+  <h2>How it was checked</h2>
   <dl>
     <dt>Target</dt><dd>${escapeHtml(data.productUrl ?? "")}</dd>
-    <dt>Checked at</dt><dd>${escapeHtml(checkedAt)}</dd>
-    <dt>From</dt><dd>europe-west1</dd>
-    <dt>Duration</dt><dd>${data.elapsedMs ?? 0}ms</dd>
-    <dt>Report id</dt><dd>${escapeHtml(id)}</dd>
+    <dt>Checked</dt><dd>${escapeHtml(checkedAt)}</dd>
+    <dt>From</dt><dd>Belgium, one request</dd>
+    <dt>Took</dt><dd>${data.elapsedMs ?? 0}ms</dd>
+    <dt>Report</dt><dd>${escapeHtml(id)}</dd>
   </dl>
-
-  <h2>Raw observation</h2>
-  <pre>${escapeHtml(JSON.stringify(finding?.meta ?? {}, null, 2))}</pre>
 ${
   others.length > 0
-    ? `  <h2>Also noticed, not worth an email</h2>
-  <ul class="dim">
+    ? `
+  <h2>Also noticed</h2>
+  <ul class="checks neutral">
 ${others.map((f) => `    <li>${escapeHtml(f.headline)}</li>`).join("\n")}
   </ul>
 `
     : ""
 }
-  <hr>
-  <p class="dim">This report was produced by <a href="https://exit1.dev">exit1.dev</a>, an uptime
-  monitor, pointed at a publicly launched site. There is nothing to claim and nothing to sign up
-  for on this page. It sets no cookies and runs no analytics.</p>
+  <h2>Raw observation</h2>
+  <pre>${escapeHtml(JSON.stringify(finding?.meta ?? {}, null, 2))}</pre>
 
   <footer>
-    The full JSON is at <a href="${escapeHtml(EVIDENCE_BASE)}/${escapeHtml(id)}.json">${escapeHtml(
-    EVIDENCE_BASE,
-  )}/${escapeHtml(id)}.json</a>.
-    To have this report deleted, reply to the email it came with.
+    <p>This report was produced by exit1.dev, an uptime monitor, pointed once at
+    ${escapeHtml(host || "a public site")}. There is nothing to claim and nothing to sign
+    up for on this page. It sets no cookies and runs no analytics.</p>
+    <p>The same report as JSON:
+    <a href="${escapeHtml(EVIDENCE_BASE)}/${escapeHtml(id)}.json">${escapeHtml(id)}.json</a>.
+    To have it deleted, reply to the email it came with.</p>
   </footer>
 </main>
 </body>

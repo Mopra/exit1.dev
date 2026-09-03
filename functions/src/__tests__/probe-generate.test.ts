@@ -379,15 +379,26 @@ test("a clean site produces a severity 0 finding", () => {
 test("the clean report quotes what was measured, not adjectives", () => {
   const finding = cleanReport(OBSERVED);
   assert.ok(finding);
+  // One measurement per line, because six of them in one sentence is a wall of
+  // text nobody scans.
+  const bullets = (finding.bullets ?? []).join(" | ");
   // Every one of these is verifiable by the recipient in thirty seconds, which
   // is the whole reason this is not a pretext.
-  assert.match(finding.detail, /200/);
-  assert.match(finding.detail, /412ms/);
-  assert.doesNotMatch(finding.detail, /europe-west1/);
-  assert.match(finding.detail, /70 days/);
-  assert.match(finding.detail, /2026-11-12/);
-  assert.match(finding.detail, /9 internal links/);
+  assert.match(bullets, /200/);
+  assert.match(bullets, /412ms/);
+  assert.doesNotMatch(bullets, /europe-west1/);
+  assert.match(bullets, /70 days/);
+  assert.match(bullets, /2026-11-12/);
+  assert.match(bullets, /9 internal links/);
   assert.match(finding.subject, /taonere\.com/);
+  // Each one reads as a line, not as a clause lifted out of a sentence. A
+  // hostname or url keeps its own casing: "Https://" and "Www." are typos in an
+  // email whose whole claim is that it looked carefully at that domain.
+  for (const line of finding.bullets ?? []) {
+    assert.doesNotMatch(line, /^Https?:/, line);
+    assert.doesNotMatch(line, /^Www\./, line);
+    assert.match(line, /^[A-Z]|^https?:\/\/|^[a-z0-9-]+\./, line);
+  }
 });
 
 test("a site that could not be measured gets no clean report", () => {
@@ -433,8 +444,9 @@ test("the clean report renders a body that passes the same copy rules", () => {
 test("a slow first byte is read as seconds, not milliseconds", () => {
   const finding = cleanReport({ ...OBSERVED, ttfbMs: 1324 });
   assert.ok(finding);
-  assert.match(finding.detail, /1\.3 seconds/);
-  assert.doesNotMatch(finding.detail, /1324/);
+  const bullets = (finding.bullets ?? []).join(" | ");
+  assert.match(bullets, /1\.3 seconds/);
+  assert.doesNotMatch(bullets, /1324/);
 });
 
 test("the clean report mentions a severity 2 note rather than hiding it", () => {
@@ -470,5 +482,26 @@ test("provenance names the real source rather than assuming a launch", () => {
   for (const src of ["show_hn", "manual", null]) {
     assert.doesNotMatch(provenanceSentence("Taonere", src), /launched/);
     assert.doesNotMatch(provenanceSentence("Taonere", src), /this morning/);
+  }
+});
+
+test("the bullets survive into both body variants", () => {
+  const finding = cleanReport(OBSERVED);
+  assert.ok(finding);
+  const { text, html } = renderBody({
+    finding,
+    evidenceUrl: "https://probe.exit1.dev/e/abc",
+    firstName: null,
+    addressSource: "I found your address published on your own site.",
+    productName: "Taonere",
+    source: "show_hn",
+  });
+  // Plain text gets a real list, not a paragraph: the two variants have to
+  // tell the same story or probe's similarity floor rejects the pair.
+  assert.match(text, /\n {2}- /);
+  assert.match(html, /<ul style=/);
+  assert.match(html, /<li style=/);
+  for (const bullet of finding.bullets ?? []) {
+    assert.ok(text.includes(bullet), bullet);
   }
 });
