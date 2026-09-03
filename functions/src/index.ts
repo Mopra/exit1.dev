@@ -141,6 +141,14 @@ export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } fr
 // Public API
 export { publicApi } from './public-api';
 
+// ---------------------------------------------------------------------------
+// probe (see the probe repo, PLAN.md §6)
+// ---------------------------------------------------------------------------
+// probeGenerate answers probe's generator contract: given a launched product,
+// return one severity-1 finding about its public surface, or 204. probeEvidence
+// serves the public report the email links to.
+export { probeGenerate, probeEvidence } from './probe-generate';
+
 // Remote MCP server + its OAuth 2.1 authorization server.
 // Agent-native onboarding: see Docs/agent-onboarding.md
 export { mcpServer } from './mcp-server';

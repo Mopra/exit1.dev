@@ -26,6 +26,14 @@ export const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
 export const TWILIO_FROM_NUMBER = defineSecret('TWILIO_FROM_NUMBER');
 export const TWILIO_MESSAGING_SERVICE_SID = defineSecret('TWILIO_MESSAGING_SERVICE_SID');
 export const VPS_MANUAL_CHECK_SECRET = defineSecret('VPS_MANUAL_CHECK_SECRET');
+// Shared secret for the probe generator endpoint (probe PLAN.md §6). probe signs
+// every request as HMAC-SHA256(secret, timestamp + "." + rawBody), and probe
+// calls the function's own URL directly, which is publicly reachable, so the
+// signature is the entire gate. Same value as PROBE_HMAC_SECRET in probe's own
+// .env; a mismatch makes every call 401. Set with
+// `firebase functions:secrets:set PROBE_HMAC_SECRET`, then REDEPLOY the
+// function -- a secret only reaches a function on its next deploy.
+export const PROBE_HMAC_SECRET = defineSecret('PROBE_HMAC_SECRET');
 
 export const getResendCredentials = () => {
   const sanitize = (value?: string | null) =>

@@ -327,6 +327,19 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // probe check reports (probe PLAN.md §6, functions/src/probe-generate.ts).
+    //
+    // Written by probeGenerate and read by probeEvidence, both with the Admin
+    // SDK, which bypasses these rules entirely. So the rule is `false`, not
+    // `read: true`: the report IS public, but it is public through the
+    // probeEvidence endpoint, which renders one document by id. Opening the
+    // collection to client reads would make every launch-day problem probe has
+    // ever found enumerable by anyone, which is a different thing from each
+    // founder being able to read their own report.
+    match /probeFindings/{findingId} {
+      allow read, write: if false;
+    }
+
     // Deny all other access
     match /{document=**} {
       allow read, write: if false;

@@ -58,6 +58,14 @@
         "function": "getPublicMonitor"
       },
       {
+        "source": "/api/probe/generate",
+        "function": "probeGenerate"
+      },
+      {
+        "source": "/probe/**",
+        "function": "probeEvidence"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
