@@ -750,6 +750,27 @@ export function isPublicHostname(hostname: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Splits an evidence request into the report id and the format asked for.
+ *
+ * The .json suffix is stripped BEFORE the id is validated, not after. The
+ * report page's own footer links to `<id>.json`, and with the suffix still
+ * attached the id failed the shape check, so every one of those advertised
+ * links 404'd and always had.
+ *
+ * Exported for tests: it is pure, and it is the only place a path from the
+ * open internet becomes a Firestore document id.
+ */
+export function parseEvidenceRequest(
+  path: string,
+  query: Record<string, unknown>,
+): { id: string; wantsJson: boolean; valid: boolean } {
+  const last = (path.split("/").filter(Boolean).pop() ?? "").trim();
+  const wantsJson = last.toLowerCase().endsWith(".json") || query.format === "json";
+  const id = last.replace(/\.json$/i, "");
+  return { id, wantsJson, valid: /^[0-9a-f-]{36}$/i.test(id) };
+}
+
+/**
  * The public report the email links to. No signup wall, no email capture, no
  * "claim this report" gate, no tracking. §9.2.3 is explicit that the conversion
  * mechanism is the quality of the artifact and the product being visibly the
@@ -759,8 +780,8 @@ export function isPublicHostname(hostname: string): boolean {
 export const probeEvidence = onRequest(
   { region: "europe-west1", timeoutSeconds: 30, memory: "256MiB", cors: true },
   async (req, res) => {
-    const id = (req.path.split("/").filter(Boolean).pop() ?? "").trim();
-    if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    const { id, wantsJson, valid } = parseEvidenceRequest(req.path, req.query);
+    if (!valid) {
       res.status(404).type("text/plain").send("No such report.\n");
       return;
     }
@@ -779,7 +800,7 @@ export const probeEvidence = onRequest(
       createdAt?: { toDate(): Date };
     };
 
-    if (req.path.endsWith(".json") || req.query.format === "json") {
+    if (wantsJson) {
       res.status(200).json({
         product: { name: data.productName ?? null, url: data.productUrl ?? null },
         finding: data.finding ?? null,

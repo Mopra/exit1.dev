@@ -5,6 +5,7 @@ import { createHmac } from "crypto";
 import {
   internalLinks,
   isPublicHostname,
+  parseEvidenceRequest,
   renderBody,
   verifyProbeSignature,
   type Finding,
@@ -19,9 +20,9 @@ function sign(body: string, ts = NOW_S, secret = SECRET): string {
 }
 
 // ---------------------------------------------------------------------------
-// The signature is the only gate on this endpoint. It is reachable publicly
-// through the Hosting rewrite, and an unauthenticated caller could otherwise
-// feed it any URL and get exit1 to probe it on their behalf.
+// The signature is the only gate on this endpoint. probe calls the function's
+// own URL, which is publicly reachable, and an unauthenticated caller could
+// otherwise feed it any URL and get exit1 to probe it on their behalf.
 // ---------------------------------------------------------------------------
 
 test("verifyProbeSignature accepts a correctly signed request", () => {
@@ -303,4 +304,41 @@ test("the html escapes the finding text", () => {
   assert.ok(!html.includes("<script>"));
   assert.ok(html.includes("&lt;script&gt;"));
   assert.ok(html.includes("&amp; co"));
+});
+
+// ---------------------------------------------------------------------------
+// The evidence report's own id parsing. Regression: the page footer links to
+// `<id>.json`, and the id was validated with the suffix still attached, so the
+// shape check rejected it and every one of those advertised links 404'd.
+// ---------------------------------------------------------------------------
+
+const UUID = "3b7e51c1-4452-4d67-81b6-4eac854bfc7d";
+
+test("parseEvidenceRequest accepts a bare id and asks for html", () => {
+  const r = parseEvidenceRequest(`/${UUID}`, {});
+  assert.equal(r.id, UUID);
+  assert.equal(r.wantsJson, false);
+  assert.equal(r.valid, true);
+});
+
+test("parseEvidenceRequest accepts the .json form the footer links to", () => {
+  for (const path of [`/${UUID}.json`, `/probe/${UUID}.JSON`]) {
+    const r = parseEvidenceRequest(path, {});
+    assert.equal(r.id, UUID, path);
+    assert.equal(r.wantsJson, true, path);
+    assert.equal(r.valid, true, path);
+  }
+});
+
+test("parseEvidenceRequest honours ?format=json without a suffix", () => {
+  const r = parseEvidenceRequest(`/${UUID}`, { format: "json" });
+  assert.equal(r.id, UUID);
+  assert.equal(r.wantsJson, true);
+  assert.equal(r.valid, true);
+});
+
+test("parseEvidenceRequest rejects anything that is not a report id", () => {
+  for (const path of ["/", "/nope", "/../../etc/passwd", `/${UUID}.html`, "/12345"]) {
+    assert.equal(parseEvidenceRequest(path, {}).valid, false, path);
+  }
 });
