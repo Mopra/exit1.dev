@@ -125,6 +125,11 @@ export default function ApiKeys() {
       setName("");
       setScopes(["checks:read"]);
       load();
+    } else {
+      // A failed create used to be swallowed here, so a blocked request or a
+      // backend refusal looked like a dead button. Keep the dialog open and
+      // say what happened so the user (and support) can see it.
+      toast.error(res.error || "Failed to create API key");
     }
   }
 
