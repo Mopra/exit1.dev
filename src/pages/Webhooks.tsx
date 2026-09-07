@@ -409,7 +409,7 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
             <Button
               onClick={() => setShowForm(true)}
               className="gap-2 cursor-pointer"
-              title={atWebhookLimit ? `Free plan limit of ${maxWebhooks} ${labels.titleSingular} reached` : undefined}
+              title={atWebhookLimit ? `Your plan includes ${maxWebhooks} ${maxWebhooks === 1 ? labels.titleSingular : labels.titlePlural}` : undefined}
               disabled={atWebhookLimit}
             >
               <Plus className="w-4 h-4" />

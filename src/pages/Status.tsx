@@ -661,7 +661,7 @@ const Status: React.FC = () => {
               onClick={openCreate}
               className="gap-2 cursor-pointer"
               disabled={!canCreateStatusPage}
-              title={!canCreateStatusPage ? 'Upgrade to Nano for unlimited status pages' : undefined}
+              title={!canCreateStatusPage ? statusPageUpsell : undefined}
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">New Status Page</span>
