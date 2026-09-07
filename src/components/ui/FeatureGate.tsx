@@ -23,14 +23,16 @@ const TIER_LABEL: Record<RequiredTier, string> = {
 
 type FeatureGateProps = {
   /**
-   * Legacy API: when true, gate content (show upgrade card). When false, render children.
-   * Prefer `requiredTier` + `currentTier` for new code.
+   * Explicit entitlement check: when true, gate content (show upgrade card).
+   * When false, render children. Takes precedence over the tier comparison, so
+   * pass this whenever the entitlement is not a plain "tier X and up" rule
+   * (Free has API access, for example).
    */
   enabled?: boolean;
   /**
-   * New API: minimum tier required to access the gated content. When provided
-   * alongside `currentTier`, the gate shows unless `currentTier` meets or
-   * exceeds `requiredTier`. Defaults to 'nano' for copy/label purposes.
+   * Minimum tier required to access the gated content. When `enabled` is not
+   * given and `currentTier` is, the gate shows unless `currentTier` meets or
+   * exceeds `requiredTier`. Always used for the copy. Defaults to 'nano'.
    */
   requiredTier?: RequiredTier;
   /** User's current effective tier. Required when using `requiredTier`. */
@@ -57,13 +59,22 @@ export function FeatureGate({
   const effectiveRequired: RequiredTier = requiredTier ?? "nano";
   const tierLabel = TIER_LABEL[effectiveRequired];
 
-  // Decide gating. If the caller provided `currentTier`, use tier comparison.
-  // Otherwise fall back to the legacy `enabled` boolean (true = show gate).
+  // Decide gating. An explicit `enabled` is the caller's own entitlement check
+  // and wins outright; `currentTier` then only feeds the copy. Without it, fall
+  // back to the tier comparison.
+  //
+  // The order matters. Until 2026-09-07 `currentTier` took precedence, so the
+  // API Keys and MCP pages, which pass both, gated every Free user behind an
+  // upgrade card even though Free has had API access since the 2026-08-12 tier
+  // restructure. The page header still rendered its Create button outside the
+  // gate, which made the bug look like a button that did nothing.
   let gated: boolean;
-  if (currentTier !== undefined) {
+  if (enabled !== undefined) {
+    gated = enabled;
+  } else if (currentTier !== undefined) {
     gated = TIER_RANK[currentTier] < TIER_RANK[effectiveRequired];
   } else {
-    gated = enabled === true;
+    gated = false;
   }
 
   if (!gated) return <>{children}</>;
