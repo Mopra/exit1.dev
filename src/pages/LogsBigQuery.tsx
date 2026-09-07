@@ -38,10 +38,24 @@ type SlowStageLabel = 'DNS' | 'CONNECT' | 'TLS' | 'TTFB';
 
 type ManualLogStatus = 'online' | 'offline' | 'unknown' | 'disabled';
 
-const ALLOWED_TIME_RANGES = ['1h', '24h', '7d', '30d', '60d'] as const;
+const ALLOWED_TIME_RANGES = ['1h', '24h', '7d', '30d', '60d', '90d', '1y'] as const;
 type TimeRange = (typeof ALLOWED_TIME_RANGES)[number];
+
+// Days each preset spans. Presets longer than the tier's retention are hidden
+// and, if reached via a stale localStorage value, trigger the upsell instead.
+// Until 2026-09-07 the window was hardcoded to 30 days (Free) or 60 (paid),
+// which blocked Free from the 60 days it is sold and every paid tier from
+// anything past two months. BigQuery keeps three years for everyone.
+const RANGE_DAYS: Record<TimeRange, number> = {
+  '1h': 1 / 24,
+  '24h': 1,
+  '7d': 7,
+  '30d': 30,
+  '60d': 60,
+  '90d': 90,
+  '1y': 365,
+};
 // Mutable copy for prop passing (avoids creating a new array every render)
-const ALLOWED_TIME_RANGES_MUTABLE: string[] = [...ALLOWED_TIME_RANGES];
 
 const MANUAL_LOG_STATUS_OPTIONS: Array<{ value: ManualLogStatus; label: string }> = [
   { value: 'unknown', label: 'Unknown' },
@@ -432,7 +446,12 @@ const LogsBigQuery: React.FC = () => {
   const { checks, loading: checksLoading } = useChecks(userId ?? null, noop, { realtime: false });
   // The 60-day window is a paid-tier feature, not a Nano-or-better one — every
   // paid tier (Indie included) retains 60 days of history.
-  const { tier, paid, pro } = usePlan();
+  const { tier, pro, retentionDays } = usePlan();
+  const visibleTimeRanges = React.useMemo(
+    () => ALLOWED_TIME_RANGES.filter((r) => RANGE_DAYS[r] <= retentionDays) as string[],
+    [retentionDays],
+  );
+  const nextRetentionTier = React.useMemo(() => nextTierWithMore(tier, 'retentionDays'), [tier]);
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);
@@ -644,6 +663,10 @@ const LogsBigQuery: React.FC = () => {
         return { start: now - (30 * oneDay), end: now };
       case '60d':
         return { start: now - (60 * oneDay), end: now };
+      case '90d':
+        return { start: now - (90 * oneDay), end: now };
+      case '1y':
+        return { start: now - (365 * oneDay), end: now };
       default:
         return { start: now - (60 * 60 * 1000), end: now };
     }
@@ -1238,14 +1261,15 @@ const LogsBigQuery: React.FC = () => {
           <FilterBar
             timeRange={customStartDate && customEndDate ? '' : dateRange}
             onTimeRangeChange={(range) => {
-              if (range === '60d' && !paid) {
+              const days = RANGE_DAYS[range as TimeRange];
+              if (days !== undefined && days > retentionDays) {
                 setShowUpgradeBanner(true);
                 return;
               }
               setShowUpgradeBanner(false);
               setDateRange(range as TimeRange);
             }}
-            timeRangeOptions={ALLOWED_TIME_RANGES_MUTABLE}
+            timeRangeOptions={visibleTimeRanges}
             disableTimeRangeToggle={Boolean(customStartDate && customEndDate)}
             customStartDate={customStartDate}
             customEndDate={customEndDate}
@@ -1253,7 +1277,7 @@ const LogsBigQuery: React.FC = () => {
             onCustomEndDateChange={setCustomEndDate}
             dateRange={calendarDateRange}
             onDateRangeChange={handleCalendarDateRangeChange}
-            maxDateRangeDays={paid ? 60 : 30}
+            maxDateRangeDays={retentionDays}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
             searchPlaceholder="Search websites, errors..."
@@ -1288,7 +1312,11 @@ const LogsBigQuery: React.FC = () => {
         <div className="px-4 sm:px-6 pt-4">
           <UpgradeBanner
             variant="teaser"
-            message="Want to see more? Upgrade to Nano for up to 60 days of history."
+            message={
+              nextRetentionTier
+                ? `Your plan keeps ${formatRetentionForTier(tier)} of history. Upgrade to ${nextRetentionTier.name} for ${formatRetentionForTier(nextRetentionTier.tier)}.`
+                : `Your plan keeps ${formatRetentionForTier(tier)} of history.`
+            }
           />
         </div>
       )}

@@ -33,6 +33,17 @@ import {
 import * as Recharts from 'recharts';
 import { apiClient } from '../api/client';
 import { usePlan } from '../hooks/usePlan';
+import { formatRetentionForTier, nextTierWithMore } from '../lib/subscription';
+
+/** Days each report preset spans; presets past the tier's window are hidden. */
+const REPORT_RANGE_DAYS: Record<string, number> = {
+  '1h': 1 / 24,
+  '24h': 1,
+  '7d': 7,
+  '30d': 30,
+  '60d': 60,
+  '90d': 90,
+};
 
 type Metric = {
   key: string;
@@ -58,20 +69,29 @@ const Reports: React.FC = () => {
   const hasNoChecks = !checksLoading && (!checks || checks.length === 0);
   // The 60-day window is a paid-tier feature, not a Nano-or-better one — every
   // paid tier (Indie included) retains 60 days of history.
-  const { paid } = usePlan();
+  const { tier, retentionDays } = usePlan();
+  // Reports run on the stats path, which the backend caps at a 90-day lookback
+  // (MAX_STATS_LOOKBACK_MS in bigquery.ts), so the window is the smaller of the
+  // tier's retention and 90 days. Until 2026-09-07 it was hardcoded to 30 days
+  // (Free) or 60 (paid), short of what every tier is sold.
+  const reportWindowDays = Math.min(retentionDays, 90);
+  const nextRetentionTier = React.useMemo(() => nextTierWithMore(tier, 'retentionDays'), [tier]);
   const isMobile = useMobile();
   const requestIdRef = React.useRef(0);
 
   // v2: default to no selection so we don't accidentally load "All Websites" on first visit
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
   const isAllWebsites = websiteFilter === 'all';
-  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d', '60d'] as ('1h' | '24h' | '7d' | '30d' | '60d')[], []);
+  const allowedTimeRanges = React.useMemo(() => {
+    const all = ['1h', '24h', '7d', '30d', '60d', '90d'] as ('1h' | '24h' | '7d' | '30d' | '60d' | '90d')[];
+    return all.filter((r) => REPORT_RANGE_DAYS[r] <= reportWindowDays);
+  }, [reportWindowDays]);
   const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range-v2', '24h');
   const [calendarDateRange, setCalendarDateRange] = React.useState<DateRange | undefined>(undefined);
   const [showUpgradeBanner, setShowUpgradeBanner] = React.useState(false);
 
   React.useEffect(() => {
-    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d' && timeRange !== '60d') {
+    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d' && timeRange !== '60d' && timeRange !== '90d') {
       setTimeRange('24h');
     }
   }, [setTimeRange, timeRange]);
@@ -148,7 +168,7 @@ const Reports: React.FC = () => {
       return { start: fromDate.getTime(), end: toDate.getTime() };
     }
 
-    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d' && timeRange !== '60d') {
+    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d' && timeRange !== '60d' && timeRange !== '90d') {
       return { start: now - 60 * 60 * 1000, end: now };
     }
 
@@ -163,6 +183,8 @@ const Reports: React.FC = () => {
         return { start: now - 30 * oneDay, end: now };
       case '60d':
         return { start: now - 60 * oneDay, end: now };
+      case '90d':
+        return { start: now - 90 * oneDay, end: now };
       default:
         return { start: now - 60 * 60 * 1000, end: now };
     }
@@ -653,7 +675,8 @@ const Reports: React.FC = () => {
         <FilterBar
           timeRange={calendarDateRange ? '' : (timeRange as TimeRange)}
           onTimeRangeChange={(range) => {
-            if (range === '60d' && !paid) {
+            const days = REPORT_RANGE_DAYS[range];
+            if (days !== undefined && days > reportWindowDays) {
               setShowUpgradeBanner(true);
               return;
             }
@@ -664,7 +687,7 @@ const Reports: React.FC = () => {
           disableTimeRangeToggle={Boolean(calendarDateRange)}
           dateRange={calendarDateRange}
           onDateRangeChange={setCalendarDateRange}
-          maxDateRangeDays={paid ? 60 : 30}
+          maxDateRangeDays={reportWindowDays}
           searchTerm={''}
           onSearchChange={() => {}}
           hideSearch
@@ -707,7 +730,11 @@ const Reports: React.FC = () => {
         <div className="px-4 sm:px-6 pt-4">
           <UpgradeBanner
             variant="teaser"
-            message="Want to see more? Upgrade to Nano for up to 60 days of history."
+            message={
+              nextRetentionTier && reportWindowDays < 90
+                ? `Your plan keeps ${formatRetentionForTier(tier)} of history. Upgrade to ${nextRetentionTier.name} for ${formatRetentionForTier(nextRetentionTier.tier)}.`
+                : 'Reports cover the most recent 90 days. Older history is available on the Logs page.'
+            }
           />
         </div>
       )}
