@@ -3,41 +3,22 @@
 @custom-variant dark (&:is(.dark *));
 
 @layer base {
-  /* Clerk overlays (billing, checkout, user profile, org switcher, popovers,
-     drawers) must always sit above every piece of app chrome. ClerkJS ships
-     its UI from a CDN — the actually-positioned overlay elements are
-     .cl-modalBackdrop / .cl-modalContent / .cl-drawerBackdrop /
-     .cl-drawerContent / .cl-popoverBox, plus the portal wrapper itself. We
-     only touch z-index here — Clerk owns layout. */
-  .cl-portal,
-  .cl-component,
-  .cl-rootBox,
-  .cl-cardBox,
-  .cl-modalBackdrop,
-  .cl-modalContent,
-  .cl-drawerBackdrop,
-  .cl-drawerContent,
-  .cl-drawerRoot,
-  .cl-popover,
-  .cl-popoverBox,
-  [class*="cl-modalBackdrop"],
-  [class*="cl-modalContent"],
-  [class*="cl-drawerBackdrop"],
-  [class*="cl-drawerContent"],
-  [class*="cl-drawerRoot"],
-  [class*="cl-popoverBox"],
-  [class*="cl-popover"],
-  [class*="cl-portal"] {
-    z-index: 2147483647 !important;
-  }
+  /* Clerk's checkout drawer (CheckoutButton, PricingTable) is portaled to
+     document.body as a position:fixed .cl-drawerRoot with NO z-index, so it
+     paints beneath our sticky topbar (z-20) and sidebar. Lift just that root
+     above every piece of app chrome (nothing of ours exceeds z-50).
 
-  /* Catch-all: any direct child of body whose class list contains a cl-
-     prefixed token. Clerk portals its overlays to document.body, so this
-     nails whatever wrapper/root element Clerk ships without needing to
-     enumerate every class it might use. */
-  body > [class^="cl-"],
-  body > [class*=" cl-"] {
-    z-index: 2147483647 !important;
+     Do NOT extend this to the modal, popover or a catch-all "cl-" selector,
+     and do not use a huge value. Until 2026-09-07 this block forced every
+     Clerk root to z-index 2147483647, which put the user-profile modal's
+     backdrop above Clerk's own dropdown layer. The three-dot menu on an email
+     row (portaled to body at Clerk's dropdown z-index) then opened invisibly
+     behind the modal, so it looked like a dead button while Tab and Space
+     still operated it. Clerk's modal and dropdown layers already sit in the
+     thousands and need no help from us. */
+  .cl-drawerRoot,
+  [class*="cl-drawerRoot"] {
+    z-index: 1000 !important;
   }
 
 
