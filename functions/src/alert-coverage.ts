@@ -237,7 +237,6 @@ export interface CoverageUser {
   onboarding: { sources: string[]; useCases: string[]; teamSize: string | null } | null;
   lifecycle: {
     firstIncidentEventAt: number;
-    noChannelEventAt: number;
     noChannelNotifiedAt: number;
     activationSyncedAt: number;
     activationFingerprint: string | null;
@@ -287,7 +286,9 @@ export async function loadCoverageRows(): Promise<CoverageRows> {
       onboarding,
       lifecycle: {
         firstIncidentEventAt: Number(lc.firstIncidentEventAt) || 0,
-        noChannelEventAt: Number(lc.noChannelEventAt) || 0,
+        // `lifecycle.noChannelEventAt` is deliberately not read: it recorded a
+        // Resend automation event that no automation ever acted on, and reading it
+        // is what disqualified 378 users from their only notice.
         noChannelNotifiedAt: Number(lc.noChannelNotifiedAt) || 0,
         activationSyncedAt: Number(lc.activationSyncedAt) || 0,
         activationFingerprint: typeof lc.activationFingerprint === "string" ? lc.activationFingerprint : null,

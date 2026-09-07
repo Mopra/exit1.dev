@@ -38,8 +38,9 @@ const CATEGORIES: Array<{
   label: string;
   hint: string;
 }> = [
-  { key: 'internal', label: 'Internal', hint: 'Feedback, SMS forwards, operator alerts — nobody outside the team sees these' },
-  { key: 'test', label: 'Test sends', hint: 'User-triggered "send me a test email" — visible failure, zero cost' },
+  { key: 'internal', label: 'Internal', hint: 'Feedback, SMS forwards, operator alerts. Nobody outside the team sees these' },
+  { key: 'test', label: 'Test sends', hint: 'User-triggered "send me a test email". Visible failure, zero cost' },
+  { key: 'lifecycle', label: 'Lifecycle', hint: 'The no-alert-channel notice. Bulk, one-shot, and its recipients get nothing from us today' },
   { key: 'account', label: 'Account', hint: 'Quota warnings, webhook failures, bounce notices' },
   { key: 'alerts', label: 'Alerts', hint: 'DOWN/UP, SSL, DNS, domain expiry. Highest volume and the one that matters' },
 ];

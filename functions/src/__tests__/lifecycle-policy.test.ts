@@ -7,6 +7,7 @@ import {
   isWithinGrace,
   NO_CHANNEL_GRACE_MS,
   mailerShouldSkip,
+  NIGHTLY_NO_CHANNEL_CAP,
   pastSoftDeadline,
   RUN_SOFT_DEADLINE_MS,
 } from "../lifecycle-policy";
@@ -57,30 +58,24 @@ test("brand-new accounts are within grace; unknown createdAt is not", () => {
   assert.equal(isWithinGrace(null, NOW), false);
 });
 
-// ── mailer vs automation event ──────────────────────────────────────────────
+// ── one notice per user ─────────────────────────────────────────────────────
 //
-// Two senders, one gap. Without this a user could be told twice.
+// The stamp is the only thing standing between an uncovered user and a second
+// copy of the same email, so it gets a test of its own even though the function
+// is now one line.
 
-test("already notified by the mailer: skip, always", () => {
-  assert.equal(
-    mailerShouldSkip({ notifiedAt: 1, automationEventAt: 0, includeAutomationRecipients: true }),
-    "already_notified",
-  );
+test("already notified: skip", () => {
+  assert.equal(mailerShouldSkip({ notifiedAt: 1 }), "already_notified");
 });
 
-test("automation event already fired: skip unless the operator opts in", () => {
-  assert.equal(
-    mailerShouldSkip({ notifiedAt: 0, automationEventAt: 1, includeAutomationRecipients: false }),
-    "automation_event",
-  );
-  assert.equal(
-    mailerShouldSkip({ notifiedAt: 0, automationEventAt: 1, includeAutomationRecipients: true }),
-    null,
-  );
+test("never notified: send", () => {
+  assert.equal(mailerShouldSkip({ notifiedAt: 0 }), null);
 });
 
-test("nothing fired yet: send", () => {
-  assert.equal(mailerShouldSkip({ notifiedAt: 0, automationEventAt: 0, includeAutomationRecipients: false }), null);
+// The nightly cap has to leave room for the run's other work inside the soft
+// deadline: 50 sends paced at the 600 ms provider limit is about 30 s.
+test("nightly cap fits well inside the soft deadline", () => {
+  assert.ok(NIGHTLY_NO_CHANNEL_CAP * 600 < RUN_SOFT_DEADLINE_MS / 2);
 });
 
 // ── soft deadline ───────────────────────────────────────────────────────────

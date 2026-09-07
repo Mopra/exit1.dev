@@ -75,27 +75,34 @@ function resolveImport(fromFile, spec) {
 }
 
 // ---- 1. parse index.ts: function name -> source file ---------------------
-const indexSrc = readFileSync(INDEX_TS, 'utf8');
-const fnToFile = new Map(); // exported function name -> absolute source file
-const deployedFiles = new Set(); // source files that export deployed functions
-
-const reExport = /export\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/gs;
-for (const m of indexSrc.matchAll(reExport)) {
-  const namesBlob = m[1]
-    .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
-    .replace(/\/\/[^\n]*/g, ''); // line comments
-  const file = resolveImport(INDEX_TS, m[2]);
-  if (!file) continue;
-  for (const raw of namesBlob.split(',')) {
-    const name = raw.trim();
-    if (!name) continue;
-    // handle `orig as alias` — the deployed name is the alias
-    const deployed = name.includes(' as ') ? name.split(/\s+as\s+/)[1].trim() : name;
-    if (!deployed) continue;
-    fnToFile.set(deployed, file);
-    deployedFiles.add(file);
+function parseIndexExports(src) {
+  const map = new Map(); // exported function name -> absolute source file
+  const reExport = /export\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/gs;
+  for (const m of src.matchAll(reExport)) {
+    const namesBlob = m[1]
+      .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
+      .replace(/\/\/[^\n]*/g, ''); // line comments
+    const file = resolveImport(INDEX_TS, m[2]);
+    if (!file) continue;
+    for (const raw of namesBlob.split(',')) {
+      const name = raw.trim();
+      if (!name) continue;
+      // handle `orig as alias` — the deployed name is the alias
+      const deployed = name.includes(' as ') ? name.split(/\s+as\s+/)[1].trim() : name;
+      if (!deployed) continue;
+      map.set(deployed, file);
+    }
   }
+  return map;
 }
+
+/** Stable "name -> file" signature, for comparing two revisions of index.ts. */
+const exportSignature = (map) =>
+  [...map.entries()].map(([n, f]) => `${n}=${norm(path.relative(REPO_ROOT, f))}`).sort().join('\n');
+
+const indexSrc = readFileSync(INDEX_TS, 'utf8');
+const fnToFile = parseIndexExports(indexSrc);
+const deployedFiles = new Set(fnToFile.values()); // source files that export deployed functions
 
 if (fnToFile.size === 0) {
   console.error('✖ Could not parse any functions from src/index.ts — aborting.');
@@ -199,14 +206,27 @@ if (OPT.all) {
   }
 
   const forcedFull = inFunctions.find((f) => FULL_DEPLOY_TRIGGERS.includes(f));
-  const indexEdited = inFunctions.includes(INDEX_TS);
+
+  // An edit to index.ts only forces a full deploy when it actually moved the
+  // export surface. It used to force one unconditionally, which billed a
+  // 125-function deploy for fixing a comment, and a deploy nobody wants to run is
+  // a deploy that gets skipped. Comparing the parsed "name -> source file"
+  // signature keeps the safety net for anything that renames, adds, moves or
+  // drops an export, and charges nothing for prose. If the previous revision
+  // cannot be read, assume the worst and deploy everything.
+  let surfaceMoved = false;
+  if (inFunctions.includes(INDEX_TS)) {
+    const baseRef = OPT.base && OPT.committedOnly ? OPT.base : 'HEAD';
+    const before = git(['show', `${baseRef}:functions/src/index.ts`]);
+    surfaceMoved = !before || exportSignature(parseIndexExports(before)) !== exportSignature(fnToFile);
+  }
 
   if (forcedFull) {
     targets = ALL_FNS;
     reason = `${norm(path.relative(REPO_ROOT, forcedFull))} changed (affects all functions)`;
-  } else if (indexEdited) {
+  } else if (surfaceMoved) {
     targets = ALL_FNS;
-    reason = 'src/index.ts changed (export surface may have changed)';
+    reason = 'src/index.ts changed the export surface';
   } else {
     // Map each changed src file to the deployed functions it transitively affects.
     const affectedFiles = new Set();

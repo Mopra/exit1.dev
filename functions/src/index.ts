@@ -243,7 +243,7 @@ export {
 } from './onboarding';
 
 // Activation lifecycle: fires user.first_incident_caught and
-// user.no_alert_channel, and keeps the activation contact properties current.
+// the no-alert-channel notice, and keeps the activation contact properties current.
 // getAlertCoverageReport answers "how many users can actually be alerted?".
 export {
   lifecycleSweep,

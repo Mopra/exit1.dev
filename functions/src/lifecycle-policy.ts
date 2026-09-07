@@ -33,20 +33,32 @@ export function isWithinGrace(createdAt: number | null, now: number): boolean {
 }
 
 /**
- * The sweep and the direct mailer both tell a user about the same gap. Without a
- * shared key the same person could be mailed twice by two senders. The mailer
- * therefore treats a fired automation event as "already told" unless the operator
- * explicitly says the automation is not configured to send anything.
+ * One notice per user, ever. `lifecycle.noChannelNotifiedAt` is the only key that
+ * decides it, and there is exactly one sender writing it.
+ *
+ * It used to also skip anyone the sweep had fired `user.no_alert_channel` at, on
+ * the assumption that a Resend automation would mail them. No such automation was
+ * sending, so that check silently disqualified 378 of 381 uncovered users from the
+ * only notice they would ever get. The event is gone and the sweep now sends the
+ * mail itself; `noChannelEventAt` is left unread on old user documents.
  */
 export function mailerShouldSkip(opts: {
   notifiedAt: number;
-  automationEventAt: number;
-  includeAutomationRecipients: boolean;
-}): "already_notified" | "automation_event" | null {
-  if (opts.notifiedAt > 0) return "already_notified";
-  if (opts.automationEventAt > 0 && !opts.includeAutomationRecipients) return "automation_event";
-  return null;
+}): "already_notified" | null {
+  return opts.notifiedAt > 0 ? "already_notified" : null;
 }
+
+/**
+ * How many no-channel notices one nightly sweep may send.
+ *
+ * The backlog is ~378 users, and mailing all of them on one tick is a send nobody
+ * gets to review and nothing can call back. At this cap the backlog drains over
+ * roughly a week while every newly uncovered account still gets its notice within
+ * a day, and any copy or deliverability mistake shows up on a batch of 50 rather
+ * than on the whole base. The admin button takes an explicit limit and is not
+ * bound by this.
+ */
+export const NIGHTLY_NO_CHANNEL_CAP = 50;
 
 /**
  * A run has a hard 540 s ceiling. Stopping a little early with an honest

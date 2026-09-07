@@ -31,17 +31,22 @@ export type EmailProvider = 'resend' | 'day3';
  *  - internal: operator/feedback/SMS-forward mail. Nobody outside the team
  *    sees it, so this is the natural canary.
  *  - test:     user-triggered "send me a test email". The user is watching,
- *    and a failure is instantly visible and harmless — the best real-world
+ *    and a failure is instantly visible and harmless. The best real-world
  *    signal before touching anything automatic.
+ *  - lifecycle: one-shot activation mail, currently just the no-alert-channel
+ *    notice. Sits this early in the ramp despite being a bulk send because its
+ *    recipients are by definition receiving nothing from us today: a failed
+ *    send costs them nothing they were not already missing, and Resend is
+ *    still the fallback underneath. Never carries incident information.
  *  - account:  quota warnings, webhook-failure notices, bounce notices.
  *    Low volume, not time-critical.
  *  - alerts:   DOWN/UP, SSL, DNS, domain expiry. The product. Highest volume,
  *    most latency-sensitive, and the one where a missed send is a real
  *    incident for a customer. Move last.
  */
-export type EmailCategory = 'internal' | 'test' | 'account' | 'alerts';
+export type EmailCategory = 'internal' | 'test' | 'lifecycle' | 'account' | 'alerts';
 
-export const EMAIL_CATEGORIES: EmailCategory[] = ['internal', 'test', 'account', 'alerts'];
+export const EMAIL_CATEGORIES: EmailCategory[] = ['internal', 'test', 'lifecycle', 'account', 'alerts'];
 
 export interface EmailProviderSettings {
   /** Default provider for any category without an explicit override. */

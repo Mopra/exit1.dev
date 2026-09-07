@@ -9,8 +9,12 @@
  *
  *   user.first_incident_caught  we found an outage for them, recently. The single
  *                               most convertible moment an uptime product has.
- *   user.no_alert_channel       they own a live monitor that can reach nobody.
- *                               Silent failure of the core promise.
+ *   no-alert-channel notice     they own a live monitor that can reach nobody.
+ *                               Silent failure of the core promise. Sent as our
+ *                               own transactional mail, not as a provider event:
+ *                               the Resend `user.no_alert_channel` event this
+ *                               used to fire had no automation behind it, so
+ *                               381 users were "notified" and nobody was told.
  *
  * Deliberately a scheduled sweep rather than a hook on the alert path: alert
  * delivery executes inside the VPS runner (it imports functions/lib), so a hook
@@ -54,6 +58,7 @@ import {
   isWithinGrace,
   mailerShouldSkip,
   pastSoftDeadline,
+  NIGHTLY_NO_CHANNEL_CAP,
 } from "./lifecycle-policy";
 import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 import { getActiveSuppressions } from "./email-suppression";
@@ -206,8 +211,6 @@ export interface NoChannelNotifyResult {
   candidates: number;
   sent: number;
   skippedAlreadyNotified: number;
-  /** Skipped because the sweep already fired the Resend automation event for them. */
-  skippedAutomationEvent: number;
   skippedTooNew: number;
   skippedSuppressed: number;
   skippedNoEmail: number;
@@ -224,24 +227,29 @@ export interface NoChannelNotifyResult {
  * Find every user holding a live check with no reachable alert channel and send
  * them one notice.
  *
- * `dryRun` defaults to TRUE on purpose. This reaches real inboxes at a volume
- * (hundreds) where a mistake is not retractable, so the safe call has to be the
- * default and the send has to be typed out explicitly.
+ * `dryRun` defaults to TRUE at every caller. This reaches real inboxes at a volume
+ * where a mistake is not retractable, so the safe call has to be the default and
+ * the send has to be typed out explicitly.
  *
- * `includeAutomationRecipients` defaults to FALSE: the nightly sweep has already
- * fired `user.no_alert_channel` for most of these users, and if a Resend automation
- * mails on that event this would be their second notice. Only set it when you know
- * the automation is not configured to send.
+ * `preloaded` lets the nightly sweep hand over the scan it has already paid for.
+ * Without it this repeats a full pass over users, checks, settings and webhooks
+ * plus a second Clerk fetch, which on a 540 s budget is time the sweep needs.
  */
 export async function notifyNoChannelUsers(opts: {
   dryRun: boolean;
   limit: number;
-  includeAutomationRecipients: boolean;
+  preloaded?: {
+    users: Map<string, CoverageUser>;
+    rows: UserCoverage[];
+    facts: Map<string, ClerkUserFacts>;
+  };
+  /** Deadline anchor. A caller that already burned time must not get a fresh budget. */
+  startedAt?: number;
 }): Promise<NoChannelNotifyResult> {
-  const { dryRun, limit, includeAutomationRecipients } = opts;
-  const startedAt = Date.now();
+  const { dryRun, limit, preloaded } = opts;
+  const startedAt = opts.startedAt ?? Date.now();
 
-  const { users, rows } = await loadCoverageRows();
+  const { users, rows } = preloaded ?? (await loadCoverageRows());
   const coverage = summarizeCoverage(rows);
 
   const result: NoChannelNotifyResult = {
@@ -249,7 +257,6 @@ export async function notifyNoChannelUsers(opts: {
     candidates: 0,
     sent: 0,
     skippedAlreadyNotified: 0,
-    skippedAutomationEvent: 0,
     skippedTooNew: 0,
     skippedSuppressed: 0,
     skippedNoEmail: 0,
@@ -267,25 +274,23 @@ export async function notifyNoChannelUsers(opts: {
   for (const r of uncovered) {
     const u = users.get(r.userId);
     if (!u) continue;
-    const skip = mailerShouldSkip({
-      notifiedAt: u.lifecycle.noChannelNotifiedAt,
-      automationEventAt: u.lifecycle.noChannelEventAt,
-      includeAutomationRecipients,
-    });
+    const skip = mailerShouldSkip({ notifiedAt: u.lifecycle.noChannelNotifiedAt });
     if (skip === "already_notified") result.skippedAlreadyNotified++;
-    else if (skip === "automation_event") result.skippedAutomationEvent++;
     else pending.push(r);
   }
 
-  const secretKey = getClerkSecretKey();
-  if (!secretKey) {
-    throw new HttpsError("failed-precondition", "No Clerk secret key is configured");
-  }
   if (!dryRun && !isTransactionalEmailConfigured()) {
     throw new HttpsError("failed-precondition", "No transactional email provider is configured");
   }
 
-  const facts = await fetchClerkUserFacts(pending.map((r) => r.userId), secretKey, "lifecycle");
+  let facts = preloaded?.facts;
+  if (!facts) {
+    const secretKey = getClerkSecretKey();
+    if (!secretKey) {
+      throw new HttpsError("failed-precondition", "No Clerk secret key is configured");
+    }
+    facts = await fetchClerkUserFacts(pending.map((r) => r.userId), secretKey, "lifecycle");
+  }
 
   // One batched suppression lookup for every pending address, not a read per user.
   const suppressed = new Set<string>();
@@ -335,7 +340,7 @@ export async function notifyNoChannelUsers(opts: {
         subject: body.subject,
         html: body.html,
         text: body.text,
-        category: "account",
+        category: "lifecycle",
         meta: { kind: "no_alert_channel", userId: row.userId, checks: row.enabledCheckCount },
       });
     } catch (e) {
@@ -394,19 +399,17 @@ export const notifyUsersWithoutAlertChannel = onCall(
     const data = (request.data ?? {}) as {
       dryRun?: unknown;
       limit?: unknown;
-      includeAutomationRecipients?: unknown;
     };
     // Anything other than an explicit `false` is a dry run.
     const dryRun = data.dryRun !== false;
     const limit = Math.min(1000, Math.max(1, Math.floor(Number(data.limit) || 1000)));
-    const includeAutomationRecipients = data.includeAutomationRecipients === true;
 
     const token = await acquireLease(`notify:${uid}`);
     if (!token) {
       throw new HttpsError("aborted", "Another lifecycle run is in progress. Try again in a few minutes.");
     }
     try {
-      return await notifyNoChannelUsers({ dryRun, limit, includeAutomationRecipients });
+      return await notifyNoChannelUsers({ dryRun, limit });
     } finally {
       await releaseLease(token);
     }
@@ -423,7 +426,10 @@ export interface LifecycleSweepResult {
   firstIncidentEvents: number;
   /** Historical incidents stamped without firing (older than the freshness window). */
   firstIncidentStampedSilently: number;
-  noChannelEvents: number;
+  /** No-alert-channel notices this run actually mailed (capped per run). */
+  noChannelNotices: number;
+  /** Notices the provider rejected. They stay unstamped and retry tomorrow. */
+  noChannelFailed: number;
   propertiesSynced: number;
   errors: number;
   stampFailed: number;
@@ -550,21 +556,9 @@ async function sweepOneUser(
     }
   }
 
-  // ---- user.no_alert_channel ----
-  const wantsNoChannel = row.enabledCheckCount > 0
-    && !row.covered
-    && u.lifecycle.noChannelEventAt === 0
-    && !isWithinGrace(f.createdAt, now);
-  if (wantsNoChannel) {
-    result.noChannelEvents++;
-    if (!dryRun && keys.resend) {
-      const ok = await fireEvent(keys.resend, f.email, "user.no_alert_channel", {
-        userId: row.userId,
-        checkCount: row.enabledCheckCount,
-      }, result);
-      if (ok) stamps["lifecycle.noChannelEventAt"] = now;
-    }
-  }
+  // The no-alert-channel notice is not handled here: it is a real email with a
+  // per-run cap, sent once for the whole run by notifyNoChannelUsers before this
+  // loop starts.
 
   if (!dryRun && !(await writeStamps(row.userId, stamps))) {
     result.stampFailed++;
@@ -583,7 +577,8 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
       usersExamined: 0,
       firstIncidentEvents: 0,
       firstIncidentStampedSilently: 0,
-      noChannelEvents: 0,
+      noChannelNotices: 0,
+      noChannelFailed: 0,
       propertiesSynced: 0,
       errors: 0,
       stampFailed: 0,
@@ -602,7 +597,8 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
       usersExamined: users.size,
       firstIncidentEvents: 0,
       firstIncidentStampedSilently: 0,
-      noChannelEvents: 0,
+      noChannelNotices: 0,
+      noChannelFailed: 0,
       propertiesSynced: 0,
       errors: 0,
       stampFailed: 0,
@@ -624,6 +620,28 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
     }
     const facts = await fetchClerkUserFacts(interesting.map((r) => r.userId), secretKey, "lifecycle");
     const keys = { resend: getResendCredentials().apiKey ?? null, day3: getDay3ApiKey() };
+
+    // Notices before properties, deliberately. This is the only thing in the run a
+    // user ever sees, and the property loop below is the unbounded half: if the run
+    // is going to run out of clock, the cosmetic half is the one that should lose.
+    // Wrapped so a mailer failure cannot take the property sync down with it.
+    try {
+      const notify = await notifyNoChannelUsers({
+        dryRun,
+        limit: NIGHTLY_NO_CHANNEL_CAP,
+        preloaded: { users, rows, facts },
+        startedAt,
+      });
+      result.noChannelNotices = notify.sent;
+      result.noChannelFailed = notify.failed;
+      result.stampFailed += notify.stampFailed;
+      if (notify.truncated) result.truncated = true;
+    } catch (e) {
+      result.errors++;
+      logger.error("[lifecycle] no-channel notices failed", {
+        error: (e as Error)?.message ?? String(e),
+      });
+    }
 
     for (const row of interesting) {
       if (pastSoftDeadline(startedAt, Date.now())) {
@@ -652,11 +670,17 @@ export const lifecycleSweep = onSchedule(
     // Full-collection scans; see the note on notifyUsersWithoutAlertChannel.
     memory: "512MiB",
     maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
+    // RESEND_FROM and DAY3_FROM are here because the sweep now sends the
+    // no-channel notice itself. Without them getDay3EmailCredentials() falls back
+    // to a default from-address and firebase-functions logs "No value found for
+    // secret parameter", which is how this was spotted.
     secrets: [
       CLERK_SECRET_KEY_PROD,
       CLERK_SECRET_KEY_DEV,
       RESEND_API_KEY,
+      RESEND_FROM,
       DAY3_API_KEY,
+      DAY3_FROM,
     ],
   },
   async () => {
@@ -675,7 +699,9 @@ export const runLifecycleSweep = onCall(
       CLERK_SECRET_KEY_PROD,
       CLERK_SECRET_KEY_DEV,
       RESEND_API_KEY,
+      RESEND_FROM,
       DAY3_API_KEY,
+      DAY3_FROM,
     ],
   },
   async (request) => {

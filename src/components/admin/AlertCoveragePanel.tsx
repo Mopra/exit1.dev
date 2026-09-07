@@ -23,6 +23,11 @@ import type { AlertCoverageReport } from '@/api/types';
  * Exists because this was measured by hand against production once and then had no
  * home. A fix to the onboarding alert step should move these numbers, and without
  * somewhere to read them the only way to know is to re-derive them by hand.
+ *
+ * The notice itself is our own transactional email, sent through the `lifecycle`
+ * provider category. It used to be a Resend automation event with nothing behind
+ * it, which is why the uncovered count sat still for a week while the sweep
+ * reported success.
  */
 
 const pct = (part: number, whole: number) =>
@@ -66,11 +71,6 @@ export function AlertCoveragePanel() {
   const [notifying, setNotifying] = useState(false);
   const [sweeping, setSweeping] = useState(false);
   const [confirmSend, setConfirmSend] = useState<number | null>(null);
-  // Off by default. The nightly sweep has already fired `user.no_alert_channel`
-  // for most uncovered users; if a Resend automation mails on that event, sending
-  // to them here would be their second notice about the same gap. Tick this only
-  // when you know the automation does not send.
-  const [includeAutomation, setIncludeAutomation] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,10 +88,7 @@ export function AlertCoveragePanel() {
   // quotes, so nobody is asked to approve a send without knowing its size.
   const previewSend = async () => {
     setNotifying(true);
-    const res = await apiClient.notifyUsersWithoutAlertChannel({
-      dryRun: true,
-      includeAutomationRecipients: includeAutomation,
-    });
+    const res = await apiClient.notifyUsersWithoutAlertChannel({ dryRun: true });
     setNotifying(false);
     if (!res.success || !res.data) {
       toast.error('Dry run failed', { description: res.error });
@@ -100,7 +97,7 @@ export function AlertCoveragePanel() {
     const d = res.data;
     if (d.sent === 0) {
       toast.success('Nothing to send', {
-        description: `${d.candidates} uncovered, all skipped: ${d.skippedAlreadyNotified} already mailed, ${d.skippedAutomationEvent} already got the automation event, ${d.skippedTooNew} too new, ${d.skippedSuppressed} suppressed, ${d.skippedNoEmail} without an email.`,
+        description: `${d.candidates} uncovered, all skipped: ${d.skippedAlreadyNotified} already mailed, ${d.skippedTooNew} too new, ${d.skippedSuppressed} suppressed, ${d.skippedNoEmail} without an email.`,
       });
       return;
     }
@@ -110,10 +107,7 @@ export function AlertCoveragePanel() {
   const reallySend = async () => {
     setConfirmSend(null);
     setNotifying(true);
-    const res = await apiClient.notifyUsersWithoutAlertChannel({
-      dryRun: false,
-      includeAutomationRecipients: includeAutomation,
-    });
+    const res = await apiClient.notifyUsersWithoutAlertChannel({ dryRun: false });
     setNotifying(false);
     if (!res.success || !res.data) {
       toast.error('Send failed', { description: res.error });
@@ -145,7 +139,7 @@ export function AlertCoveragePanel() {
       return;
     }
     toast.success(dryRun ? 'Sweep dry run' : 'Sweep complete', {
-      description: `${d.usersExamined} examined, ${d.firstIncidentEvents} first-incident (${d.firstIncidentStampedSilently} historical, not fired), ${d.noChannelEvents} no-channel, ${d.propertiesSynced} properties${d.errors ? `, ${d.errors} errors` : ''}${d.stampFailed ? `, ${d.stampFailed} stamp failures` : ''}${d.truncated ? ', stopped at time budget' : ''}.`,
+      description: `${d.usersExamined} examined, ${d.firstIncidentEvents} first-incident (${d.firstIncidentStampedSilently} historical, not fired), ${d.noChannelNotices} no-channel notice${d.noChannelNotices === 1 ? '' : 's'}${d.noChannelFailed ? ` (${d.noChannelFailed} failed)` : ''}, ${d.propertiesSynced} properties${d.errors ? `, ${d.errors} errors` : ''}${d.stampFailed ? `, ${d.stampFailed} stamp failures` : ''}${d.truncated ? ', stopped at time budget' : ''}.`,
       duration: 10000,
     });
   };
@@ -226,15 +220,6 @@ export function AlertCoveragePanel() {
       )}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer mr-2">
-          <input
-            type="checkbox"
-            checked={includeAutomation}
-            onChange={(e) => setIncludeAutomation(e.target.checked)}
-            className="accent-primary"
-          />
-          Include users already sent the automation event
-        </label>
         <Button
           onClick={() => void previewSend()}
           variant="outline"
@@ -285,6 +270,9 @@ export function AlertCoveragePanel() {
               notice with a link to the Emails page, and are stamped so they can
               never receive it twice. Accounts under 24 hours old and suppressed
               addresses are already excluded. This cannot be undone.
+              <br /><br />
+              The nightly sweep sends this same notice to at most 50 users a run.
+              Use this to send the whole backlog at once instead of waiting.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -596,7 +596,7 @@ export interface McpConnection {
 export type EmailProviderName = 'resend' | 'day3';
 
 /** Send sites are grouped so the migration can ramp one blast radius at a time. */
-export type EmailProviderCategory = 'internal' | 'test' | 'account' | 'alerts';
+export type EmailProviderCategory = 'internal' | 'test' | 'lifecycle' | 'account' | 'alerts';
 
 /** Payload for `setEmailProvider`; mirrors system_settings/email_provider. */
 export interface EmailProviderSettingsInput {
@@ -653,8 +653,6 @@ export interface NoChannelNotifyResult {
   candidates: number;
   sent: number;
   skippedAlreadyNotified: number;
-  /** Skipped because the sweep already fired the Resend automation event for them. */
-  skippedAutomationEvent: number;
   skippedTooNew: number;
   skippedSuppressed: number;
   skippedNoEmail: number;
@@ -673,7 +671,10 @@ export interface LifecycleSweepResult {
   usersExamined: number;
   firstIncidentEvents: number;
   firstIncidentStampedSilently: number;
-  noChannelEvents: number;
+  /** No-alert-channel notices actually mailed. Capped per run, so a backlog drains over days. */
+  noChannelNotices: number;
+  /** Notices the provider rejected. Unstamped, so they retry on the next run. */
+  noChannelFailed: number;
   propertiesSynced: number;
   errors: number;
   stampFailed: number;

@@ -3,6 +3,7 @@ import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { createClerkClient } from '@clerk/backend';
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { EMAIL_CATEGORIES } from "./email-provider-settings";
 
 const DEPLOY_MODE_DOC = "system_settings/deploy_mode";
 const DEFAULT_DURATION_MINUTES = 5;
@@ -258,7 +259,10 @@ export const setEmailProvider = onCall({
   };
 
   const PROVIDERS = ['resend', 'day3'];
-  const CATEGORIES = ['internal', 'test', 'account', 'alerts'];
+  // Imported rather than repeated: this list was duplicated here and drifted the
+  // moment a category was added, rejecting the new one with "Unknown email
+  // category" while the sender happily routed it.
+  const CATEGORIES: string[] = EMAIL_CATEGORIES;
 
   if (!provider || !PROVIDERS.includes(provider)) {
     throw new Error("'provider' must be 'resend' or 'day3'");

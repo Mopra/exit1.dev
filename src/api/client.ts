@@ -640,22 +640,17 @@ export class Exit1ApiClient {
    * `dryRun` defaults to true here as well as on the server: this reaches hundreds
    * of real inboxes and is not retractable, so the send has to be typed out.
    */
-  notifyUsersWithoutAlertChannel(options: {
-    dryRun: boolean;
-    limit?: number;
-    /**
-     * Also mail users the nightly sweep has already fired `user.no_alert_channel`
-     * for. Off by default: if a Resend automation sends on that event, this would
-     * be their second notice about the same gap.
-     */
-    includeAutomationRecipients?: boolean;
-  }) {
+  /**
+   * Send the no-alert-channel notice to everyone still uncovered, ignoring the
+   * nightly cap. The sweep sends the same email on a schedule; this is the button
+   * for draining a backlog faster. One notice per user either way.
+   */
+  notifyUsersWithoutAlertChannel(options: { dryRun: boolean; limit?: number }) {
     return this.call<NoChannelNotifyResult>(
       "notifyUsersWithoutAlertChannel",
       {
         dryRun: options.dryRun !== false,
         limit: options.limit ?? 1000,
-        includeAutomationRecipients: options.includeAutomationRecipients === true,
       },
       'Failed to run the alert-coverage notifier',
     );
