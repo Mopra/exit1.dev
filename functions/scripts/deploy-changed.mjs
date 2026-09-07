@@ -16,6 +16,10 @@
  * Usage (run from functions/):
  *   npm run deploy:changed                 # deploy fns affected by uncommitted changes
  *   npm run deploy:changed -- --base master   # ...by all commits on this branch since master
+ *   npm run deploy:changed -- --base <sha> --committed-only
+ *                                          # ...by commits since <sha> ONLY, ignoring the dirty
+ *                                          # tree. Use when another session has uncommitted edits
+ *                                          # in the same checkout that must not ship.
  *   npm run deploy:changed -- --all        # batched full deploy (quota-safe replacement for `deploy`)
  *   npm run deploy:changed -- --dry-run    # print the plan, deploy nothing
  *   npm run deploy:changed -- --yes        # allow an unexpected full deploy (otherwise it aborts)
@@ -39,6 +43,7 @@ const OPT = {
   all: hasFlag('--all'),
   yes: hasFlag('--yes'),
   dryRun: hasFlag('--dry-run'),
+  committedOnly: hasFlag('--committed-only'),
   chunk: Math.max(1, parseInt(getFlagValue('--chunk') ?? '10', 10) || 10),
   delaySec: Math.max(0, parseInt(getFlagValue('--delay') ?? '15', 10) || 15),
 };
@@ -156,8 +161,15 @@ function affectedBy(start) {
 function changedFiles() {
   const set = new Set();
   const add = (out) => out.split('\n').map((s) => s.trim()).filter(Boolean).forEach((p) => set.add(p));
-  add(git(['diff', '--name-only', 'HEAD'])); // staged + unstaged vs HEAD
-  add(git(['ls-files', '--others', '--exclude-standard'])); // untracked
+  if (OPT.committedOnly) {
+    if (!OPT.base) {
+      console.error('--committed-only requires --base <sha>: there is nothing to diff against otherwise.');
+      process.exit(1);
+    }
+  } else {
+    add(git(['diff', '--name-only', 'HEAD'])); // staged + unstaged vs HEAD
+    add(git(['ls-files', '--others', '--exclude-standard'])); // untracked
+  }
   if (OPT.base) add(git(['diff', '--name-only', `${OPT.base}...HEAD`])); // branch commits since base
   return [...set].map((p) => path.join(REPO_ROOT, norm(p)));
 }

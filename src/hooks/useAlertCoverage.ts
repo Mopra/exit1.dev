@@ -101,8 +101,21 @@ export function useAlertCoverage(
     };
   }, [userId]);
 
+  // The live stream rebuilds `checks` on every status tick. Coverage only depends
+  // on id, folder and disabled, so key the memo on a projection of those and let
+  // the ticks fall through without re-running the gate for every check.
+  const shape = useMemo(
+    () => checks.map((c) => `${c.id}|${c.folder ?? ''}|${c.disabled ? 1 : 0}`).join('\n'),
+    [checks],
+  );
+  const stableChecks = useMemo(
+    () => checks.map((c) => ({ id: c.id, folder: c.folder ?? null, disabled: c.disabled === true })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shape],
+  );
+
   return useMemo<AlertCoverage>(() => {
-    const enabled = checks.filter((c) => !c.disabled);
+    const enabled = stableChecks.filter((c) => !c.disabled);
     const emailCoveredCount = enabled.filter((c) =>
       willDeliver(emailSettings, { id: c.id, folder: c.folder }, EVENT)).length;
     const hasSmsChannel = smsAllowedByTier
@@ -120,5 +133,5 @@ export function useAlertCoverage(
       covered,
       hasBlindSpot: ready && enabled.length > 0 && !covered,
     };
-  }, [checks, emailSettings, smsSettings, webhookCount, smsAllowedByTier, userId, emailReady, smsReady]);
+  }, [stableChecks, emailSettings, smsSettings, webhookCount, smsAllowedByTier, userId, emailReady, smsReady]);
 }

@@ -63,6 +63,7 @@ export {
 // Email settings functions
 export {
   saveEmailSettings,
+  enableEmailAlertsForAllChecks,
   updateEmailPerCheck,
   updateEmailPerFolder,
   getEmailSettings,

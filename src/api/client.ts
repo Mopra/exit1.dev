@@ -598,14 +598,12 @@ export class Exit1ApiClient {
    * delivery gate reads whichever is present.
    */
   enableEmailAlertsForAllChecks(recipients: string[], events: WebhookEvent[]) {
+    // A dedicated callable that MERGES with any existing document. Calling
+    // `saveEmailSettings` here replaced recipients and events wholesale, which for
+    // a returning user meant three saved addresses became one.
     return this.call<{ success: boolean }>(
-      "saveEmailSettings",
-      {
-        recipients,
-        enabled: true,
-        events,
-        checkFilter: { mode: "all", defaultEvents: events },
-      },
+      "enableEmailAlertsForAllChecks",
+      { recipients, events },
       'Failed to turn on email alerts',
     );
   }
@@ -642,10 +640,23 @@ export class Exit1ApiClient {
    * `dryRun` defaults to true here as well as on the server: this reaches hundreds
    * of real inboxes and is not retractable, so the send has to be typed out.
    */
-  notifyUsersWithoutAlertChannel(options: { dryRun: boolean; limit?: number }) {
+  notifyUsersWithoutAlertChannel(options: {
+    dryRun: boolean;
+    limit?: number;
+    /**
+     * Also mail users the nightly sweep has already fired `user.no_alert_channel`
+     * for. Off by default: if a Resend automation sends on that event, this would
+     * be their second notice about the same gap.
+     */
+    includeAutomationRecipients?: boolean;
+  }) {
     return this.call<NoChannelNotifyResult>(
       "notifyUsersWithoutAlertChannel",
-      { dryRun: options.dryRun !== false, limit: options.limit ?? 1000 },
+      {
+        dryRun: options.dryRun !== false,
+        limit: options.limit ?? 1000,
+        includeAutomationRecipients: options.includeAutomationRecipients === true,
+      },
       'Failed to run the alert-coverage notifier',
     );
   }

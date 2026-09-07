@@ -68,6 +68,73 @@ export const saveEmailSettings = onCall(async (request) => {
   return { success: true };
 });
 
+/**
+ * Turn on email alerts for every check, present and future, without discarding
+ * anything the user already configured.
+ *
+ * The onboarding alert step used to call `saveEmailSettings` directly, which
+ * REPLACES `recipients`, `events` and `enabled`. For a fresh account that is fine;
+ * for a returning user with three saved addresses and a curated event list it
+ * silently reduced them to one address and the defaults. This merges instead:
+ * recipients are unioned, events are unioned, `enabled` is forced on, and the
+ * check filter is set to 'all' so new checks are covered. Per-check and per-folder
+ * overrides are untouched.
+ */
+export const enableEmailAlertsForAllChecks = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const { recipients, events } = (request.data || {}) as { recipients?: unknown; events?: unknown };
+  const incomingRecipients = Array.isArray(recipients)
+    ? recipients.filter((r): r is string => typeof r === 'string').map((r) => r.trim()).filter(Boolean)
+    : [];
+  if (incomingRecipients.length === 0) {
+    throw new HttpsError('invalid-argument', 'At least one recipient email is required');
+  }
+  const incomingEvents = normalizeCheckFilter({ mode: 'all', defaultEvents: events })?.defaultEvents ?? [];
+  if (incomingEvents.length === 0) {
+    throw new HttpsError('invalid-argument', 'At least one event is required');
+  }
+
+  const docRef = firestore.collection('emailSettings').doc(uid);
+  const now = Date.now();
+
+  await firestore.runTransaction(async (tx) => {
+    const snap = await tx.get(docRef);
+    const existing = snap.exists ? (snap.data() as Partial<EmailSettings>) : {};
+
+    const existingRecipients = existing.recipients?.length
+      ? existing.recipients
+      : existing.recipient ? [existing.recipient] : [];
+    const seen = new Set<string>();
+    const mergedRecipients: string[] = [];
+    for (const r of [...existingRecipients, ...incomingRecipients]) {
+      const key = r.trim().toLowerCase();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        mergedRecipients.push(r.trim());
+      }
+    }
+
+    const mergedEvents = [...new Set([...(existing.events ?? []), ...incomingEvents])];
+
+    tx.set(docRef, {
+      userId: uid,
+      enabled: true,
+      recipients: mergedRecipients,
+      events: mergedEvents,
+      checkFilter: { mode: 'all', defaultEvents: mergedEvents },
+      updatedAt: now,
+      ...(snap.exists ? {} : { createdAt: now }),
+    }, { merge: true });
+  });
+
+  await notifySettingsEdit(uid);
+  return { success: true };
+});
+
 // Update per-check overrides
 export const updateEmailPerCheck = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],

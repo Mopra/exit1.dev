@@ -89,7 +89,12 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const [manualSaving, setManualSaving] = useState(false);
   const [recipients, setRecipients] = useState<string[]>(defaultRecipients);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [checkFilterMode, setCheckFilterMode] = useState<'all' | 'include'>('include');
+  // 'all' for a user with no saved settings yet. This was 'include' ("only the
+  // checks I tick") and it is why 386 of 404 production settings documents had an
+  // address on file and delivered nothing: people typed their email, saw it save,
+  // and never knew a second step existed. An existing document still loads its own
+  // mode below, so nobody's curated selection is changed by this.
+  const [checkFilterMode, setCheckFilterMode] = useState<'all' | 'include'>('all');
   const [defaultEvents, setDefaultEvents] = useState<WebhookEvent[]>([...DEFAULT_EVENTS]);
 
   const [emailFormat, setEmailFormat] = useState<'html' | 'text'>('html');

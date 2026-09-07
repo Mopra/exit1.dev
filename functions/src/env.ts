@@ -59,6 +59,28 @@ export const getResendCredentials = () => {
   };
 };
 
+/**
+ * Clerk secret for server-side user lookups. Production first, then the dev
+ * instance, then the env fallback used by local scripts. Every function that
+ * needs Clerk should read it from here rather than carrying its own try/catch
+ * ladder: when a secret is rotated (Gen2 pins versions, so that means a
+ * redeploy) this is the one place that has to be right.
+ */
+export const getClerkSecretKey = (): string | undefined => {
+  const sanitize = (value?: string | null) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+  for (const secret of [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV]) {
+    try {
+      const v = sanitize(secret.value());
+      if (v) return v;
+    } catch {
+      // Not bound to this function; try the next source.
+    }
+  }
+  return sanitize(process.env.CLERK_SECRET_KEY_PROD);
+};
+
 export const getDay3ApiKey = (): string | undefined => {
   const sanitize = (value?: string | null) =>
     typeof value === 'string' && value.trim() ? value.trim() : undefined;

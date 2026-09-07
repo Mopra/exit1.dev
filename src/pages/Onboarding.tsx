@@ -59,7 +59,7 @@ import {
   type PlanKey,
   type PlanMatrixEntry,
 } from '@/components/billing/plan-matrix-data';
-import { DEFAULT_NOTIFICATION_EVENTS } from '@/lib/notification-shared';
+import { DEFAULT_NOTIFICATION_EVENTS, coversNewChecks, type GateSettings } from '@/lib/notification-shared';
 import { getMinCheckIntervalSecondsForTier } from '@/lib/subscription';
 import { cn } from '@/lib/utils';
 import {
@@ -75,6 +75,12 @@ import {
 } from '@/lib/analytics';
 
 const PREFILL_WEBSITE_URL_KEY = 'exit1_website_url';
+
+// The interval step 4 creates the first check at: the best the free tier allows.
+// Read from the tier table rather than hardcoded so the copy and the post-checkout
+// speed-up cannot drift from what the backend actually enforces.
+const FREE_FLOOR_SECONDS = getMinCheckIntervalSecondsForTier('free');
+const FREE_FLOOR_MINUTES = Math.round(FREE_FLOOR_SECONDS / 60);
 
 type Answers = {
   sources: string[];
@@ -337,13 +343,13 @@ export default function Onboarding() {
     (async () => {
       try {
         const snap = await getDoc(doc(db, 'emailSettings', userId));
-        const data = snap.exists() ? (snap.data() as {
-          enabled?: boolean;
-          recipient?: string;
-          recipients?: string[];
-        }) : null;
-        const recipientCount = data?.recipients?.length ?? (data?.recipient ? 1 : 0);
-        if (!cancelled) setHasExistingAlertChannel(Boolean(data) && data?.enabled !== false && recipientCount > 0);
+        const data = snap.exists() ? (snap.data() as GateSettings) : null;
+        // The real question, asked with the real gate: would a check created right
+        // now get a down email? An earlier version tested "has an address on file",
+        // which is exactly the trap this step exists to fix: 386 of 404 settings
+        // documents had an address and were in 'Selected only' mode, delivering
+        // nothing, and this probe skipped the alert step for every one of them.
+        if (!cancelled) setHasExistingAlertChannel(coversNewChecks(data, 'website_down'));
       } catch {
         // Fail open: showing the alert step to someone who already set it up is a
         // wasted click. Skipping it for someone who has not is a silent monitor.
@@ -408,11 +414,20 @@ export default function Onboarding() {
   }, [userId, forcePreview]);
 
   // Persist on every change. Cheap, and the alternative is losing the answers on a
-  // refresh in the middle of a mandatory survey.
+  // refresh in the middle of the survey.
+  //
+  // Gated on `restoreSettled`, not on the restore ref: the two effects run in the
+  // same commit, and the ref is set before the restore's early returns, so without
+  // this the very first persist wrote {step 1, empty answers} over the saved
+  // progress, and `?force=1` clobbered it outright.
+  const [restoreSettled, setRestoreSettled] = useState(false);
   useEffect(() => {
-    if (!userId || progressRestoredRef.current !== userId) return;
-    writeProgress(userId, { step, answers });
+    if (progressRestoredRef.current === userId && userId) setRestoreSettled(true);
   }, [userId, step, answers]);
+  useEffect(() => {
+    if (!userId || !restoreSettled || forcePreview) return;
+    writeProgress(userId, { step, answers });
+  }, [userId, step, answers, restoreSettled, forcePreview]);
 
   // First-check step state. Seed the input with the prefilled URL right away so
   // it's already showing the moment the step renders: no empty-then-fill flash.
@@ -431,17 +446,14 @@ export default function Onboarding() {
   // is the address they just verified to get here, so the common path is one click
   // with nothing to type.
   const clerkEmail = user?.primaryEmailAddress?.emailAddress ?? '';
-  const [alertEmail, setAlertEmail] = useState('');
-  const [alertEmailTouched, setAlertEmailTouched] = useState(false);
+  // Only what the user typed is state; the shown value derives from it. This
+  // replaces a touched flag plus a seeding effect that could render the field
+  // empty for a frame when Clerk resolved late.
+  const [typedAlertEmail, setTypedAlertEmail] = useState<string | null>(null);
+  const alertEmail = typedAlertEmail ?? clerkEmail;
   const [alertsSaving, setAlertsSaving] = useState(false);
   const [alertsEnabled, setAlertsEnabled] = useState(false);
   const [alertsError, setAlertsError] = useState<string | null>(null);
-
-  // Seed once Clerk has the user, without stomping on anything typed since.
-  useEffect(() => {
-    if (!clerkEmail || alertEmailTouched) return;
-    setAlertEmail((prev) => (prev ? prev : clerkEmail));
-  }, [clerkEmail, alertEmailTouched]);
 
   const handleFirstCheckUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value;
@@ -482,7 +494,7 @@ export default function Onboarding() {
         url,
         name: friendlyName,
         type: 'website',
-        checkFrequency: 5, // 5 min — the best interval the free tier allows
+        checkFrequency: FREE_FLOOR_MINUTES, // the best interval the free tier allows
         httpMethod: 'GET',
         expectedStatusCodes: getDefaultExpectedStatusCodes('website'),
         requestHeaders: {},
@@ -633,25 +645,29 @@ export default function Onboarding() {
       const check = firstCheckResult;
       if (!check) return;
       const minSeconds = getMinCheckIntervalSecondsForTier(choice);
-      if (minSeconds >= 300) return; // no improvement over what step 4 created
-      try {
-        // `updateCheck` re-validates and rewrites url and name, so both have to be
-        // sent. generateFriendlyName is the same call step 4 made on the same url,
-        // so the name cannot drift.
-        //
-        // The callable re-reads the tier live and clamps to that tier's floor. If
-        // Clerk has not finished propagating the new subscription this is refused
-        // or clamped, and the check simply stays at 5 minutes. That is why this is
-        // best-effort and swallowed: a failure here must not strand someone who
-        // has just paid.
-        await apiClient.updateWebsite({
-          id: check.id,
-          url: check.url,
-          name: generateFriendlyName(check.url),
-          checkFrequency: minSeconds / 60,
-        });
-      } catch {
-        // Check keeps running at 5 minutes; they can change it on the check itself.
+      // No improvement over what step 4 created at the free floor.
+      if (minSeconds >= FREE_FLOOR_SECONDS) return;
+      // `updateCheck` re-validates and rewrites url and name, so both have to be
+      // sent. generateFriendlyName is the same call step 4 made on the same url, so
+      // the name cannot drift.
+      //
+      // The callable re-reads the tier from Clerk and clamps to that tier's floor.
+      // Right after checkout Clerk can briefly still report the old plan, so one
+      // retry after a short wait covers the common case. Still best-effort and
+      // swallowed: a failure here must never strand someone who has just paid.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await apiClient.updateWebsite({
+            id: check.id,
+            url: check.url,
+            name: generateFriendlyName(check.url),
+            checkFrequency: minSeconds / 60,
+          });
+          if (res.success) return;
+        } catch {
+          // fall through to the retry
+        }
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 2500));
       }
     },
     [firstCheckResult],
@@ -1006,7 +1022,7 @@ export default function Onboarding() {
                           <p className="text-sm text-muted-foreground">
                             {steps.includes(STEP_ALERTS)
                               ? isUp
-                                ? "We're checking it every 5 minutes. Alerts are the next step."
+                                ? `We're checking it every ${FREE_FLOOR_MINUTES} minutes. Alerts are the next step.`
                                 : "We're on it. Set up alerts next and we'll tell you when it's back."
                               : isUp
                                 ? "We'll alert you the moment anything changes."
@@ -1076,8 +1092,7 @@ export default function Onboarding() {
                       placeholder="you@example.com"
                       value={alertEmail}
                       onChange={(e) => {
-                        setAlertEmailTouched(true);
-                        setAlertEmail(e.target.value);
+                        setTypedAlertEmail(e.target.value);
                         if (alertsError) setAlertsError(null);
                       }}
                       onKeyDown={(e) => {

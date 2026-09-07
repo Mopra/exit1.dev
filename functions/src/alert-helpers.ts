@@ -5,6 +5,7 @@ import { Resend } from 'resend';
 import { CONFIG } from './config';
 import { getResendCredentials } from './env';
 import { firestore } from './init';
+import { resolveFolderEntry, collectRecipients } from './email-gate';
 import {
   SmsTier,
   decideSmsTier,
@@ -266,56 +267,25 @@ export function getSmsRecipients(settings: SmsSettings): string[] {
   return [];
 }
 
-// Helper to resolve per-folder settings for a check (finds matching folder entry)
+// Folder inheritance and recipient collection live in the pure, unit-tested
+// email-gate.ts module. These wrappers keep the original signatures so the alert
+// paths (which run inside the VPS runner) are untouched call-site for call-site;
+// the bodies are identical, so no VPS rebuild is needed for this change.
 export function resolvePerFolder(
   settings: { perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }> },
   checkFolder?: string | null
 ): { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] } | undefined {
-  if (!checkFolder || !settings.perFolder) return undefined;
-  // Exact folder match first, then parent folder match
-  const exact = settings.perFolder[checkFolder];
-  if (exact) return exact;
-  // Check parent folders (e.g. "Production/APIs" matches "Production")
-  const parts = checkFolder.split('/');
-  while (parts.length > 1) {
-    parts.pop();
-    const parent = parts.join('/');
-    const entry = settings.perFolder[parent];
-    if (entry) return entry;
-  }
-  return undefined;
+  return resolveFolderEntry(settings, checkFolder);
 }
 
-// Helper to get email recipients for a specific check (global + per-check + per-folder combined, deduplicated)
 export function getEmailRecipientsForCheck(settings: EmailSettings, checkId: string, checkFolder?: string | null): string[] {
-  const globalRecipients = getEmailRecipients(settings);
-  const perCheck = settings.perCheck?.[checkId];
-  const perCheckRecipients = perCheck?.recipients || [];
-  const perFolder = resolvePerFolder(settings, checkFolder);
-  const perFolderRecipients = perFolder?.recipients || [];
-
-  // Combine global + per-folder + per-check recipients and deduplicate (case-insensitive)
-  const allRecipients = [...globalRecipients, ...perFolderRecipients, ...perCheckRecipients];
-  const seen = new Set<string>();
-  const deduplicated: string[] = [];
-
-  for (const email of allRecipients) {
-    const lower = email.toLowerCase().trim();
-    if (lower && !seen.has(lower)) {
-      seen.add(lower);
-      deduplicated.push(email.trim());
-    }
-  }
-
-  return deduplicated;
+  return collectRecipients(settings, { id: checkId, folder: checkFolder });
 }
 
 /**
- * Would an email actually be delivered for `event` on this check?
- *
- * Re-exported from `email-gate.ts`, which holds the logic with no firestore import
- * so it can be unit-tested. See that file for the precedence rules and for why the
- * hot alert paths below still carry their own inline copies.
+ * Would an email actually be delivered for `event` on this check? See
+ * email-gate.ts for the precedence rules and for why the hot alert paths below
+ * still carry their own inline copies.
  */
 export { eventAllowedForCheck as emailEventAllowedForCheck } from './email-gate';
 

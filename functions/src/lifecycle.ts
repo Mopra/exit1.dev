@@ -7,8 +7,8 @@
  * did anything for the user, so the two moments that actually decide retention
  * and conversion were invisible:
  *
- *   user.first_incident_caught  we found an outage for them. The single most
- *                               convertible moment an uptime product has.
+ *   user.first_incident_caught  we found an outage for them, recently. The single
+ *                               most convertible moment an uptime product has.
  *   user.no_alert_channel       they own a live monitor that can reach nobody.
  *                               Silent failure of the core promise.
  *
@@ -18,14 +18,13 @@
  * hot path during an incident. A daily sweep is a day late and cannot hurt
  * anyone mid-outage.
  *
- * Every event is stamped once per user under `lifecycle.*` on the user doc, so a
- * re-run, a retry or a manual invocation cannot re-send.
+ * Every event is stamped once per user under `lifecycle.*` on the user doc, and a
+ * run holds a lease so the scheduled tick and an admin-triggered run cannot
+ * overlap and double-fire.
  */
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
-import { createClerkClient } from "@clerk/backend";
-import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { firestore } from "./init";
 import {
   CLERK_SECRET_KEY_PROD,
@@ -34,103 +33,106 @@ import {
   RESEND_FROM,
   DAY3_API_KEY,
   DAY3_FROM,
+  getClerkSecretKey,
+  getResendCredentials,
+  getDay3ApiKey,
 } from "./env";
+import { CONFIG } from "./config";
 import { requireAdmin } from "./require-admin";
-import { triggerResendEvent } from "./resend-sync";
+import { triggerResendEvent, RESEND_RATE_LIMIT_MS } from "./resend-sync";
 import { syncContactToProviders } from "./contact-sync";
-import { buildPropertiesForUser, formatSignupDate, type ActivationState } from "./contact-model";
+import { buildPropertiesForUser, formatSignupDate, sleep, type ActivationState } from "./contact-model";
+import { fetchClerkUserFacts, type ClerkUserFacts } from "./clerk-users";
 import {
-  loadCoverageInputs,
-  computeUserCoverage,
+  loadCoverageRows,
   summarizeCoverage,
   type UserCoverage,
-  type CoverageInputs,
+  type CoverageUser,
 } from "./alert-coverage";
+import {
+  decideFirstIncident,
+  isWithinGrace,
+  mailerShouldSkip,
+  pastSoftDeadline,
+} from "./lifecycle-policy";
 import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
-import { isEmailSuppressedCached } from "./email-suppression";
-import type { Tier } from "./config";
+import { getActiveSuppressions } from "./email-suppression";
 
-const APP_URL = "https://app.exit1.dev";
+const APP_URL = process.env.FRONTEND_URL || "https://app.exit1.dev";
 const EMAILS_URL = `${APP_URL}/emails`;
 
-/** Wait this long after signup before telling someone their alerts are unset. */
-const NO_CHANNEL_GRACE_MS = 24 * 60 * 60 * 1000;
+/** Lease document shared by the scheduled sweep and the admin-triggered run. */
+const LOCK_DOC = "system_settings/lifecycle_sweep_lock";
+const LOCK_LEASE_MS = 10 * 60 * 1000;
 
-/** Clerk's getUserList accepts up to 100 ids per call. */
-const CLERK_CHUNK = 100;
-
-interface ClerkUserFacts {
-  email: string | null;
-  firstName: string | null;
-  lastName: string | null;
-  signupDate: string | null;
-  createdAt: number | null;
-  lastActiveAt: number | null;
-}
+// ----------------------------------------------------------------------------
+// Run lease
+// ----------------------------------------------------------------------------
 
 /**
- * Batch-resolve the Clerk facts the sweep needs. One call per 100 users returns
- * email (for sends), createdAt (for the grace window) and lastSignInAt (the only
- * honest "last active" signal we have: check documents are rewritten by the
- * scheduler, so their timestamps say nothing about the human).
+ * Take the run lease or return null if another run holds it. `maxInstances: 1` is
+ * per function, so without this the 07:00 schedule and an admin clicking "run"
+ * could both load the same snapshot and both fire the same events.
  */
-async function fetchClerkFacts(
-  userIds: string[],
-  secretKey: string,
-): Promise<Map<string, ClerkUserFacts>> {
-  const out = new Map<string, ClerkUserFacts>();
-  if (userIds.length === 0) return out;
-
-  const client = createClerkClient({ secretKey });
-
-  for (let i = 0; i < userIds.length; i += CLERK_CHUNK) {
-    const chunk = userIds.slice(i, i + CLERK_CHUNK);
-    try {
-      const res = await client.users.getUserList({ userId: chunk, limit: chunk.length });
-      for (const u of res.data ?? []) {
-        const primary = u.emailAddresses?.find((e) => e.id === u.primaryEmailAddressId)
-          ?? u.emailAddresses?.[0];
-        out.set(u.id, {
-          email: primary?.emailAddress ?? null,
-          firstName: u.firstName ?? null,
-          lastName: u.lastName ?? null,
-          signupDate: formatSignupDate(u.createdAt),
-          createdAt: u.createdAt ?? null,
-          lastActiveAt: u.lastSignInAt ?? null,
-        });
-      }
-    } catch (e) {
-      logger.warn("[lifecycle] Clerk user batch failed; those users are skipped this run", {
-        error: (e as Error)?.message ?? String(e),
-        chunkSize: chunk.length,
-      });
-    }
-  }
-  return out;
-}
-
-function readClerkSecret(): string | null {
-  for (const secret of [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV]) {
-    try {
-      const v = secret.value()?.trim();
-      if (v) return v;
-    } catch {
-      // Not bound to this function; fall through to the env read below.
-    }
-  }
-  const envVal = process.env.CLERK_SECRET_KEY_PROD?.trim();
-  return envVal ? envVal : null;
-}
-
-function readResendKey(): string | null {
+async function acquireLease(owner: string): Promise<string | null> {
+  const ref = firestore.doc(LOCK_DOC);
+  const token = `${owner}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
   try {
-    const v = RESEND_API_KEY.value()?.trim();
-    if (v) return v;
-  } catch {
-    // Not bound; fall through.
+    const got = await firestore.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const data = snap.exists ? (snap.data() as { token?: string; expiresAt?: number }) : {};
+      if (data.token && typeof data.expiresAt === "number" && data.expiresAt > Date.now()) {
+        return false;
+      }
+      tx.set(ref, { token, owner, acquiredAt: Date.now(), expiresAt: Date.now() + LOCK_LEASE_MS });
+      return true;
+    });
+    return got ? token : null;
+  } catch (e) {
+    logger.warn("[lifecycle] lease acquisition failed; refusing to run without it", {
+      error: (e as Error)?.message ?? String(e),
+    });
+    return null;
   }
-  const envVal = process.env.RESEND_API_KEY?.trim();
-  return envVal ? envVal : null;
+}
+
+async function releaseLease(token: string): Promise<void> {
+  const ref = firestore.doc(LOCK_DOC);
+  try {
+    await firestore.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists && (snap.data() as { token?: string }).token === token) {
+        tx.set(ref, { token: null, expiresAt: 0, releasedAt: Date.now() }, { merge: true });
+      }
+    });
+  } catch (e) {
+    // The lease expires on its own in ten minutes; log and move on.
+    logger.debug("[lifecycle] lease release failed", { error: (e as Error)?.message ?? String(e) });
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Stamps
+// ----------------------------------------------------------------------------
+
+/**
+ * Write lifecycle stamps in their own try so a failed stamp after a successful
+ * provider call is reported loudly instead of being silently retried as a fresh
+ * send next run. Returns false when the write failed.
+ */
+async function writeStamps(userId: string, stamps: Record<string, number | string>): Promise<boolean> {
+  if (Object.keys(stamps).length === 0) return true;
+  try {
+    await firestore.collection("users").doc(userId).update(stamps);
+    return true;
+  } catch (e) {
+    logger.error("[lifecycle] STAMP FAILED after a successful send; this user may be contacted again", {
+      userId,
+      stamps: Object.keys(stamps),
+      error: (e as Error)?.message ?? String(e),
+    });
+    return false;
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -204,10 +206,16 @@ export interface NoChannelNotifyResult {
   candidates: number;
   sent: number;
   skippedAlreadyNotified: number;
+  /** Skipped because the sweep already fired the Resend automation event for them. */
+  skippedAutomationEvent: number;
   skippedTooNew: number;
   skippedSuppressed: number;
   skippedNoEmail: number;
   failed: number;
+  /** Provider accepted the message but the stamp write failed. Check logs before re-running. */
+  stampFailed: number;
+  /** True when the run stopped at the soft deadline with candidates left. */
+  truncated: boolean;
   coverage: ReturnType<typeof summarizeCoverage>;
   sampleUserIds: string[];
 }
@@ -219,60 +227,57 @@ export interface NoChannelNotifyResult {
  * `dryRun` defaults to TRUE on purpose. This reaches real inboxes at a volume
  * (hundreds) where a mistake is not retractable, so the safe call has to be the
  * default and the send has to be typed out explicitly.
+ *
+ * `includeAutomationRecipients` defaults to FALSE: the nightly sweep has already
+ * fired `user.no_alert_channel` for most of these users, and if a Resend automation
+ * mails on that event this would be their second notice. Only set it when you know
+ * the automation is not configured to send.
  */
 export async function notifyNoChannelUsers(opts: {
   dryRun: boolean;
   limit: number;
+  includeAutomationRecipients: boolean;
 }): Promise<NoChannelNotifyResult> {
-  const { dryRun, limit } = opts;
+  const { dryRun, limit, includeAutomationRecipients } = opts;
+  const startedAt = Date.now();
 
-  const [inputs, usersSnap] = await Promise.all([
-    loadCoverageInputs(),
-    firestore.collection("users").get(),
-  ]);
-
-  const tierByUser = new Map<string, Tier>();
-  for (const doc of usersSnap.docs) {
-    const raw = doc.get("tier");
-    tierByUser.set(doc.id, (typeof raw === "string" ? raw : "free") as Tier);
-  }
-
-  const rows: UserCoverage[] = [];
-  for (const userId of inputs.checksByUser.keys()) {
-    rows.push(computeUserCoverage(userId, inputs, tierByUser.get(userId) ?? "free"));
-  }
+  const { users, rows } = await loadCoverageRows();
   const coverage = summarizeCoverage(rows);
-
-  const alreadyNotified = new Set<string>();
-  for (const doc of usersSnap.docs) {
-    const at = doc.get("lifecycle.noChannelNotifiedAt");
-    if (typeof at === "number" && at > 0) alreadyNotified.add(doc.id);
-  }
-
-  const uncovered = rows.filter((r) => r.enabledCheckCount > 0 && !r.covered);
 
   const result: NoChannelNotifyResult = {
     dryRun,
-    candidates: uncovered.length,
+    candidates: 0,
     sent: 0,
     skippedAlreadyNotified: 0,
+    skippedAutomationEvent: 0,
     skippedTooNew: 0,
     skippedSuppressed: 0,
     skippedNoEmail: 0,
     failed: 0,
+    stampFailed: 0,
+    truncated: false,
     coverage,
     sampleUserIds: [],
   };
 
-  const pending = uncovered.filter((r) => {
-    if (alreadyNotified.has(r.userId)) {
-      result.skippedAlreadyNotified++;
-      return false;
-    }
-    return true;
-  });
+  const uncovered = rows.filter((r) => r.enabledCheckCount > 0 && !r.covered);
+  result.candidates = uncovered.length;
 
-  const secretKey = readClerkSecret();
+  const pending: UserCoverage[] = [];
+  for (const r of uncovered) {
+    const u = users.get(r.userId);
+    if (!u) continue;
+    const skip = mailerShouldSkip({
+      notifiedAt: u.lifecycle.noChannelNotifiedAt,
+      automationEventAt: u.lifecycle.noChannelEventAt,
+      includeAutomationRecipients,
+    });
+    if (skip === "already_notified") result.skippedAlreadyNotified++;
+    else if (skip === "automation_event") result.skippedAutomationEvent++;
+    else pending.push(r);
+  }
+
+  const secretKey = getClerkSecretKey();
   if (!secretKey) {
     throw new HttpsError("failed-precondition", "No Clerk secret key is configured");
   }
@@ -280,23 +285,36 @@ export async function notifyNoChannelUsers(opts: {
     throw new HttpsError("failed-precondition", "No transactional email provider is configured");
   }
 
-  const facts = await fetchClerkFacts(pending.map((r) => r.userId), secretKey);
+  const facts = await fetchClerkUserFacts(pending.map((r) => r.userId), secretKey, "lifecycle");
+
+  // One batched suppression lookup for every pending address, not a read per user.
+  const suppressed = new Set<string>();
+  const pendingEmails = pending.map((r) => facts.get(r.userId)?.email).filter((e): e is string => Boolean(e));
+  if (pendingEmails.length > 0) {
+    for (const s of await getActiveSuppressions(pendingEmails)) {
+      if (s.email) suppressed.add(s.email.toLowerCase());
+    }
+  }
+
   const now = Date.now();
   let budget = limit;
 
   for (const row of pending) {
     if (budget <= 0) break;
+    if (pastSoftDeadline(startedAt, Date.now())) {
+      result.truncated = true;
+      break;
+    }
     const f = facts.get(row.userId);
     if (!f?.email) {
       result.skippedNoEmail++;
       continue;
     }
-    // A brand-new account is mid-setup, not neglected.
-    if (f.createdAt && now - f.createdAt < NO_CHANNEL_GRACE_MS) {
+    if (isWithinGrace(f.createdAt, now)) {
       result.skippedTooNew++;
       continue;
     }
-    if (await isEmailSuppressedCached(f.email)) {
+    if (suppressed.has(f.email.trim().toLowerCase())) {
       result.skippedSuppressed++;
       continue;
     }
@@ -310,6 +328,7 @@ export async function notifyNoChannelUsers(opts: {
     }
 
     const body = buildNoChannelEmail(row.enabledCheckCount);
+    const sendStarted = Date.now();
     try {
       await sendTransactionalEmail({
         to: f.email,
@@ -319,23 +338,25 @@ export async function notifyNoChannelUsers(opts: {
         category: "account",
         meta: { kind: "no_alert_channel", userId: row.userId, checks: row.enabledCheckCount },
       });
-      // Stamp only after the provider accepted it, so a failed send is retried
-      // on the next run instead of being silently marked done.
-      await firestore.collection("users").doc(row.userId).set(
-        { lifecycle: { noChannelNotifiedAt: Date.now() } },
-        { merge: true },
-      );
-      result.sent++;
-      budget--;
-      // Resend allows 2 requests/second; the alert path uses the same spacing.
-      await new Promise((r) => setTimeout(r, 600));
     } catch (e) {
       result.failed++;
       logger.warn("[lifecycle] no-channel notice failed", {
         userId: row.userId,
         error: (e as Error)?.message ?? String(e),
       });
+      continue;
     }
+
+    // Provider accepted it. Stamp in its own try so a stamp failure is reported as
+    // exactly that, and never as "failed send, retry next time".
+    const ok = await writeStamps(row.userId, { "lifecycle.noChannelNotifiedAt": Date.now() });
+    if (ok) result.sent++;
+    else result.stampFailed++;
+    budget--;
+
+    // Pace to the provider limit, counting the time the send itself already took.
+    const remaining = RESEND_RATE_LIMIT_MS - (Date.now() - sendStarted);
+    if (remaining > 0) await sleep(remaining);
   }
 
   logger.info("[lifecycle] no-channel notify complete", result as unknown as Record<string, unknown>);
@@ -346,14 +367,15 @@ export async function notifyNoChannelUsers(opts: {
  * Admin-only. Sends the alert-coverage notice to affected users.
  *
  * Call with `{ dryRun: true }` first: the response reports exactly how many
- * messages a real run would send, and to how many brand-new or suppressed
- * addresses it would not.
+ * messages a real run would send, and how many it would skip and why.
  */
 export const notifyUsersWithoutAlertChannel = onCall(
   {
     cors: true,
-    timeoutSeconds: 540,
+    timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
     maxInstances: 1,
+    // Full-collection scans of users, checks and every settings document; the
+    // 256MiB scheduler default is sized for the check loop, not for this.
     memory: "512MiB",
     secrets: [
       CLERK_SECRET_KEY_PROD,
@@ -369,12 +391,25 @@ export const notifyUsersWithoutAlertChannel = onCall(
     if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
     await requireAdmin(uid);
 
-    const data = (request.data ?? {}) as { dryRun?: unknown; limit?: unknown };
+    const data = (request.data ?? {}) as {
+      dryRun?: unknown;
+      limit?: unknown;
+      includeAutomationRecipients?: unknown;
+    };
     // Anything other than an explicit `false` is a dry run.
     const dryRun = data.dryRun !== false;
     const limit = Math.min(1000, Math.max(1, Math.floor(Number(data.limit) || 1000)));
+    const includeAutomationRecipients = data.includeAutomationRecipients === true;
 
-    return notifyNoChannelUsers({ dryRun, limit });
+    const token = await acquireLease(`notify:${uid}`);
+    if (!token) {
+      throw new HttpsError("aborted", "Another lifecycle run is in progress. Try again in a few minutes.");
+    }
+    try {
+      return await notifyNoChannelUsers({ dryRun, limit, includeAutomationRecipients });
+    } finally {
+      await releaseLease(token);
+    }
   },
 );
 
@@ -386,47 +421,16 @@ export interface LifecycleSweepResult {
   dryRun: boolean;
   usersExamined: number;
   firstIncidentEvents: number;
+  /** Historical incidents stamped without firing (older than the freshness window). */
+  firstIncidentStampedSilently: number;
   noChannelEvents: number;
   propertiesSynced: number;
   errors: number;
+  stampFailed: number;
+  truncated: boolean;
+  /** True when another run held the lease and this one did nothing. */
+  skippedLocked?: boolean;
   coverage: ReturnType<typeof summarizeCoverage>;
-}
-
-interface SweepUser {
-  userId: string;
-  tier: Tier;
-  onboarding: { sources: string[]; useCases: string[]; teamSize: string | null } | null;
-  firstIncidentEventAt: number;
-  noChannelEventAt: number;
-  activationSyncedAt: number;
-  activationFingerprint: string | null;
-}
-
-function readSweepUser(doc: QueryDocumentSnapshot): SweepUser {
-  const rawTier = doc.get("tier");
-  const rawOnboarding = doc.get("onboarding") as
-    | { sources?: unknown; useCases?: unknown; teamSize?: unknown }
-    | undefined;
-
-  const onboarding = rawOnboarding && Array.isArray(rawOnboarding.sources)
-    ? {
-      sources: (rawOnboarding.sources as string[]).filter((s) => typeof s === "string"),
-      useCases: Array.isArray(rawOnboarding.useCases)
-        ? (rawOnboarding.useCases as string[]).filter((s) => typeof s === "string")
-        : [],
-      teamSize: typeof rawOnboarding.teamSize === "string" ? rawOnboarding.teamSize : null,
-    }
-    : null;
-
-  return {
-    userId: doc.id,
-    tier: (typeof rawTier === "string" ? rawTier : "free") as Tier,
-    onboarding,
-    firstIncidentEventAt: Number(doc.get("lifecycle.firstIncidentEventAt")) || 0,
-    noChannelEventAt: Number(doc.get("lifecycle.noChannelEventAt")) || 0,
-    activationSyncedAt: Number(doc.get("lifecycle.activationSyncedAt")) || 0,
-    activationFingerprint: (doc.get("lifecycle.activationFingerprint") as string | undefined) ?? null,
-  };
 }
 
 /**
@@ -434,7 +438,7 @@ function readSweepUser(doc: QueryDocumentSnapshot): SweepUser {
  * it the sweep would rewrite ~1600 contacts every night for no reason and burn
  * through provider rate limits.
  */
-function activationFingerprint(a: ActivationState, tier: Tier): string {
+function activationFingerprint(a: ActivationState, tier: string): string {
   return [
     tier,
     a.checkCount ?? "",
@@ -445,153 +449,78 @@ function activationFingerprint(a: ActivationState, tier: Tier): string {
   ].join("|");
 }
 
-export async function runSweep(opts: { dryRun: boolean }): Promise<LifecycleSweepResult> {
-  const { dryRun } = opts;
+/** Fire one Resend automation event, paced, and report whether to stamp it. */
+async function fireEvent(
+  resendKey: string,
+  email: string,
+  name: string,
+  payload: Record<string, unknown>,
+  result: { errors: number },
+): Promise<boolean> {
+  const started = Date.now();
+  const ev = await triggerResendEvent(resendKey, email, name, payload);
+  const remaining = RESEND_RATE_LIMIT_MS - (Date.now() - started);
+  if (remaining > 0) await sleep(remaining);
+  if (ev.success) return true;
+  result.errors++;
+  logger.warn(`[lifecycle] ${name} failed`, { email, error: ev.error });
+  return false;
+}
 
-  const [inputs, usersSnap] = await Promise.all([
-    loadCoverageInputs(),
-    firestore.collection("users").get(),
-  ]);
+async function sweepOneUser(
+  row: UserCoverage,
+  u: CoverageUser,
+  f: ClerkUserFacts,
+  keys: { resend: string | null; day3: string | undefined },
+  dryRun: boolean,
+  result: LifecycleSweepResult,
+): Promise<void> {
+  if (!f.email) return;
+  const now = Date.now();
 
-  const users = usersSnap.docs.map(readSweepUser);
-  const byId = new Map(users.map((u) => [u.userId, u]));
-
-  const rows: UserCoverage[] = users.map((u) =>
-    computeUserCoverage(u.userId, inputs as CoverageInputs, u.tier));
-  const coverage = summarizeCoverage(rows);
-
-  const result: LifecycleSweepResult = {
-    dryRun,
-    usersExamined: users.length,
-    firstIncidentEvents: 0,
-    noChannelEvents: 0,
-    propertiesSynced: 0,
-    errors: 0,
-    coverage,
+  const activation: ActivationState = {
+    checkCount: row.checkCount,
+    checksAlertable: row.emailCoveredCheckCount,
+    hasAlertChannel: row.covered,
+    firstIncidentAt: row.firstIncidentAt,
+    lastActiveAt: f.lastSignInAt,
   };
 
-  // A user with no checks has no activation state worth reporting and can trigger
-  // neither event, so they never need the Clerk lookup. Everyone else does: the
-  // activation properties are refreshed for all of them, and the fingerprint
-  // check below is what keeps an unchanged user from costing a provider write.
-  const interesting = rows.filter((r) => r.checkCount > 0 && byId.has(r.userId));
+  const stamps: Record<string, number | string> = {};
 
-  const secretKey = readClerkSecret();
-  if (!secretKey) {
-    logger.warn("[lifecycle] no Clerk secret configured; sweep cannot resolve emails");
-    return result;
-  }
-  const facts = await fetchClerkFacts(interesting.map((r) => r.userId), secretKey);
-  const resendKey = readResendKey();
-
-  let day3Key: string | undefined;
-  try {
-    day3Key = DAY3_API_KEY.value()?.trim() || undefined;
-  } catch {
-    day3Key = process.env.DAY3_API_KEY?.trim() || undefined;
-  }
-
-  for (const row of interesting) {
-    const u = byId.get(row.userId);
-    const f = facts.get(row.userId);
-    if (!u || !f?.email) continue;
-
-    const activation: ActivationState = {
-      checkCount: row.checkCount,
-      checksAlertable: row.emailCoveredCheckCount,
-      hasAlertChannel: row.covered,
-      firstIncidentAt: row.firstIncidentAt,
-      lastActiveAt: f.lastActiveAt,
-    };
-
-    const stamps: Record<string, number | string> = {};
-
-    // ---- Activation properties ----
-    const fingerprint = activationFingerprint(activation, u.tier);
-    if (fingerprint !== u.activationFingerprint) {
-      if (!dryRun) {
-        try {
-          const properties = buildPropertiesForUser({
-            signupDate: f.signupDate,
-            tier: u.tier,
-            onboarding: u.onboarding,
-            activation,
-          });
-          const sync = await syncContactToProviders({
-            email: f.email,
-            firstName: f.firstName,
-            lastName: f.lastName,
-            properties,
-            resendApiKey: resendKey ?? undefined,
-            day3ApiKey: day3Key,
-            userId: row.userId,
-          });
-          if (sync.resend.success || sync.day3.success) {
-            stamps["lifecycle.activationSyncedAt"] = Date.now();
-            stamps["lifecycle.activationFingerprint"] = fingerprint;
-            result.propertiesSynced++;
-          }
-        } catch (e) {
-          result.errors++;
-          logger.warn("[lifecycle] activation property sync failed", {
-            userId: row.userId,
-            error: (e as Error)?.message ?? String(e),
-          });
-        }
-      } else {
-        result.propertiesSynced++;
-      }
-    }
-
-    // ---- user.first_incident_caught ----
-    if (row.firstIncidentAt !== null && u.firstIncidentEventAt === 0) {
-      result.firstIncidentEvents++;
-      if (!dryRun && resendKey) {
-        const ev = await triggerResendEvent(resendKey, f.email, "user.first_incident_caught", {
-          userId: row.userId,
-          firstIncidentAt: row.firstIncidentAt,
-          checkCount: row.checkCount,
-          hasAlertChannel: row.covered,
-        });
-        if (ev.success) {
-          stamps["lifecycle.firstIncidentEventAt"] = Date.now();
-        } else {
-          result.errors++;
-          logger.warn("[lifecycle] user.first_incident_caught failed", {
-            userId: row.userId,
-            error: ev.error,
-          });
-        }
-      }
-    }
-
-    // ---- user.no_alert_channel ----
-    const tooNew = f.createdAt !== null && Date.now() - f.createdAt < NO_CHANNEL_GRACE_MS;
-    if (row.enabledCheckCount > 0 && !row.covered && u.noChannelEventAt === 0 && !tooNew) {
-      result.noChannelEvents++;
-      if (!dryRun && resendKey) {
-        const ev = await triggerResendEvent(resendKey, f.email, "user.no_alert_channel", {
-          userId: row.userId,
-          checkCount: row.enabledCheckCount,
-        });
-        if (ev.success) {
-          stamps["lifecycle.noChannelEventAt"] = Date.now();
-        } else {
-          result.errors++;
-          logger.warn("[lifecycle] user.no_alert_channel failed", {
-            userId: row.userId,
-            error: ev.error,
-          });
-        }
-      }
-    }
-
-    if (!dryRun && Object.keys(stamps).length > 0) {
+  // ---- Activation properties ----
+  const fingerprint = activationFingerprint(activation, u.tier);
+  if (fingerprint !== u.lifecycle.activationFingerprint) {
+    if (dryRun) {
+      result.propertiesSynced++;
+    } else {
       try {
-        await firestore.collection("users").doc(row.userId).update(stamps);
+        const properties = buildPropertiesForUser({
+          signupDate: formatSignupDate(f.createdAt),
+          tier: u.tier,
+          onboarding: u.onboarding,
+          activation,
+        });
+        const started = Date.now();
+        const sync = await syncContactToProviders({
+          email: f.email,
+          firstName: f.firstName,
+          lastName: f.lastName,
+          properties,
+          resendApiKey: keys.resend ?? undefined,
+          day3ApiKey: keys.day3,
+          userId: row.userId,
+        });
+        const remaining = RESEND_RATE_LIMIT_MS - (Date.now() - started);
+        if (remaining > 0) await sleep(remaining);
+        if (sync.resend.success || sync.day3.success) {
+          stamps["lifecycle.activationSyncedAt"] = now;
+          stamps["lifecycle.activationFingerprint"] = fingerprint;
+          result.propertiesSynced++;
+        }
       } catch (e) {
         result.errors++;
-        logger.debug("[lifecycle] failed to stamp lifecycle state", {
+        logger.warn("[lifecycle] activation property sync failed", {
           userId: row.userId,
           error: (e as Error)?.message ?? String(e),
         });
@@ -599,8 +528,119 @@ export async function runSweep(opts: { dryRun: boolean }): Promise<LifecycleSwee
     }
   }
 
-  logger.info("[lifecycle] sweep complete", result as unknown as Record<string, unknown>);
-  return result;
+  // ---- user.first_incident_caught ----
+  const incident = decideFirstIncident({
+    firstIncidentAt: row.firstIncidentAt,
+    alreadyStampedAt: u.lifecycle.firstIncidentEventAt,
+    now,
+  });
+  if (incident === "stamp_silently") {
+    result.firstIncidentStampedSilently++;
+    if (!dryRun) stamps["lifecycle.firstIncidentEventAt"] = now;
+  } else if (incident === "fire") {
+    result.firstIncidentEvents++;
+    if (!dryRun && keys.resend) {
+      const ok = await fireEvent(keys.resend, f.email, "user.first_incident_caught", {
+        userId: row.userId,
+        firstIncidentAt: row.firstIncidentAt,
+        checkCount: row.checkCount,
+        hasAlertChannel: row.covered,
+      }, result);
+      if (ok) stamps["lifecycle.firstIncidentEventAt"] = now;
+    }
+  }
+
+  // ---- user.no_alert_channel ----
+  const wantsNoChannel = row.enabledCheckCount > 0
+    && !row.covered
+    && u.lifecycle.noChannelEventAt === 0
+    && !isWithinGrace(f.createdAt, now);
+  if (wantsNoChannel) {
+    result.noChannelEvents++;
+    if (!dryRun && keys.resend) {
+      const ok = await fireEvent(keys.resend, f.email, "user.no_alert_channel", {
+        userId: row.userId,
+        checkCount: row.enabledCheckCount,
+      }, result);
+      if (ok) stamps["lifecycle.noChannelEventAt"] = now;
+    }
+  }
+
+  if (!dryRun && !(await writeStamps(row.userId, stamps))) {
+    result.stampFailed++;
+  }
+}
+
+export async function runSweep(opts: { dryRun: boolean; owner: string }): Promise<LifecycleSweepResult> {
+  const { dryRun } = opts;
+  const startedAt = Date.now();
+
+  const token = await acquireLease(opts.owner);
+  if (!token) {
+    logger.warn("[lifecycle] sweep skipped: another run holds the lease");
+    return {
+      dryRun,
+      usersExamined: 0,
+      firstIncidentEvents: 0,
+      firstIncidentStampedSilently: 0,
+      noChannelEvents: 0,
+      propertiesSynced: 0,
+      errors: 0,
+      stampFailed: 0,
+      truncated: false,
+      skippedLocked: true,
+      coverage: { usersWithEnabledChecks: 0, usersCovered: 0, usersUncovered: 0, enabledChecks: 0, emailCoveredChecks: 0 },
+    };
+  }
+
+  try {
+    const { users, rows } = await loadCoverageRows();
+    const coverage = summarizeCoverage(rows);
+
+    const result: LifecycleSweepResult = {
+      dryRun,
+      usersExamined: users.size,
+      firstIncidentEvents: 0,
+      firstIncidentStampedSilently: 0,
+      noChannelEvents: 0,
+      propertiesSynced: 0,
+      errors: 0,
+      stampFailed: 0,
+      truncated: false,
+      coverage,
+    };
+
+    // A user with no checks has no activation state worth reporting and can trigger
+    // neither event, so they never need the Clerk lookup. Everyone else does: the
+    // activation properties are refreshed for all of them, and the fingerprint
+    // check in sweepOneUser is what keeps an unchanged user from costing a provider
+    // write.
+    const interesting = rows.filter((r) => r.checkCount > 0);
+
+    const secretKey = getClerkSecretKey();
+    if (!secretKey) {
+      logger.warn("[lifecycle] no Clerk secret configured; sweep cannot resolve emails");
+      return result;
+    }
+    const facts = await fetchClerkUserFacts(interesting.map((r) => r.userId), secretKey, "lifecycle");
+    const keys = { resend: getResendCredentials().apiKey ?? null, day3: getDay3ApiKey() };
+
+    for (const row of interesting) {
+      if (pastSoftDeadline(startedAt, Date.now())) {
+        result.truncated = true;
+        break;
+      }
+      const u = users.get(row.userId);
+      const f = facts.get(row.userId);
+      if (!u || !f) continue;
+      await sweepOneUser(row, u, f, keys, dryRun, result);
+    }
+
+    logger.info("[lifecycle] sweep complete", result as unknown as Record<string, unknown>);
+    return result;
+  } finally {
+    await releaseLease(token);
+  }
 }
 
 export const lifecycleSweep = onSchedule(
@@ -608,9 +648,10 @@ export const lifecycleSweep = onSchedule(
     schedule: "every day 07:00",
     timeZone: "UTC",
     region: "us-central1",
-    timeoutSeconds: 540,
+    timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
+    // Full-collection scans; see the note on notifyUsersWithoutAlertChannel.
     memory: "512MiB",
-    maxInstances: 1,
+    maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
     secrets: [
       CLERK_SECRET_KEY_PROD,
       CLERK_SECRET_KEY_DEV,
@@ -619,7 +660,7 @@ export const lifecycleSweep = onSchedule(
     ],
   },
   async () => {
-    await runSweep({ dryRun: false });
+    await runSweep({ dryRun: false, owner: "schedule" });
   },
 );
 
@@ -627,7 +668,7 @@ export const lifecycleSweep = onSchedule(
 export const runLifecycleSweep = onCall(
   {
     cors: true,
-    timeoutSeconds: 540,
+    timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
     maxInstances: 1,
     memory: "512MiB",
     secrets: [
@@ -642,7 +683,7 @@ export const runLifecycleSweep = onCall(
     if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
     await requireAdmin(uid);
     const dryRun = (request.data as { dryRun?: unknown } | undefined)?.dryRun !== false;
-    return runSweep({ dryRun });
+    return runSweep({ dryRun, owner: `admin:${uid}` });
   },
 );
 
@@ -669,40 +710,25 @@ export const getAlertCoverageReport = onCall(
     if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
     await requireAdmin(uid);
 
-    const [inputs, usersSnap] = await Promise.all([
-      loadCoverageInputs(),
-      firestore.collection("users").select("tier", "onboarding").get(),
-    ]);
-
-    const tierByUser = new Map<string, Tier>();
-    const hasAnswers = new Set<string>();
-    for (const doc of usersSnap.docs) {
-      const raw = doc.get("tier");
-      tierByUser.set(doc.id, (typeof raw === "string" ? raw : "free") as Tier);
-      const onboarding = doc.get("onboarding") as { sources?: unknown } | undefined;
-      if (onboarding && Array.isArray(onboarding.sources)) hasAnswers.add(doc.id);
-    }
-
-    const rows = [...inputs.checksByUser.keys()].map((userId) =>
-      computeUserCoverage(userId, inputs, tierByUser.get(userId) ?? "free"));
+    const { users, rows, inputs, orphanCheckOwners } = await loadCoverageRows();
 
     const active = rows.filter((r) => r.enabledCheckCount > 0);
-    const bucket = (predicate: (r: UserCoverage) => boolean) => {
-      const set = active.filter(predicate);
-      return {
-        users: set.length,
-        covered: set.filter((r) => r.covered).length,
-      };
+    const bucket = (predicate: (r: UserCoverage, u: CoverageUser) => boolean) => {
+      const set = active.filter((r) => {
+        const u = users.get(r.userId);
+        return u ? predicate(r, u) : false;
+      });
+      return { users: set.length, covered: set.filter((r) => r.covered).length };
     };
 
     return {
       ...summarizeCoverage(rows),
+      orphanCheckOwners,
+      suppressionsApplied: inputs.suppressionsApplied,
       byCohort: {
-        onboardedPaid: bucket((r) =>
-          hasAnswers.has(r.userId) && (tierByUser.get(r.userId) ?? "free") !== "free"),
-        onboardedFree: bucket((r) =>
-          hasAnswers.has(r.userId) && (tierByUser.get(r.userId) ?? "free") === "free"),
-        preOnboarding: bucket((r) => !hasAnswers.has(r.userId)),
+        onboardedPaid: bucket((_, u) => u.onboarding !== null && u.tier !== "free"),
+        onboardedFree: bucket((_, u) => u.onboarding !== null && u.tier === "free"),
+        preOnboarding: bucket((_, u) => u.onboarding === null),
       },
     };
   },

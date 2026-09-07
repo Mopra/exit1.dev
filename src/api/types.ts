@@ -636,6 +636,10 @@ export interface AlertCoverageReport {
   usersUncovered: number;
   enabledChecks: number;
   emailCoveredChecks: number;
+  /** Check owners with no `users` document; excluded from the rows above. */
+  orphanCheckOwners: number;
+  /** Settings documents that lost at least one bounced address before evaluation. */
+  suppressionsApplied: number;
   byCohort: {
     onboardedPaid: AlertCoverageBucket;
     onboardedFree: AlertCoverageBucket;
@@ -649,11 +653,17 @@ export interface NoChannelNotifyResult {
   candidates: number;
   sent: number;
   skippedAlreadyNotified: number;
+  /** Skipped because the sweep already fired the Resend automation event for them. */
+  skippedAutomationEvent: number;
   skippedTooNew: number;
   skippedSuppressed: number;
   skippedNoEmail: number;
   failed: number;
-  coverage: Omit<AlertCoverageReport, 'byCohort'>;
+  /** Provider accepted the message but the stamp write failed. Check logs before re-running. */
+  stampFailed: number;
+  /** The run stopped at its time budget with candidates left. */
+  truncated: boolean;
+  coverage: Omit<AlertCoverageReport, 'byCohort' | 'orphanCheckOwners' | 'suppressionsApplied'>;
   sampleUserIds: string[];
 }
 
@@ -662,8 +672,12 @@ export interface LifecycleSweepResult {
   dryRun: boolean;
   usersExamined: number;
   firstIncidentEvents: number;
+  firstIncidentStampedSilently: number;
   noChannelEvents: number;
   propertiesSynced: number;
   errors: number;
-  coverage: Omit<AlertCoverageReport, 'byCohort'>;
+  stampFailed: number;
+  truncated: boolean;
+  skippedLocked?: boolean;
+  coverage: Omit<AlertCoverageReport, 'byCohort' | 'orphanCheckOwners' | 'suppressionsApplied'>;
 }

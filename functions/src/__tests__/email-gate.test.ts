@@ -168,3 +168,47 @@ test("resolveFolderEntry walks up one level at a time", () => {
   assert.equal(resolveFolderEntry(s, "B/C"), undefined);
   assert.equal(resolveFolderEntry(s, null), undefined);
 });
+
+// ── Suppression stripping ───────────────────────────────────────────────────
+//
+// The send path drops bounced addresses at send time. Coverage must see the same
+// thing, or a user whose only address bounced is "covered" and never contacted.
+
+import { stripSuppressedRecipients, allRecipientAddresses, getGlobalRecipients } from "../email-gate";
+
+test("a bounced sole recipient makes the document undeliverable", () => {
+  const s = working({ recipients: ["bounced@example.com"] });
+  const stripped = stripSuppressedRecipients(s, (e) => e === "bounced@example.com");
+  assert.equal(eventAllowedForCheck(stripped, CHECK, DOWN), false);
+  assert.equal(eventAllowedForCheck(s, CHECK, DOWN), true, "the original is untouched");
+});
+
+test("stripping removes addresses from every scope and keeps the rest", () => {
+  const s = working({
+    recipients: ["ok@example.com", "bad@example.com"],
+    recipient: "bad@example.com",
+    perFolder: { Production: { recipients: ["bad@example.com", "folder@example.com"] } },
+    perCheck: { "check-1": { enabled: true, recipients: ["bad@example.com"] } },
+  });
+  const stripped = stripSuppressedRecipients(s, (e) => e === "bad@example.com");
+  assert.deepEqual(stripped.recipients, ["ok@example.com"]);
+  assert.equal(stripped.recipient, undefined);
+  assert.deepEqual(stripped.perFolder?.Production.recipients, ["folder@example.com"]);
+  assert.deepEqual(stripped.perCheck?.["check-1"].recipients, []);
+  assert.equal(stripped.perCheck?.["check-1"].enabled, true, "non-recipient fields survive");
+});
+
+test("allRecipientAddresses enumerates every scope for the batch lookup", () => {
+  const s = working({
+    recipients: ["a@example.com"],
+    perFolder: { P: { recipients: ["b@example.com"] } },
+    perCheck: { c: { recipients: ["c@example.com", "a@example.com"] } },
+  });
+  assert.deepEqual(allRecipientAddresses(s).sort(), ["a@example.com", "b@example.com", "c@example.com"]);
+});
+
+test("getGlobalRecipients prefers the array and falls back to the legacy field", () => {
+  assert.deepEqual(getGlobalRecipients({ recipients: ["x@example.com"], recipient: "y@example.com" }), ["x@example.com"]);
+  assert.deepEqual(getGlobalRecipients({ recipients: [], recipient: "y@example.com" }), ["y@example.com"]);
+  assert.deepEqual(getGlobalRecipients({}), []);
+});

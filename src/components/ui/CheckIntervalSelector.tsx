@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
 import { Label } from './Label';
+import { Button } from './Button';
 import { cheapestTierForIntervalSeconds } from '../../lib/subscription';
 
 
@@ -37,20 +39,17 @@ interface CheckIntervalSelectorProps {
   helperText?: string;
   className?: string;
   disabled?: boolean;
-  // Minimum and maximum allowed interval in seconds (optional)
-  minSeconds?: number;
-  maxSeconds?: number;
   /**
-   * Called when the user picks an interval their plan does not allow, with the
-   * cheapest tier that does. When omitted, faster intervals are hidden entirely
-   * (the old behaviour) rather than shown locked.
-   *
-   * Providing this is strongly preferred. Interval speed is the main thing the paid
-   * tiers sell, and filtering the faster options out of the list meant the one
-   * differentiator worth paying for was invisible to exactly the people being asked
-   * to pay for it.
+   * The plan floor in seconds. Faster intervals are shown locked with the tier
+   * that unlocks them, and picking one renders an upgrade hint instead of
+   * applying. Interval speed is the main thing the paid tiers sell; the old
+   * behaviour of filtering those options out of the list made the one
+   * differentiator worth paying for invisible to exactly the people being asked to
+   * pay for it.
    */
-  onLockedSelect?: (seconds: number, tierName: string) => void;
+  minSeconds?: number;
+  /** Slower ceiling. A real constraint, not an upsell: nothing sells slower checks. */
+  maxSeconds?: number;
 }
 
 const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
@@ -62,29 +61,12 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
   disabled = false,
   minSeconds,
   maxSeconds,
-  onLockedSelect,
 }) => {
-  const formatSeconds = (seconds: number) => {
-    if (seconds < 60) return `${seconds} seconds`;
-    const minutes = Math.round(seconds / 60);
-    if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
-    const hours = Math.round(minutes / 60);
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
-  };
+  const [locked, setLocked] = useState<{ seconds: number; tierName: string } | null>(null);
 
   const isLocked = (seconds: number) => minSeconds !== undefined && seconds < minSeconds;
 
-  const options = CHECK_INTERVALS.filter((i) => {
-    // The upper bound is a real constraint, not an upsell: there is no tier that
-    // adds slower checks, so those stay filtered.
-    if (maxSeconds !== undefined && i.value > maxSeconds) return false;
-    // Without an onLockedSelect handler there is nowhere for a locked pick to go,
-    // so fall back to hiding them.
-    if (!onLockedSelect && isLocked(i.value)) return false;
-    return true;
-  });
-
-  const selectedInterval = CHECK_INTERVALS.find(interval => interval.value === value);
+  const options = CHECK_INTERVALS.filter((i) => maxSeconds === undefined || i.value <= maxSeconds);
 
   return (
     <div className={`space-y-2 ${className}`}>
@@ -94,32 +76,33 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
         onValueChange={(newValue) => {
           const seconds = parseInt(newValue);
           if (isLocked(seconds)) {
-            // Do NOT apply it. Radix has already closed the menu, so the parent
-            // gets to explain the gate and the field keeps its previous value.
+            // Do NOT apply it. Radix has already closed the menu, so the hint below
+            // explains the gate and the field keeps its previous value.
             const tier = cheapestTierForIntervalSeconds(seconds);
-            onLockedSelect?.(seconds, tier?.name ?? 'a paid plan');
+            setLocked({ seconds, tierName: tier?.name ?? 'a paid plan' });
             return;
           }
+          setLocked(null);
           onChange(seconds);
         }}
         disabled={disabled}
       >
         <SelectTrigger>
           <SelectValue placeholder="Select interval">
-            {selectedInterval?.label || formatSeconds(value)}
+            {formatIntervalLabel(value)}
           </SelectValue>
         </SelectTrigger>
         <SelectContent>
           {options.map((interval) => {
-            const locked = isLocked(interval.value);
-            const tier = locked ? cheapestTierForIntervalSeconds(interval.value) : null;
+            const lockedOption = isLocked(interval.value);
+            const tier = lockedOption ? cheapestTierForIntervalSeconds(interval.value) : null;
             return (
               <SelectItem key={interval.value} value={interval.value.toString()}>
                 <span className="flex w-full items-center justify-between gap-3">
-                  <span className={locked ? 'text-muted-foreground' : undefined}>
+                  <span className={lockedOption ? 'text-muted-foreground' : undefined}>
                     {interval.label}
                   </span>
-                  {locked && tier && (
+                  {lockedOption && tier && (
                     <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                       <Lock className="size-3" />
                       {tier.name}
@@ -131,6 +114,22 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
           })}
         </SelectContent>
       </Select>
+      {locked && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs">
+          <Lock className="size-3.5 shrink-0 text-primary" />
+          <span className="text-foreground">
+            {formatIntervalLabel(locked.seconds)} checks are on {locked.tierName} and up.
+          </span>
+          <Button
+            asChild
+            size="sm"
+            variant="link"
+            className="h-auto p-0 text-xs font-semibold cursor-pointer"
+          >
+            <Link to="/billing?tab=plans">See plans</Link>
+          </Button>
+        </div>
+      )}
       {helperText && (
         <p className="text-xs text-muted-foreground">
           {helperText}

@@ -66,6 +66,11 @@ export function AlertCoveragePanel() {
   const [notifying, setNotifying] = useState(false);
   const [sweeping, setSweeping] = useState(false);
   const [confirmSend, setConfirmSend] = useState<number | null>(null);
+  // Off by default. The nightly sweep has already fired `user.no_alert_channel`
+  // for most uncovered users; if a Resend automation mails on that event, sending
+  // to them here would be their second notice about the same gap. Tick this only
+  // when you know the automation does not send.
+  const [includeAutomation, setIncludeAutomation] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,7 +88,10 @@ export function AlertCoveragePanel() {
   // quotes, so nobody is asked to approve a send without knowing its size.
   const previewSend = async () => {
     setNotifying(true);
-    const res = await apiClient.notifyUsersWithoutAlertChannel({ dryRun: true });
+    const res = await apiClient.notifyUsersWithoutAlertChannel({
+      dryRun: true,
+      includeAutomationRecipients: includeAutomation,
+    });
     setNotifying(false);
     if (!res.success || !res.data) {
       toast.error('Dry run failed', { description: res.error });
@@ -92,7 +100,7 @@ export function AlertCoveragePanel() {
     const d = res.data;
     if (d.sent === 0) {
       toast.success('Nothing to send', {
-        description: `${d.candidates} uncovered, all skipped: ${d.skippedAlreadyNotified} already notified, ${d.skippedTooNew} too new, ${d.skippedSuppressed} suppressed, ${d.skippedNoEmail} without an email.`,
+        description: `${d.candidates} uncovered, all skipped: ${d.skippedAlreadyNotified} already mailed, ${d.skippedAutomationEvent} already got the automation event, ${d.skippedTooNew} too new, ${d.skippedSuppressed} suppressed, ${d.skippedNoEmail} without an email.`,
       });
       return;
     }
@@ -102,15 +110,23 @@ export function AlertCoveragePanel() {
   const reallySend = async () => {
     setConfirmSend(null);
     setNotifying(true);
-    const res = await apiClient.notifyUsersWithoutAlertChannel({ dryRun: false });
+    const res = await apiClient.notifyUsersWithoutAlertChannel({
+      dryRun: false,
+      includeAutomationRecipients: includeAutomation,
+    });
     setNotifying(false);
     if (!res.success || !res.data) {
       toast.error('Send failed', { description: res.error });
       return;
     }
     const d = res.data;
+    const notes: string[] = [];
+    if (d.failed > 0) notes.push(`${d.failed} failed and will retry on the next run.`);
+    if (d.stampFailed > 0) notes.push(`${d.stampFailed} sent but NOT stamped. Check the logs before running again.`);
+    if (d.truncated) notes.push('Stopped at the time budget; run again for the rest.');
     toast.success(`Sent ${d.sent} notice${d.sent === 1 ? '' : 's'}`, {
-      description: d.failed > 0 ? `${d.failed} failed and will retry on the next run.` : undefined,
+      description: notes.length ? notes.join(' ') : undefined,
+      duration: notes.length ? 10000 : undefined,
     });
     void load();
   };
@@ -124,8 +140,13 @@ export function AlertCoveragePanel() {
       return;
     }
     const d = res.data;
+    if (d.skippedLocked) {
+      toast.warning('Sweep skipped', { description: 'Another run is in progress. Try again in a few minutes.' });
+      return;
+    }
     toast.success(dryRun ? 'Sweep dry run' : 'Sweep complete', {
-      description: `${d.usersExamined} examined, ${d.firstIncidentEvents} first-incident, ${d.noChannelEvents} no-channel, ${d.propertiesSynced} properties${d.errors ? `, ${d.errors} errors` : ''}.`,
+      description: `${d.usersExamined} examined, ${d.firstIncidentEvents} first-incident (${d.firstIncidentStampedSilently} historical, not fired), ${d.noChannelEvents} no-channel, ${d.propertiesSynced} properties${d.errors ? `, ${d.errors} errors` : ''}${d.stampFailed ? `, ${d.stampFailed} stamp failures` : ''}${d.truncated ? ', stopped at time budget' : ''}.`,
+      duration: 10000,
     });
   };
 
@@ -205,6 +226,15 @@ export function AlertCoveragePanel() {
       )}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer mr-2">
+          <input
+            type="checkbox"
+            checked={includeAutomation}
+            onChange={(e) => setIncludeAutomation(e.target.checked)}
+            className="accent-primary"
+          />
+          Include users already sent the automation event
+        </label>
         <Button
           onClick={() => void previewSend()}
           variant="outline"

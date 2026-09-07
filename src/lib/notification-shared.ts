@@ -1,5 +1,6 @@
 import type { WebhookEvent } from '../api/types';
 import { AlertCircle, AlertTriangle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
+import { getAncestorPaths } from './folder-utils';
 
 export const ALL_NOTIFICATION_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
   { value: 'website_down', label: 'Down', icon: AlertTriangle },
@@ -37,31 +38,37 @@ export type GateSettings = {
   checkFilter?: { mode?: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
 };
 
-/** Folder inheritance: exact match first, then each parent path. */
+/**
+ * Folder inheritance: exact match first, then the nearest parent. Built on the
+ * canonical folder-path helpers so this read side agrees with the Emails page's
+ * write side about what a path's ancestors are.
+ */
 function resolvePerFolderEntry(settings: GateSettings, folder?: string | null) {
   if (!folder || !settings.perFolder) return undefined;
   const exact = settings.perFolder[folder];
   if (exact) return exact;
-  const parts = folder.split('/');
-  while (parts.length > 1) {
-    parts.pop();
-    const entry = settings.perFolder[parts.join('/')];
+  // getAncestorPaths is outermost-first; the gate wants nearest-first.
+  for (const ancestor of getAncestorPaths(folder).reverse()) {
+    const entry = settings.perFolder[ancestor];
     if (entry) return entry;
   }
   return undefined;
 }
 
+/** Non-empty, trimmed recipients only, so `['']` does not count as an address. */
+const usable = (list?: string[]) => (list ?? []).map((r) => r.trim()).filter(Boolean);
+
 /**
  * Would this channel actually deliver `event` for this check?
  *
- * Mirrors the server gate in `functions/src/alert-helpers.ts`
- * (`emailEventAllowedForCheck`). Kept in step by hand: if the precedence rules
- * change on one side they must change on the other, or the UI will claim coverage
- * the alert path does not honour.
+ * Mirrors the server gate in `functions/src/email-gate.ts` (`eventAllowedForCheck`).
+ * Kept in step by hand: if the precedence rules change on one side they must change
+ * on the other, or the UI will claim coverage the alert path does not honour.
  *
- * The trap this exists to surface: `checkFilter.mode` defaults to `'include'`, so
- * a settings document with a valid recipient and every event ticked still delivers
- * nothing until checks are individually enabled or the mode is switched to 'all'.
+ * The trap this exists to surface: `checkFilter.mode` used to default to `'include'`,
+ * so a settings document with a valid recipient and every event ticked still
+ * delivered nothing until checks were individually enabled or the mode was switched
+ * to 'all'.
  */
 export function willDeliver(
   settings: GateSettings | null | undefined,
@@ -71,13 +78,19 @@ export function willDeliver(
   if (!settings) return false;
   if (settings.enabled === false) return false;
 
-  const globalRecipients = settings.recipients?.length
-    ? settings.recipients
-    : settings.recipient ? [settings.recipient] : [];
   const perCheck = settings.perCheck?.[check.id];
-  const perFolder = !perCheck ? resolvePerFolderEntry(settings, check.folder) : undefined;
+  // Folder recipients count whether or not the check has its own entry; the
+  // per-check entry decides whether to send, not who else is copied. This used to
+  // be gated on `!perCheck`, which disagreed with the server and showed the
+  // "nobody will be told" banner to users who were covered via a folder address.
+  const folderEntry = resolvePerFolderEntry(settings, check.folder);
+  const globalRecipients = usable(settings.recipients).length
+    ? usable(settings.recipients)
+    : usable(settings.recipient ? [settings.recipient] : []);
   const recipientCount =
-    globalRecipients.length + (perCheck?.recipients?.length ?? 0) + (perFolder?.recipients?.length ?? 0);
+    globalRecipients.length
+    + usable(perCheck?.recipients).length
+    + usable(folderEntry?.recipients).length;
   if (recipientCount === 0) return false;
 
   const globalAllows = (settings.events ?? []).includes(event);
@@ -86,6 +99,8 @@ export function willDeliver(
   if (perCheckEnabled === true) return perCheck?.events ? perCheck.events.includes(event) : globalAllows;
   if (perCheckEnabled === false) return false;
 
+  // Folder enabled/events only apply when the check has no entry of its own.
+  const perFolder = !perCheck ? folderEntry : undefined;
   const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
   if (perFolderEnabled === true) return perFolder?.events ? perFolder.events.includes(event) : globalAllows;
   if (perFolderEnabled === false) return false;
@@ -95,6 +110,15 @@ export function willDeliver(
     return defaults ? defaults.includes(event) : globalAllows;
   }
   return false;
+}
+
+/**
+ * Would a check created right now be covered? Used by onboarding to decide whether
+ * to show the alert step. A synthetic id never matches a per-check entry, so this
+ * is exactly "does the document cover checks by default", which is the question.
+ */
+export function coversNewChecks(settings: GateSettings | null | undefined, event: WebhookEvent): boolean {
+  return willDeliver(settings, { id: '__new_check__', folder: null }, event);
 }
 
 export type NotificationUsageWindow = {

@@ -3,6 +3,7 @@ import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
 import { createClerkClient } from "@clerk/backend";
 import { firestore, getUserTier } from "./init";
+import { fetchClerkEmails } from "./clerk-users";
 import {
   CLERK_SECRET_KEY_DEV,
   CLERK_SECRET_KEY_PROD,
@@ -108,36 +109,16 @@ export interface OnboardingResponseRow {
 }
 
 async function fetchEmailsForUserIds(userIds: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  if (userIds.length === 0) return map;
+  if (userIds.length === 0) return new Map();
 
   const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
   if (!prodSecretKey) {
     logger.warn("CLERK_SECRET_KEY_PROD not configured; skipping email enrichment");
-    return map;
+    return new Map();
   }
 
-  const client = createClerkClient({ secretKey: prodSecretKey });
-  const CHUNK = 100; // Clerk's getUserList supports batched userId filter
-
-  for (let i = 0; i < userIds.length; i += CHUNK) {
-    const chunk = userIds.slice(i, i + CHUNK);
-    try {
-      const res = await client.users.getUserList({ userId: chunk, limit: chunk.length });
-      for (const u of res.data ?? []) {
-        const primary = u.emailAddresses?.find((e) => e.id === u.primaryEmailAddressId);
-        const email = primary?.emailAddress ?? u.emailAddresses?.[0]?.emailAddress ?? null;
-        if (email) map.set(u.id, email);
-      }
-    } catch (e) {
-      logger.warn("Failed to fetch Clerk users for email enrichment", {
-        error: (e as Error)?.message ?? String(e),
-        chunkSize: chunk.length,
-      });
-    }
-  }
-
-  return map;
+  // Shared batched fetcher; the lifecycle sweep uses the same one.
+  return fetchClerkEmails(userIds, prodSecretKey, "onboarding");
 }
 
 export const getOnboardingResponses = onCall(
@@ -473,9 +454,14 @@ async function syncOnboardingToEmailProviders(
         "user.onboarding_completed",
         {
           userId: uid,
-          teamSize: onboarding.teamSize,
+          // The survey is skippable. An automation branching on teamSize gets a
+          // stable empty string rather than null, matching the contact property.
+          teamSize: onboarding.teamSize ?? "",
           sources: onboarding.sources,
           useCases: onboarding.useCases,
+          skippedSurvey: onboarding.sources.length === 0
+            && onboarding.useCases.length === 0
+            && !onboarding.teamSize,
         },
       );
       if (!eventResult.success) {

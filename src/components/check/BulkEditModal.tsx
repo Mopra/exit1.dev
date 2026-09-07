@@ -18,12 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/Select';
-import CheckIntervalSelector, { formatIntervalLabel } from '../ui/CheckIntervalSelector';
+import CheckIntervalSelector from '../ui/CheckIntervalSelector';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
 import { Slider } from '../ui/slider';
-import { X, Shield, Lock } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { X, Shield } from 'lucide-react';
 import { useAdmin } from '@/hooks/useAdmin';
 import { SEVERITY_LABELS } from '@/lib/severity';
 
@@ -82,9 +81,6 @@ export function BulkEditModal({
   const [severityUseDefault, setSeverityUseDefault] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  // Intervals below the tier floor are now shown locked with the tier that unlocks
-  // them, rather than filtered out of the list. See CheckIntervalSelector.
-  const [lockedInterval, setLockedInterval] = useState<{ seconds: number; tierName: string } | null>(null);
 
   const handleApply = async () => {
     const settings: BulkEditSettings = {};
@@ -169,34 +165,13 @@ export function BulkEditModal({
               </Label>
             </div>
             {updateInterval && (
-              <div className="ml-6 space-y-2">
+              <div className="ml-6">
                 <CheckIntervalSelector
                   value={interval}
-                  onChange={(next) => {
-                    setLockedInterval(null);
-                    setInterval(next);
-                  }}
+                  onChange={setInterval}
                   label=""
                   minSeconds={minIntervalSeconds}
-                  onLockedSelect={(seconds, tierName) => setLockedInterval({ seconds, tierName })}
                 />
-                {lockedInterval && (
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs">
-                    <Lock className="size-3.5 shrink-0 text-primary" />
-                    <span className="text-foreground">
-                      {formatIntervalLabel(lockedInterval.seconds)} checks are on{' '}
-                      {lockedInterval.tierName} and up.
-                    </span>
-                    <Button
-                      asChild
-                      size="sm"
-                      variant="link"
-                      className="h-auto p-0 text-xs font-semibold cursor-pointer"
-                    >
-                      <Link to="/billing?tab=plans">See plans</Link>
-                    </Button>
-                  </div>
-                )}
               </div>
             )}
           </div>

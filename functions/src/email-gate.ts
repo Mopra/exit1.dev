@@ -1,20 +1,29 @@
 /**
- * Pure delivery-gate resolution. No firestore, no firebase-admin, so it can be
- * unit-tested directly (see __tests__/email-gate.test.ts).
+ * Email delivery gate: recipients, folder inheritance and event precedence.
  *
- * This is the same precedence the alert path runs inline in alert.ts,
- * alert-dns.ts and alert-domain.ts. It was extracted so read-only consumers, the
- * alert-coverage sweep and the "nobody will be told" audit, can answer "would this
- * actually be delivered?" without re-deriving the rules.
+ * Pure. No firestore, no firebase-admin, so it is unit-tested directly
+ * (__tests__/email-gate.test.ts) and is the single owner of the folder and
+ * recipient rules: alert-helpers.ts re-exports `resolvePerFolder` and
+ * `getEmailRecipientsForCheck` from here, so the hot alert paths that call those
+ * helpers run this code.
  *
- * IMPORTANT: the hot alert paths still inline their own copies. They were left
- * alone deliberately: five call sites with different surrounding state are not
- * worth refactoring in the same change that adds new consumers, and a mistake
- * there means alerts stop arriving. Any change to the precedence below must be
- * mirrored in those call sites, and vice versa. The frontend has a third copy in
- * src/lib/notification-shared.ts (`willDeliver`) for the same reason.
+ * `eventAllowedForCheck` matches the precedence that alert.ts (uptime, SSL) and
+ * alert-dns.ts inline. It is used by the read-only consumers, the alert-coverage
+ * sweep and the "nobody will be told" audit, so "covered" here means the uptime
+ * alert path would deliver. Those hot paths were deliberately left with their
+ * inline copies: a mistake there stops alerts, and that is not a change to bundle
+ * with new consumers.
+ *
+ * alert-domain.ts is NOT the same gate and must not be folded into this one: it
+ * treats a missing `checkFilter` as send-by-default and an override entry with no
+ * `enabled` flag as opt-in. Domain-expiry coverage would need its own predicate.
+ *
+ * The frontend mirrors this in src/lib/notification-shared.ts (`willDeliver`),
+ * kept in step by hand. Change one, change the other.
  */
 import type { WebhookEvent } from "./types";
+
+type OverrideEntry = { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] };
 
 /** Just enough of a settings document to answer the gate question. */
 export interface GateSettings {
@@ -23,8 +32,8 @@ export interface GateSettings {
   recipient?: string;
   recipients?: string[];
   events?: WebhookEvent[];
-  perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
-  perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
+  perCheck?: Record<string, OverrideEntry>;
+  perFolder?: Record<string, OverrideEntry>;
   checkFilter?: { mode?: "all" | "include"; defaultEvents?: WebhookEvent[] };
 }
 
@@ -33,11 +42,21 @@ export interface GateCheck {
   folder?: string | null;
 }
 
+/** Global recipients only: the `recipients` array, else the legacy `recipient`. */
+export function getGlobalRecipients(settings: Pick<GateSettings, "recipient" | "recipients">): string[] {
+  if (settings.recipients && settings.recipients.length > 0) return settings.recipients;
+  if (settings.recipient) return [settings.recipient];
+  return [];
+}
+
 /**
  * Folder inheritance: exact path first, then each parent. "Production/APIs"
  * matches a "Production" entry when it has no entry of its own.
  */
-export function resolveFolderEntry(settings: GateSettings, folder?: string | null) {
+export function resolveFolderEntry(
+  settings: Pick<GateSettings, "perFolder">,
+  folder?: string | null,
+): OverrideEntry | undefined {
   if (!folder || !settings.perFolder) return undefined;
   const exact = settings.perFolder[folder];
   if (exact) return exact;
@@ -50,17 +69,22 @@ export function resolveFolderEntry(settings: GateSettings, folder?: string | nul
   return undefined;
 }
 
-/** Global + per-folder + per-check recipients, deduplicated case-insensitively. */
+/**
+ * Global + per-folder + per-check recipients, deduplicated case-insensitively.
+ * Folder recipients are always included, whether or not the check has its own
+ * entry: the per-check entry decides whether to send, not who else to copy.
+ */
 export function collectRecipients(settings: GateSettings, check: GateCheck): string[] {
-  const global = settings.recipients?.length
-    ? settings.recipients
-    : settings.recipient ? [settings.recipient] : [];
   const perCheck = settings.perCheck?.[check.id];
   const perFolder = resolveFolderEntry(settings, check.folder);
 
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const raw of [...global, ...(perFolder?.recipients ?? []), ...(perCheck?.recipients ?? [])]) {
+  for (const raw of [
+    ...getGlobalRecipients(settings),
+    ...(perFolder?.recipients ?? []),
+    ...(perCheck?.recipients ?? []),
+  ]) {
     const lower = raw.toLowerCase().trim();
     if (lower && !seen.has(lower)) {
       seen.add(lower);
@@ -76,14 +100,14 @@ export function collectRecipients(settings: GateSettings, check: GateCheck): str
  * Precedence, highest first:
  *   1. perCheck.enabled === true  -> perCheck.events, else the global event list
  *   2. perCheck.enabled === false -> never, even in 'all' mode
- *   3. perFolder.enabled === true/false, same rules
+ *   3. perFolder.enabled === true/false, same rules (only when no perCheck entry)
  *   4. checkFilter.mode === 'all' -> checkFilter.defaultEvents, else global events
  *   5. otherwise (mode 'include', or absent) -> never
  *
- * Rule 5 is the trap worth knowing about: 'include' is the DEFAULT the app writes,
- * so a settings document with a valid recipient and every event ticked still
- * delivers nothing until checks are individually enabled. 386 of 404 production
- * documents are in that state.
+ * Rule 5 is the trap worth knowing about: 'include' was the DEFAULT the app wrote
+ * until the alert-coverage fix, so a settings document with a valid recipient and
+ * every event ticked still delivered nothing until checks were individually
+ * enabled. 386 of 404 production documents were in that state.
  */
 export function eventAllowedForCheck(
   settings: GateSettings | null | undefined,
@@ -113,4 +137,47 @@ export function eventAllowedForCheck(
     return defaults ? defaults.includes(event) : globalAllows;
   }
   return false;
+}
+
+/**
+ * A settings document with every suppressed address removed from every scope.
+ *
+ * The delivery path drops suppressed (bounced) recipients at send time, so a
+ * user whose only address has bounced is configured but unreachable. Coverage
+ * has to see what delivery sees. Returns the same object when nothing changes.
+ */
+export function stripSuppressedRecipients(
+  settings: GateSettings,
+  isSuppressed: (email: string) => boolean,
+): GateSettings {
+  const keep = (list?: string[]) => list?.filter((e) => !isSuppressed(e));
+  const stripEntries = (entries?: Record<string, OverrideEntry>) => {
+    if (!entries) return entries;
+    const out: Record<string, OverrideEntry> = {};
+    for (const [k, v] of Object.entries(entries)) {
+      out[k] = v.recipients ? { ...v, recipients: keep(v.recipients) } : v;
+    }
+    return out;
+  };
+
+  const legacyKept = settings.recipient && !isSuppressed(settings.recipient)
+    ? settings.recipient
+    : undefined;
+
+  return {
+    ...settings,
+    recipient: legacyKept,
+    recipients: keep(settings.recipients),
+    perCheck: stripEntries(settings.perCheck),
+    perFolder: stripEntries(settings.perFolder),
+  };
+}
+
+/** Every address a settings document could ever send to, for a batch suppression lookup. */
+export function allRecipientAddresses(settings: GateSettings): string[] {
+  const out = new Set<string>();
+  for (const e of getGlobalRecipients(settings)) out.add(e);
+  for (const entry of Object.values(settings.perCheck ?? {})) for (const e of entry.recipients ?? []) out.add(e);
+  for (const entry of Object.values(settings.perFolder ?? {})) for (const e of entry.recipients ?? []) out.add(e);
+  return [...out];
 }
