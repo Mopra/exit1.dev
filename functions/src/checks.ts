@@ -3613,10 +3613,13 @@ export const toggleMaintenanceMode = onCall({
     throw new HttpsError("permission-denied", "Insufficient permissions");
   }
 
-  // Tier gating: Nano only
-  const userTier = checkData.userTier || "free";
+  // Tier gating: Nano and up. Read the tier live rather than from the copy
+  // cached on the check document: that copy goes stale (missing on old checks,
+  // not refreshed by every upgrade path) and defaulted to "free", which is the
+  // same drift that silently disabled SMS for Pro users in 2026-08.
+  const userTier = await getUserTierLive(uid);
   if (!isNanoTier(userTier)) {
-    throw new HttpsError("permission-denied", "Maintenance mode requires a Nano subscription");
+    throw new HttpsError("permission-denied", "Maintenance mode requires a Nano or Pro subscription");
   }
 
   // Cannot enable maintenance on a disabled check
@@ -3685,8 +3688,10 @@ export const scheduleMaintenanceWindow = onCall({
   const uid = request.auth?.uid;
   const { checkData } = await validateCheckOwnership(uid, checkId);
 
-  const userTier = checkData.userTier || "free";
-  if (!isNanoTier(userTier)) throw new HttpsError("permission-denied", "Maintenance scheduling requires a Nano subscription");
+  // Live tier, not the stale copy on checkData.userTier. Ownership is already
+  // validated above, so the check's userId is the caller.
+  const userTier = await getUserTierLive(checkData.userId);
+  if (!isNanoTier(userTier)) throw new HttpsError("permission-denied", "Maintenance scheduling requires a Nano or Pro subscription");
 
   const now = Date.now();
   if (!startTime || typeof startTime !== "number" || startTime < now - 60000) {
@@ -3753,8 +3758,9 @@ export const setRecurringMaintenance = onCall({
   const uid = request.auth?.uid;
   const { checkData } = await validateCheckOwnership(uid, checkId);
 
-  const userTier = checkData.userTier || "free";
-  if (!isNanoTier(userTier)) throw new HttpsError("permission-denied", "Recurring maintenance requires a Nano subscription");
+  // Live tier, not the stale copy on checkData.userTier (see above).
+  const userTier = await getUserTierLive(checkData.userId);
+  if (!isNanoTier(userTier)) throw new HttpsError("permission-denied", "Recurring maintenance requires a Nano or Pro subscription");
 
   if (!Array.isArray(daysOfWeek) || daysOfWeek.length === 0 || daysOfWeek.some((d: unknown) => typeof d !== "number" || (d as number) < 0 || (d as number) > 6)) {
     throw new HttpsError("invalid-argument", "daysOfWeek must be a non-empty array of numbers 0-6");
