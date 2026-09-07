@@ -11,6 +11,8 @@
     "deploy": "firebase deploy --only functions",
     "deploy:changed": "node scripts/deploy-changed.mjs",
     "deploy:all": "node scripts/deploy-changed.mjs --all",
+    "secrets:audit": "node scripts/prune-secrets.mjs",
+    "secrets:prune": "node scripts/prune-secrets.mjs --apply",
     "logs": "firebase functions:log"
   },
   "engines": {
