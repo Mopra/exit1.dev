@@ -408,16 +408,12 @@ export const getCheckStatsBigQuery = onCall({
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-    // SECURITY: Stats view is gated to Nano-or-better paid tiers.
-    const { getUserTier } = await import('./init.js');
-    const userTier = await getUserTier(uid);
-    if (userTier !== 'nano' && userTier !== 'pro') {
-      logger.warn(`User ${uid} attempted to access Stats view without a paid subscription (tier: ${userTier})`);
-      throw new HttpsError(
-        "permission-denied",
-        "Statistics view requires a Nano or Pro subscription. Please upgrade to access this feature."
-      );
-    }
+    // No tier gate. Stats over a user's own history are not a plan feature: the
+    // batch variant that powers Reports has never been gated, and the plan
+    // matrix sells no such line. Until 2026-09-07 this refused everything below
+    // Nano, which would have blocked Indie, a paid tier. Ownership is checked
+    // above; the tier only bounds how far back the data goes, which the
+    // retention window handles.
 
     const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
     const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
@@ -589,13 +585,9 @@ export const getCheckHistoryDailySummary = onCall({
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-    // SECURITY: Timeline view is gated to Nano-or-better paid tiers.
-    const { getUserTier } = await import('./init.js');
-    const userTier = await getUserTier(uid);
-    if (userTier !== 'nano' && userTier !== 'pro') {
-      logger.warn(`[getCheckHistoryDailySummary] User ${uid} attempted to access Timeline view without a paid subscription (tier: ${userTier})`);
-      throw new HttpsError("permission-denied", "Timeline view requires a Nano or Pro subscription. Please upgrade to access this feature.");
-    }
+    // No tier gate; see getCheckStatsBigQuery. Daily summaries of the user's
+    // own checks are not a plan feature, and the old Nano-only check would have
+    // refused Indie.
 
     logger.debug(`[getCheckHistoryDailySummary] Calling BigQuery for website ${websiteId}`);
 
