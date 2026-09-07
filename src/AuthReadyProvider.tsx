@@ -19,7 +19,7 @@ export function useAuthReady() {
 }
 
 export function AuthReadyProvider({ children }: { children: React.ReactNode }) {
-  const { getToken, isSignedIn, isLoaded } = useAuth();
+  const { getToken, isSignedIn, isLoaded, userId } = useAuth();
   const [authReady, setAuthReady] = useState(false);
   const [showLoading, setShowLoading] = useState(false);
   const synced = useRef(false);
@@ -44,6 +44,23 @@ export function AuthReadyProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isLoaded || !firebaseLoaded) {
+      return;
+    }
+
+    // The Firebase custom token carries the Clerk user id as its uid, so the two
+    // sessions must name the same person. They drift apart when Clerk swaps the
+    // signed-in user in place without passing through a signed-out state, which
+    // is what dashboard impersonation and multi-session account switching do.
+    // Left alone, the UI reads Clerk's user while every Firestore query and
+    // callable runs as the previous one. Drop the stale Firebase session and
+    // let the sync below mint a token for the current Clerk user.
+    if (isSignedIn && firebaseUser && userId && firebaseUser.uid !== userId) {
+      log('Desync detected: Firebase uid does not match Clerk user, re-syncing', {
+        firebaseUid: firebaseUser.uid,
+        clerkUserId: userId,
+      });
+      synced.current = false;
+      auth.signOut();
       return;
     }
 
@@ -72,7 +89,7 @@ export function AuthReadyProvider({ children }: { children: React.ReactNode }) {
       log('Desync detected: Signing out from Firebase');
       auth.signOut();
     }
-  }, [isLoaded, firebaseLoaded, isSignedIn, firebaseUser, getToken]);
+  }, [isLoaded, firebaseLoaded, isSignedIn, firebaseUser, userId, getToken]);
 
   useEffect(() => {
     if (isLoaded && firebaseLoaded) {
