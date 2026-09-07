@@ -1,7 +1,7 @@
 /**
  * Remote MCP server — Streamable HTTP, stateless, OAuth-protected.
  *
- * Reachable at https://app.exit1.dev/mcp (Hosting rewrite → this function).
+ * Reachable at https://app.exit1.dev/mcp/v1 (Hosting rewrite → this function).
  *
  * Stateless is the right shape for Cloud Functions: every request builds its own
  * Server + transport, handles one JSON-RPC message and exits. No session state
@@ -25,6 +25,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { resolveBearerToken, buildWwwAuthenticate } from "./mcp-oauth";
+import { MCP_ALLOWED_METHODS, isMcpTransportMethod } from "./mcp-http-policy";
 import {
   MCP_TOOLS,
   MCP_TOOLS_BY_NAME,
@@ -154,7 +155,7 @@ export const mcpServer = onRequest(
   },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
-    res.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.set("Access-Control-Allow-Methods", MCP_ALLOWED_METHODS);
     res.set(
       "Access-Control-Allow-Headers",
       "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID"
@@ -190,9 +191,24 @@ export const mcpServer = onRequest(
       return;
     }
 
-    // Stateless mode: no session id, and JSON responses rather than SSE. Cloud
-    // Functions bill for wall-clock and terminate idle streams, so a held-open
-    // SSE channel is exactly what we don't want here.
+    // Only POST goes to the transport. A GET would open the standalone SSE
+    // stream and hold this instance until the function timeout (see
+    // mcp-http-policy.ts for the bill that produced); DELETE has no session to
+    // end. This sits after auth on purpose: the 401 + WWW-Authenticate above is
+    // how clients discover the authorization server, and some probe with GET.
+    if (!isMcpTransportMethod(req.method)) {
+      res.set("Allow", MCP_ALLOWED_METHODS);
+      res.status(405).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Method not allowed" },
+        id: null,
+      });
+      return;
+    }
+
+    // Stateless mode: no session id, and JSON replies to POST rather than an
+    // SSE body. Note that `enableJsonResponse` says nothing about the standalone
+    // GET stream; that is what the 405 above is for.
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
