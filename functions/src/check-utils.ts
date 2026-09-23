@@ -17,6 +17,7 @@ import dns from "dns/promises";
 import { DnsRecordType } from "./types";
 import { normalizeDnsValues } from "./dns-normalize";
 import { assertJsonPath, JsonPathOperator } from "./json-path";
+import { detectWafBlock, describeWafBlock, mayBeWafResponse } from "./waf-block";
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   try {
@@ -42,6 +43,8 @@ type HttpRequestResult = {
   statusMessage?: string;
   headers: Headers;
   bodySnippet?: string;
+  /** True when the body was read (bodySnippet may still be undefined for an empty body). */
+  bodyRead: boolean;
   timings: CheckTimings;
   url: string;
   usedMethod: string;
@@ -334,6 +337,7 @@ export const performHttpRequest = async ({
           statusMessage: res.statusMessage,
           headers: headersFromNode(res.headers),
           bodySnippet,
+          bodyRead: readBody,
           timings,
           url,
           usedMethod,
@@ -946,7 +950,14 @@ export async function checkRestEndpoint(
 
     // Step 11: No redirect following. A 3xx response means the server is reachable (online).
     // Surfacing the redirect status + Location header is more informative than silently following.
-    const runRequest = async (url: string, useRange: boolean, readBody: boolean, method: string, body?: string) =>
+    const runRequest = async (
+      url: string,
+      useRange: boolean,
+      readBody: boolean,
+      method: string,
+      body?: string,
+      timeoutMs: number = totalTimeoutMs
+    ) =>
       performHttpRequest({
         url,
         method,
@@ -954,7 +965,7 @@ export async function checkRestEndpoint(
         body,
         useRange,
         readBody,
-        totalTimeoutMs,
+        totalTimeoutMs: timeoutMs,
         // First observation only. Later hops (redirect chain, https fallback)
         // can point at a different host, and targetIp/targetHostname must stay
         // describing the URL the user actually monitors.
@@ -983,6 +994,20 @@ export async function checkRestEndpoint(
       }
     }
 
+    // Which status codes count as UP. Needed before the retries below so the
+    // WAF body read only happens for a code that would otherwise pass.
+    const hasCustomExpectedCodes = !!website.expectedStatusCodes?.length;
+    const expectedCodes = hasCustomExpectedCodes
+      ? website.expectedStatusCodes!
+      : defaultStatusCodes;
+    // A 403/503 that would count as UP but carries an edge fingerprint may be a
+    // WAF block page standing in for the origin. We need the body to tell, and a
+    // plain website check never reads one (Range GET, socket destroyed).
+    const needsWafBodyRead = (result: HttpRequestResult): boolean =>
+      !result.bodyRead &&
+      expectedCodes.includes(result.statusCode) &&
+      mayBeWafResponse(result.statusCode, result.headers);
+
     if (shouldUseRange && shouldRetryRange(httpResult.statusCode)) {
       logger.debug(`Range GET rejected (${httpResult.statusCode}); retrying without Range for ${requestUrl}`, {
         websiteId: website.id,
@@ -990,7 +1015,15 @@ export async function checkRestEndpoint(
         statusCode: httpResult.statusCode,
         originalUrl: website.url,
       });
-      httpResult = await runRequest(requestUrl, false, shouldReadBody, requestedMethod, requestBody);
+      // A 403 always lands here, so piggyback the WAF body read on the retry
+      // we already pay for instead of adding a third connection later.
+      httpResult = await runRequest(
+        requestUrl,
+        false,
+        shouldReadBody || needsWafBodyRead(httpResult),
+        requestedMethod,
+        requestBody
+      );
     }
 
     if (requestedMethod === "GET" && shouldFallbackToHead(httpResult.statusCode)) {
@@ -1048,6 +1081,38 @@ export async function checkRestEndpoint(
       }
     }
 
+    // Step 11c: Edge firewall block detection. 401/403 count as UP by default so
+    // auth walls read as reachable, but a WAF refusing to forward the probe means
+    // we never saw the origin and must not report UP. Challenges are settled by
+    // headers alone. The block page needs the body; the Range retry above usually
+    // supplied it, but the paths that skip that retry (recheck with Range disabled,
+    // non-GET checks, redirect-chain final hop) fall back to one short, isolated
+    // re-request here. It is diagnostic only: if it fails or answers differently,
+    // the response we already hold stands and no block is inferred.
+    if (needsWafBodyRead(httpResult)) {
+      const remainingMs = startTime + totalTimeoutMs - Date.now();
+      const probeTimeoutMs = Math.min(CONFIG.WAF_PROBE_TIMEOUT_MS, remainingMs);
+      if (probeTimeoutMs >= CONFIG.WAF_PROBE_MIN_BUDGET_MS) {
+        // HEAD cannot carry a body; everything else replays the check's own request.
+        const probeMethod = httpResult.usedMethod === "HEAD" ? "GET" : httpResult.usedMethod;
+        const probeBody = probeMethod === requestedMethod ? requestBody : undefined;
+        try {
+          const probe = await runRequest(httpResult.url, false, true, probeMethod, probeBody, probeTimeoutMs);
+          if (probe.statusCode === httpResult.statusCode) {
+            httpResult = probe;
+          }
+        } catch (probeError) {
+          logger.debug(`WAF body probe failed for ${website.url}; keeping the original response`, {
+            websiteId: website.id,
+            url: httpResult.url,
+            statusCode: httpResult.statusCode,
+            error: probeError instanceof Error ? probeError.message : String(probeError),
+          });
+        }
+      }
+    }
+    const wafBlock = detectWafBlock(httpResult.statusCode, httpResult.headers, httpResult.bodySnippet);
+
     // OPTIMIZATION (Step 5): Extract SSL cert from HTTP socket for HTTPS URLs with stale cache.
     // This avoids opening a separate TLS connection just to read the certificate.
     if (!sslFresh && isHttpsUrl && CONFIG.ENABLE_SECURITY_LOOKUPS && !securityChecks.sslCertificate && httpResult.peerCertificate) {
@@ -1073,10 +1138,6 @@ export async function checkRestEndpoint(
     const responseBody = httpResult.bodySnippet;
     
     // Check if status code is in expected range
-    const hasCustomExpectedCodes = !!website.expectedStatusCodes?.length;
-    const expectedCodes = hasCustomExpectedCodes
-      ? website.expectedStatusCodes!
-      : defaultStatusCodes;
     const statusCodeValid = expectedCodes.includes(httpResult.statusCode);
     
     // Validate response body if specified.
@@ -1134,9 +1195,12 @@ export async function checkRestEndpoint(
     // Always compute the raw categorization for redirect detection,
     // then optionally override to UP for custom expected status codes.
     const rawDetailedStatus = categorizeStatusCode(httpResult.statusCode);
-    const detailedStatus = (hasCustomExpectedCodes && statusCodeValid)
-      ? 'UP' as const
-      : rawDetailedStatus;
+    // A WAF block page is DOWN whatever the expected codes say: the origin was never reached.
+    const detailedStatus = wafBlock
+      ? 'DOWN' as const
+      : (hasCustomExpectedCodes && statusCodeValid)
+        ? 'UP' as const
+        : rawDetailedStatus;
     // Step 11: Capture redirect Location header for UI display
     // Use rawDetailedStatus so we capture Location even when detailedStatus is overridden to UP
     const redirectLocation = rawDetailedStatus === 'REDIRECT'
@@ -1200,19 +1264,30 @@ export async function checkRestEndpoint(
       }
     }
 
-    // For backward compatibility, map to online/offline
-    // If user explicitly configured expectedStatusCodes and the response matches, treat as online
-    // regardless of categorizeStatusCode (e.g. user expects 404 → should be UP, not DOWN).
-    // Otherwise fall back to categorization: UP/REDIRECT are online, others are offline.
-    const statusBasedOnline = hasCustomExpectedCodes
-      ? statusCodeValid
-      : (detailedStatus === 'UP' || detailedStatus === 'REDIRECT');
-    const isOnline = statusBasedOnline && statusCodeValid && bodyValidationPassed && redirectValidationPassed;
+    // For backward compatibility, map to online/offline. detailedStatus already
+    // folds in custom expected codes (a matching code is UP even when
+    // categorizeStatusCode says otherwise, e.g. an expected 404) and the WAF
+    // override (DOWN), so it is the single source of truth here.
+    const isOnline =
+      (detailedStatus === 'UP' || detailedStatus === 'REDIRECT') &&
+      statusCodeValid && bodyValidationPassed && redirectValidationPassed;
 
     // Provide a useful, stable error string for non-UP HTTP responses or validation failures.
     // This helps users understand issues like 502/504 even when we apply transient suppression higher up.
     let error: string | undefined;
-    if (!redirectValidationPassed) {
+    if (wafBlock) {
+      // Name the user agent that was actually sent: a user-supplied header wins
+      // over the default whatever its key casing, as it does in Node's request.
+      const sentUserAgent = Object.entries(requestHeaders).reduce(
+        (ua, [key, value]) => (key.toLowerCase() === 'user-agent' ? value : ua),
+        CONFIG.USER_AGENT
+      );
+      error = describeWafBlock(wafBlock, httpResult.statusCode, sentUserAgent);
+      // Keep the redirect diagnostics a redirect check exists to surface.
+      if (!redirectValidationPassed && redirectValidationError) {
+        error = `${error} ${redirectValidationError}.`;
+      }
+    } else if (!redirectValidationPassed) {
       error = redirectValidationError;
     } else if (detailedStatus === 'DOWN' && !statusCodeValid) {
       error = `HTTP ${httpResult.statusCode}${httpResult.statusMessage ? `: ${httpResult.statusMessage}` : ''}`;

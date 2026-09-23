@@ -196,6 +196,12 @@ export const CONFIG = {
   
   // User agent for HTTP requests
   USER_AGENT: 'Exit1-Website-Monitor/1.0',
+
+  // WAF block-page detection: the fallback body re-request on an edge 403/503.
+  // Edge block pages arrive in tens of ms, so a short cap is plenty; the probe
+  // is skipped entirely when less than the minimum budget is left in the check.
+  WAF_PROBE_TIMEOUT_MS: 5000,
+  WAF_PROBE_MIN_BUDGET_MS: 1000,
   
   // Check interval - 2 minutes minimum (scheduler cadence)
   CHECK_INTERVAL_MINUTES: 2,
