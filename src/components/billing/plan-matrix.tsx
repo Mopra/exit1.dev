@@ -119,8 +119,10 @@ export function PlanPrice({
 interface PlanCardProps {
   entry: PlanMatrixEntry
   billingPeriod: BillingPeriod
-  /** Adds a colored glow + "Most popular" badge in the top-right. */
+  /** Adds a colored glow + a badge in the top-right. */
   highlighted?: boolean
+  /** Text of the highlight badge. */
+  highlightLabel?: string
   /** Marks the card as the user's current plan (adds ring + inline badge). */
   isCurrent?: boolean
   cta: ReactNode
@@ -138,6 +140,7 @@ export function PlanCard({
   entry,
   billingPeriod,
   highlighted = false,
+  highlightLabel = "Most popular",
   isCurrent = false,
   cta,
   ctaNote,
@@ -163,7 +166,7 @@ export function PlanCard({
           )}
         >
           <Sparkles className="h-3 w-3" />
-          Most popular
+          {highlightLabel}
         </Badge>
       )}
 

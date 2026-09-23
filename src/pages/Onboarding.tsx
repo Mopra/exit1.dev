@@ -33,7 +33,6 @@ import {
   AlertCircle,
   BellRing,
   Mail,
-  ChevronDown,
   ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -53,7 +52,7 @@ import {
   findClerkPlan,
   findPlanEntry,
   paidCtaLabel,
-  recommendPlans,
+  recommendPlan,
   trialNote,
   type BillingPeriod,
   type PlanKey,
@@ -576,8 +575,6 @@ export default function Onboarding() {
   // Onboarding always shows annual by default (matches the best per-month
   // price), but users can switch to monthly before checkout.
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>('annual');
-  // The picker leads with two recommended cards; this reveals all four.
-  const [showAllPlans, setShowAllPlans] = useState(false);
 
   const toggleMulti = (key: 'sources' | 'useCases', value: string) => {
     setAnswers((prev) => {
@@ -817,23 +814,20 @@ export default function Onboarding() {
     );
   }
 
-  // The plan grid needs more room than the narrative steps above. Two recommended
-  // cards fit max-w-4xl comfortably; all four need the full width. Paid users never
+  // The plan grid needs more room than the narrative steps above: all four cards
+  // need the full width. Paid users never
   // reach either layout (they see the short "already subscribed" confirmation), so
   // only widen when we're actually rendering the grid.
   const isPlanGridVisible = step === STEP_PLAN && !paid;
   const planWidthClass = !isPlanGridVisible
     ? 'max-w-2xl'
-    : showAllPlans ? 'max-w-7xl' : 'max-w-4xl';
+    : 'max-w-7xl';
 
-  // Which two cards to lead with, from the answers given two screens earlier.
-  const recommendation = recommendPlans({
+  // Which card to badge as recommended, from the answers given two screens earlier.
+  const recommendation = recommendPlan({
     useCases: answers.useCases,
     teamSize: answers.teamSize,
   });
-  const visiblePlans = showAllPlans
-    ? PLAN_MATRIX
-    : [findPlanEntry(recommendation.primary), findPlanEntry(recommendation.secondary)];
 
   return (
     <div className="flex flex-col items-center px-4 py-6 sm:py-10 overflow-y-auto">
@@ -1227,12 +1221,10 @@ export default function Onboarding() {
           <div>
             <div className="text-center mb-6">
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
-                {showAllPlans ? 'Choose your plan' : 'Our pick for you'}
+                Choose your plan
               </h1>
               <p className="text-muted-foreground text-base">
-                {showAllPlans
-                  ? 'You can change this anytime from the billing page.'
-                  : recommendation.reason}
+                {recommendation.reason} You can change this anytime.
               </p>
             </div>
 
@@ -1247,20 +1239,14 @@ export default function Onboarding() {
               </div>
             )}
 
-            <div
-              className={cn(
-                'grid grid-cols-1 gap-4 w-full',
-                showAllPlans ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-2',
-              )}
-            >
-              {visiblePlans.map((entry) => (
+            <div className="grid grid-cols-1 gap-4 w-full md:grid-cols-2 xl:grid-cols-4">
+              {PLAN_MATRIX.map((entry) => (
                 <PlanCard
                   key={entry.key}
                   entry={entry}
                   billingPeriod={billingPeriod}
-                  highlighted={
-                    showAllPlans ? entry.key === 'pro' : entry.key === recommendation.primary
-                  }
+                  highlighted={entry.key === recommendation.recommended}
+                  highlightLabel="Recommended"
                   ctaNote={trialNote(entry, billingPeriod)}
                   cta={renderOnboardingCta({
                     entry,
@@ -1277,25 +1263,6 @@ export default function Onboarding() {
               ))}
             </div>
 
-            {/*
-              Nothing is hidden, it is just not all shown at once. Four
-              near-identical cards is four times the reading for a decision that in
-              practice resolves to Free or Pro: on the current lineup Indie has one
-              customer and Nano has four.
-            */}
-            {!showAllPlans && (
-              <div className="flex justify-center mt-5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setShowAllPlans(true)}
-                  className="gap-1.5 cursor-pointer text-muted-foreground"
-                >
-                  Compare all {PLAN_MATRIX.length} plans
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
           </div>
         )}
 

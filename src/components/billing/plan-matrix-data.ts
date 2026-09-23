@@ -194,23 +194,20 @@ export function annualisedPrice(entry: PlanMatrixEntry, period: BillingPeriod): 
 // ---- Plan recommendation ----
 //
 // The onboarding survey asks team size and use case on the two screens directly
-// before the plan picker, and the picker then showed all four cards identically to
-// everyone. Measured against the first 259 users through the flow, those answers
-// are the strongest conversion predictors available: teams of 6 to 20 converted at
-// 45% and 2 to 5 at 22%, against 6% for solo; client-sites and SaaS use cases at
-// 18% each, against 2% for personal or side projects.
+// before the plan picker. Measured against the first 259 users through the flow,
+// those answers are the strongest conversion predictors available: teams of 6 to
+// 20 converted at 45% and 2 to 5 at 22%, against 6% for solo; client-sites and
+// SaaS use cases at 18% each, against 2% for personal or side projects.
 //
-// So the picker now leads with two cards chosen from the answers, with the full
-// four behind a "compare all plans" toggle. Nothing is hidden, and nobody is
-// pitched a team plan for a hobby project or shown Free first when they just said
-// they run a twenty-person agency.
+// The picker always shows all four plans. The answers only decide which card
+// carries the "Recommended" badge. An earlier version showed just two cards and
+// hid the rest behind a "compare all plans" toggle, which read as an upsell when
+// the guess landed on Pro and left new users wondering what was being kept back.
 
 export interface PlanRecommendation {
-  /** Highlighted first card. */
-  primary: PlanKey
-  /** Shown beside the primary. Always a genuine alternative, never a duplicate. */
-  secondary: PlanKey
-  /** One line under the heading explaining why these two. */
+  /** The card that gets the "Recommended" badge. */
+  recommended: PlanKey
+  /** One line under the heading explaining the pick. */
   reason: string
 }
 
@@ -218,57 +215,38 @@ const TEAM_ANSWERS_MEANING_TEAM = new Set(["2_5", "6_20", "21_100", "100_plus"])
 const USE_CASES_MEANING_BUSINESS = new Set(["client_sites", "saas", "agency", "ecommerce"])
 
 /**
- * Pick the two plans to lead with. Falls back to Free plus Pro when the survey was
- * skipped, which is also the honest default: those are the two tiers with real
- * customers behind them.
+ * Pick the plan to badge as recommended. Anyone without a team or customer-facing
+ * work, including people who skipped the survey, gets Indie: it is the smallest
+ * paid step, and pitching Pro to hobbyists converted 2% of 95 people.
  */
-export function recommendPlans(answers: {
+export function recommendPlan(answers: {
   useCases: string[]
   teamSize: string | null
 }): PlanRecommendation {
   const isTeam = answers.teamSize !== null && TEAM_ANSWERS_MEANING_TEAM.has(answers.teamSize)
   const isBusiness = answers.useCases.some((u) => USE_CASES_MEANING_BUSINESS.has(u))
-  const isPersonalOnly =
-    answers.useCases.length > 0 && answers.useCases.every((u) => u === "personal")
 
-  // A team running customer-facing work is the segment that actually buys Pro, and
-  // the one that needs the things only Pro has: extra recipients, SMS, all channels.
-  if (isTeam && isBusiness) {
-    return {
-      primary: "pro",
-      secondary: "nano",
-      reason: "Built for teams watching customer-facing services.",
-    }
-  }
+  // Teams are the segment that actually buys Pro, and the one that needs what only
+  // Pro has: extra recipients, SMS, all channels.
   if (isTeam) {
     return {
-      primary: "pro",
-      secondary: "free",
-      reason: "Shared alerting and faster checks for a team.",
+      recommended: "pro",
+      reason: isBusiness
+        ? "Pro is built for teams watching customer-facing services."
+        : "Pro adds shared alerting and faster checks for a team.",
     }
   }
-  // Solo, but running something real for someone else. Nano is the destination
-  // tier: 30-second checks, domain intelligence, region pinning.
+  // Solo, but running something real for someone else. Nano has the pieces that
+  // matter there: 30-second checks, domain expiry alerts, region choice.
   if (isBusiness) {
     return {
-      primary: "nano",
-      secondary: "free",
-      reason: "Faster checks and domain alerts for work that has customers.",
-    }
-  }
-  // Explicitly a hobby. Pitching Pro here converted 2% of 95 people; lead with the
-  // free tier and offer the cheap step up rather than the team plan.
-  if (isPersonalOnly) {
-    return {
-      primary: "free",
-      secondary: "indie",
-      reason: "Free covers side projects properly. Indie just makes them faster.",
+      recommended: "nano",
+      reason: "Nano adds faster checks and domain alerts for work that has customers.",
     }
   }
   return {
-    primary: "free",
-    secondary: "pro",
-    reason: "Start free, or go straight to everything.",
+    recommended: "indie",
+    reason: "Free covers side projects. Indie checks every minute instead of every five.",
   }
 }
 
