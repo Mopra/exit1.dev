@@ -7,6 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
+- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-10 Round (human left): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-10 Round: nothing to do. Discord reply to kairandles is done; only the [!] npm publish of exit1-mcp 0.3.1 waits on the human. No aim open.
 - 2026-10-10 Round (human left): nothing to do. Only the two [!] human items remain (npm publish 0.3.1, Discord paste); no aim open, so no new quests.
