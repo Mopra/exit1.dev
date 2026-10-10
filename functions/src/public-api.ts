@@ -423,6 +423,22 @@ function parseDateParam(dateStr: string): number {
   throw new Error(`Invalid date format: ${dateStr}. Use ISO 8601 (2023-12-21T22:30:56Z) or Unix timestamp`);
 }
 
+// Values the list endpoint's ?status= accepts; anything else used to reach
+// Firestore and 500 on a missing index.
+const CHECK_STATUS_FILTERS = new Set(['all', 'online', 'offline', 'degraded', 'unknown']);
+
+function sanitizeDomainExpiry(value: unknown) {
+  if (!value || typeof value !== 'object') return null;
+  const d = value as { enabled?: boolean; domain?: string; registrar?: string; expiryDate?: number; daysUntilExpiry?: number };
+  if (!d.enabled) return null;
+  return {
+    domain: d.domain ?? null,
+    registrar: d.registrar ?? null,
+    expiryDate: d.expiryDate ?? null,
+    daysUntilExpiry: d.daysUntilExpiry ?? null,
+  };
+}
+
 function sanitizeCheck(doc: { id: string; [key: string]: unknown }) {
   return {
     id: doc.id,
@@ -432,11 +448,21 @@ function sanitizeCheck(doc: { id: string; [key: string]: unknown }) {
     lastChecked: doc.lastChecked,
     responseTime: doc.responseTime ?? null,
     lastStatusCode: doc.lastStatusCode ?? null,
+    type: doc.type || 'website',
+    // Minutes between checks.
+    checkFrequency: doc.checkFrequency ?? null,
+    region: doc.checkRegion ?? null,
+    folder: doc.folder || null,
+    severity: doc.severity ?? null,
+    lastError: doc.lastError ?? null,
     disabled: !!doc.disabled,
     maintenanceMode: !!doc.maintenanceMode,
+    maintenanceUntil: doc.maintenanceMode ? (doc.maintenanceExpiresAt ?? null) : null,
     maintenanceScheduledStart: doc.maintenanceScheduledStart || null,
     maintenanceRecurring: doc.maintenanceRecurring || null,
     sslCertificate: doc.sslCertificate || null,
+    domainExpiry: sanitizeDomainExpiry(doc.domainExpiry),
+    lastPingAt: doc.type === 'heartbeat' ? (doc.lastPingAt ?? null) : undefined,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -554,21 +580,21 @@ function enforceWriteRateLimit(
   const perMinute = writeRateLimiter.consume(`write:key:${keyDocId}`, limits.perKeyWritePerMinute);
   if (!perMinute.allowed) {
     applyRateLimitHeaders(res, perMinute);
-    res.status(429).json({ error: `Write rate limit exceeded. Maximum ${limits.perKeyWritePerMinute} write operations per minute.` });
+    res.status(429).json({ error: `Write rate limit exceeded. Maximum ${limits.perKeyWritePerMinute} write operations per minute.`, retryAfter: perMinute.retryAfterSeconds });
     return false;
   }
 
   const dailyKey = dailyWriteQuotaLimiter.consume(`write:daily:key:${keyDocId}`, limits.perKeyWriteDaily);
   if (!dailyKey.allowed) {
     applyRateLimitHeaders(res, dailyKey);
-    res.status(429).json({ error: `Daily write quota exceeded for this credential. Limit: ${limits.perKeyWriteDaily} writes/day.` });
+    res.status(429).json({ error: `Daily write quota exceeded for this credential. Limit: ${limits.perKeyWriteDaily} writes/day.`, retryAfter: dailyKey.retryAfterSeconds });
     return false;
   }
 
   const dailyUser = dailyWriteQuotaLimiter.consume(`write:daily:user:${userId}`, limits.perUserWriteDaily);
   if (!dailyUser.allowed) {
     applyRateLimitHeaders(res, dailyUser);
-    res.status(429).json({ error: `Daily write quota exceeded. Limit: ${limits.perUserWriteDaily} writes/day across all credentials.` });
+    res.status(429).json({ error: `Daily write quota exceeded. Limit: ${limits.perUserWriteDaily} writes/day across all credentials.`, retryAfter: dailyUser.retryAfterSeconds });
     return false;
   }
 
@@ -2027,7 +2053,7 @@ export const publicApi = onRequest({
     const ipDecision = ipGuardLimiter.consume(`ip:${clientIp}`, RATE_LIMITS.ipPerMinute);
     applyRateLimitHeaders(res, ipDecision);
     if (!ipDecision.allowed) {
-      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: ipDecision.retryAfterSeconds });
       return;
     }
 
@@ -2109,7 +2135,8 @@ export const publicApi = onRequest({
       res.status(429).json({
         error: `Daily quota exceeded for this credential. Limit: ${limits.perKeyDaily} requests/day. Resets at midnight UTC.`,
         quotaLimit: limits.perKeyDaily,
-        quotaReset: dailyKeyQuota.resetAtMs
+        quotaReset: dailyKeyQuota.resetAtMs,
+        retryAfter: dailyKeyQuota.retryAfterSeconds
       });
       logger.warn(`Credential ${keyDocId} exceeded daily quota (${limits.perKeyDaily} req/day)`);
       return;
@@ -2121,7 +2148,8 @@ export const publicApi = onRequest({
       res.status(429).json({
         error: `Daily user quota exceeded. Limit: ${limits.perUserDaily} requests/day across all credentials. Resets at midnight UTC.`,
         quotaLimit: limits.perUserDaily,
-        quotaReset: dailyUserQuota.resetAtMs
+        quotaReset: dailyUserQuota.resetAtMs,
+        retryAfter: dailyUserQuota.retryAfterSeconds
       });
       logger.warn(`User ${userId} exceeded daily quota (${limits.perUserDaily} req/day)`);
       return;
@@ -2134,7 +2162,7 @@ export const publicApi = onRequest({
     const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDocId}:total`, limits.perKeyTotalPerMinute);
     if (!globalKeyDecision.allowed) {
       applyRateLimitHeaders(res, globalKeyDecision);
-      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: globalKeyDecision.retryAfterSeconds });
       return;
     }
 
@@ -2142,7 +2170,7 @@ export const publicApi = onRequest({
     const endpointDecision = apiKeyLimiter.consume(`key:${keyDocId}:route:${routeName}`, limits.perEndpointPerMinute);
     applyRateLimitHeaders(res, endpointDecision);
     if (!endpointDecision.allowed) {
-      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: endpointDecision.retryAfterSeconds });
       return;
     }
 
@@ -2279,6 +2307,10 @@ export const publicApi = onRequest({
       const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, 100);
       const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1);
       const statusFilter = String(req.query.status || 'all');
+      if (!CHECK_STATUS_FILTERS.has(statusFilter)) {
+        res.status(400).json({ error: `Invalid status. Allowed: ${[...CHECK_STATUS_FILTERS].join(', ')}` });
+        return;
+      }
       const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
       const cursor = parseCursor(cursorParam);
       const includeTotal = String(req.query.includeTotal || 'true') !== 'false';
@@ -2414,8 +2446,9 @@ export const publicApi = onRequest({
           const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
           return {
             id: entry.id || '',
+            checkId: entry.website_id || checkId,
+            // Deprecated alias of checkId, kept so existing integrations don't break.
             websiteId: entry.website_id || checkId,
-            userId: entry.user_id || userId,
             timestamp: timestampValue,
             status: entry.status || 'unknown',
             responseTime: entry.response_time ?? undefined,
