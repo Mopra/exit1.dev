@@ -1,6 +1,7 @@
 // Core website monitoring types
 
 import type { SSLAlertState } from './ssl-alert-state';
+import type { ResponseValidation } from './response-validation';
 
 // Check importance scale: P1 = critical (page me), P5 = minimal (badge only).
 // Mirrors the five Pushover priorities one-to-one.
@@ -84,12 +85,8 @@ export interface Website {
   requestHeaders?: Record<string, string>; // Custom headers for REST requests
   requestBody?: string; // JSON string for POST/PUT requests
   cacheControlNoCache?: boolean;
-  responseValidation?: {
-    containsText?: string[]; // Text that should be present in response
-    jsonPath?: string; // JSONPath expression to validate response
-    expectedValue?: unknown; // Expected value for JSONPath validation
-    jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists'; // How to compare the JSONPath result against expectedValue (default: equals)
-  };
+  // Semantics live in response-validation.ts.
+  responseValidation?: ResponseValidation;
 
   // Redirect validation (for redirect check type)
   redirectValidation?: {

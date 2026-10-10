@@ -33,6 +33,7 @@ import { CheckRegion, pickNearestRegion, peerRegionFor } from "./check-region";
 import { callPeerConfirm, isPeerEnabledForCheck, type PeerConfirmResult } from "./peer-confirm";
 import { sendPeerDisagreementEmail } from "./peer-disagreement-notify";
 import { handleCheckDisabled } from "./check-events";
+import { hasResponseValidation as hasResponseValidationConfig } from "./response-validation";
 import {
   normalizeCheckType,
   getCanonicalUrlKey,
@@ -1210,8 +1211,7 @@ export async function processOneCheck(
       ? Math.floor(check.lastHistoryAt / historySampleMs) : 0;
     const isHistorySampleDue = histBucket > lastHistBucket;
 
-    const hasResponseValidation = check.responseValidation &&
-      (check.responseValidation.containsText?.length || check.responseValidation.jsonPath || check.responseValidation.expectedValue !== undefined);
+    const hasResponseValidation = hasResponseValidationConfig(check.responseValidation);
     const hasRequestHeaders = check.requestHeaders && Object.keys(check.requestHeaders).length > 0;
 
     const isVpsRegion = region.startsWith('vps-');

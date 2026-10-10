@@ -16,7 +16,7 @@ import { cachedLookup } from "./dns-cache";
 import dns from "dns/promises";
 import { DnsRecordType } from "./types";
 import { normalizeDnsValues } from "./dns-normalize";
-import { assertJsonPath, JsonPathOperator } from "./json-path";
+import { evaluateResponseValidation } from "./response-validation";
 import { detectWafBlock, describeWafBlock, mayBeWafResponse } from "./waf-block";
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
@@ -1144,46 +1144,13 @@ export async function checkRestEndpoint(
     let bodyValidationPassed = true;
     let bodyValidationReason: string | undefined;
     if (responseBody && website.responseValidation) {
-      const validation = website.responseValidation;
-
-      // Check for required text in response (case-insensitive substring).
-      if (validation.containsText && validation.containsText.length > 0) {
-        const missing = validation.containsText.find(
-          text => !responseBody!.toLowerCase().includes(text.toLowerCase())
-        );
-        if (missing !== undefined) {
-          bodyValidationPassed = false;
-          bodyValidationReason = `Response did not contain expected text: ${JSON.stringify(missing)}`;
-        }
-      }
-
-      // JSONPath assertion against the parsed response body.
-      if (bodyValidationPassed && validation.jsonPath) {
-        let parsedBody: unknown;
-        let parseFailed = false;
-        try {
-          parsedBody = JSON.parse(responseBody);
-        } catch {
-          parseFailed = true;
-        }
-        if (parseFailed) {
-          bodyValidationPassed = false;
-          bodyValidationReason = responseBody.length >= MAX_BODY_SNIPPET_BYTES
-            ? `JSONPath validation failed: response body is not valid JSON within the first ${MAX_BODY_SNIPPET_BYTES} bytes`
-            : 'JSONPath validation failed: response body is not valid JSON';
-        } else {
-          const assertion = assertJsonPath(
-            parsedBody,
-            validation.jsonPath,
-            (validation.jsonPathOperator as JsonPathOperator | undefined) ?? 'equals',
-            validation.expectedValue
-          );
-          if (!assertion.passed) {
-            bodyValidationPassed = false;
-            bodyValidationReason = assertion.reason ?? `JSONPath validation failed: ${validation.jsonPath}`;
-          }
-        }
-      }
+      const result = evaluateResponseValidation(
+        responseBody,
+        website.responseValidation,
+        MAX_BODY_SNIPPET_BYTES
+      );
+      bodyValidationPassed = result.passed;
+      bodyValidationReason = result.reason;
     }
     
     // Log validation results for debugging

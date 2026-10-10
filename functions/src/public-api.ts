@@ -52,6 +52,7 @@ import {
 } from "./public-api-status";
 import { normalizeFolderParam, folderRange, folderMatches, folderPathError, compareByOrder, pageInMemory } from "./public-api-folder";
 import { canAccessCheck, canCreateInFolder, isKeyExpired, readStoredAccess, type KeyAccess } from "./public-api-access";
+import { JSON_PATH_OPERATORS, parseJsonPath, type JsonPathOperator } from "./json-path";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -579,6 +580,23 @@ function validateRequestHeaders(headers: unknown): { valid: boolean; error?: str
   return { valid: true, sanitized };
 }
 
+const MAX_JSON_ASSERTIONS = 20;
+const NUMERIC_JSON_OPERATORS = new Set(['greater_than', 'greater_or_equal', 'less_than', 'less_or_equal']);
+
+const isNumeric = (v: unknown): boolean =>
+  (typeof v === 'number' && Number.isFinite(v)) ||
+  (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v.trim())));
+
+function validateExpectedValue(ev: unknown, field: string): string | null {
+  if (typeof ev === 'string' && ev.length > 1000) {
+    return `${field} string exceeds max length (1000 chars)`;
+  }
+  if (typeof ev === 'object' && ev !== null && JSON.stringify(ev).length > 2000) {
+    return `${field} object is too large`;
+  }
+  return null;
+}
+
 function validateResponseValidation(rv: unknown): { valid: boolean; error?: string; sanitized?: Record<string, unknown> } {
   if (rv === undefined || rv === null) return { valid: true, sanitized: {} };
   if (typeof rv !== 'object' || Array.isArray(rv)) {
@@ -602,24 +620,72 @@ function validateResponseValidation(rv: unknown): { valid: boolean; error?: stri
     sanitized.jsonPath = obj.jsonPath;
   }
   if (obj.expectedValue !== undefined) {
-    const ev = obj.expectedValue;
-    if (typeof ev === 'string' && ev.length > 1000) {
-      return { valid: false, error: 'responseValidation.expectedValue string exceeds max length (1000 chars)' };
-    }
-    if (typeof ev === 'object' && ev !== null) {
-      const serialized = JSON.stringify(ev);
-      if (serialized.length > 2000) {
-        return { valid: false, error: 'responseValidation.expectedValue object is too large' };
-      }
-    }
-    sanitized.expectedValue = ev;
+    const evError = validateExpectedValue(obj.expectedValue, 'responseValidation.expectedValue');
+    if (evError) return { valid: false, error: evError };
+    sanitized.expectedValue = obj.expectedValue;
   }
   if (obj.jsonPathOperator !== undefined) {
-    const allowed = ['equals', 'not_equals', 'contains', 'exists'];
-    if (typeof obj.jsonPathOperator !== 'string' || !allowed.includes(obj.jsonPathOperator)) {
-      return { valid: false, error: `responseValidation.jsonPathOperator must be one of: ${allowed.join(', ')}` };
+    if (typeof obj.jsonPathOperator !== 'string' || !JSON_PATH_OPERATORS.includes(obj.jsonPathOperator as JsonPathOperator)) {
+      return { valid: false, error: `responseValidation.jsonPathOperator must be one of: ${JSON_PATH_OPERATORS.join(', ')}` };
     }
     sanitized.jsonPathOperator = obj.jsonPathOperator;
+  }
+  for (const key of ['containsTextMode', 'jsonAssertionsMode'] as const) {
+    if (obj[key] !== undefined) {
+      if (obj[key] !== 'all' && obj[key] !== 'any') {
+        return { valid: false, error: `responseValidation.${key} must be "all" or "any"` };
+      }
+      sanitized[key] = obj[key];
+    }
+  }
+  if (obj.notContainsText !== undefined) {
+    if (!Array.isArray(obj.notContainsText) || !obj.notContainsText.every((v: unknown) => typeof v === 'string')) {
+      return { valid: false, error: 'responseValidation.notContainsText must be an array of strings' };
+    }
+    if (obj.notContainsText.length > 10) {
+      return { valid: false, error: 'responseValidation.notContainsText: max 10 entries' };
+    }
+    sanitized.notContainsText = obj.notContainsText;
+  }
+  if (obj.jsonAssertions !== undefined) {
+    if (!Array.isArray(obj.jsonAssertions)) {
+      return { valid: false, error: 'responseValidation.jsonAssertions must be an array' };
+    }
+    if (obj.jsonAssertions.length > MAX_JSON_ASSERTIONS) {
+      return { valid: false, error: `responseValidation.jsonAssertions: max ${MAX_JSON_ASSERTIONS} entries` };
+    }
+    const assertions: Record<string, unknown>[] = [];
+    for (let i = 0; i < obj.jsonAssertions.length; i++) {
+      const a = obj.jsonAssertions[i] as Record<string, unknown>;
+      const at = `responseValidation.jsonAssertions[${i}]`;
+      if (typeof a !== 'object' || a === null || Array.isArray(a)) {
+        return { valid: false, error: `${at} must be an object` };
+      }
+      if (typeof a.path !== 'string' || a.path.trim() === '' || a.path.length > 500) {
+        return { valid: false, error: `${at}.path must be a non-empty string (max 500 chars)` };
+      }
+      if (parseJsonPath(a.path) === null) {
+        return { valid: false, error: `${at}.path is not a supported JSONPath (dot paths, [0] indices and ['key'] only)` };
+      }
+      const operator = a.operator ?? 'equals';
+      if (typeof operator !== 'string' || !JSON_PATH_OPERATORS.includes(operator as JsonPathOperator)) {
+        return { valid: false, error: `${at}.operator must be one of: ${JSON_PATH_OPERATORS.join(', ')}` };
+      }
+      const assertion: Record<string, unknown> = { path: a.path, operator };
+      if (operator !== 'exists') {
+        if (a.expectedValue === undefined) {
+          return { valid: false, error: `${at}.expectedValue is required for operator ${operator}` };
+        }
+        const evError = validateExpectedValue(a.expectedValue, `${at}.expectedValue`);
+        if (evError) return { valid: false, error: evError };
+        if (NUMERIC_JSON_OPERATORS.has(operator) && !isNumeric(a.expectedValue)) {
+          return { valid: false, error: `${at}.expectedValue must be a number for operator ${operator}` };
+        }
+        assertion.expectedValue = a.expectedValue;
+      }
+      assertions.push(assertion);
+    }
+    sanitized.jsonAssertions = assertions;
   }
   return { valid: true, sanitized };
 }

@@ -13,14 +13,33 @@
  * unbounded-recursion surface of a full JSONPath engine.
  */
 
-export type JsonPathOperator = "equals" | "not_equals" | "contains" | "exists";
+export type JsonPathOperator =
+  | "equals"
+  | "not_equals"
+  | "contains"
+  | "exists"
+  | "greater_than"
+  | "greater_or_equal"
+  | "less_than"
+  | "less_or_equal";
 
 export const JSON_PATH_OPERATORS: readonly JsonPathOperator[] = [
   "equals",
   "not_equals",
   "contains",
   "exists",
+  "greater_than",
+  "greater_or_equal",
+  "less_than",
+  "less_or_equal",
 ];
+
+const NUMERIC_OPERATORS: Record<string, { symbol: string; test: (a: number, b: number) => boolean }> = {
+  greater_than: { symbol: ">", test: (a, b) => a > b },
+  greater_or_equal: { symbol: ">=", test: (a, b) => a >= b },
+  less_than: { symbol: "<", test: (a, b) => a < b },
+  less_or_equal: { symbol: "<=", test: (a, b) => a <= b },
+};
 
 export interface JsonPathAssertionResult {
   passed: boolean;
@@ -133,6 +152,20 @@ const valuesEqual = (a: unknown, b: unknown): boolean => {
   return false;
 };
 
+/**
+ * Numeric coercion for the comparison operators: JSON numbers, and numeric
+ * strings (a form-entered "300000", or an API that sends numbers as strings).
+ * Booleans, null, empty strings and objects are not numbers.
+ */
+const toNumber = (v: unknown): number | null => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v.trim());
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+};
+
 const display = (v: unknown): string => {
   if (v === undefined) return "undefined";
   if (typeof v === "string") return JSON.stringify(v);
@@ -159,6 +192,24 @@ export function assertJsonPath(
     return { passed: false, reason: `Unsupported or invalid JSONPath: ${path}` };
   }
   const resolved = resolveJsonPath(root, path);
+
+  const numeric = NUMERIC_OPERATORS[operator];
+  if (numeric) {
+    if (resolved === undefined) {
+      return { passed: false, reason: `JSONPath ${path} did not match anything` };
+    }
+    const expected = toNumber(expectedValue);
+    if (expected === null) {
+      return { passed: false, reason: `JSONPath ${path}: expected value ${display(expectedValue)} is not a number` };
+    }
+    const actual = toNumber(resolved);
+    if (actual === null) {
+      return { passed: false, reason: `JSONPath ${path} expected a number ${numeric.symbol} ${expected}, got ${display(resolved)}` };
+    }
+    return numeric.test(actual, expected)
+      ? { passed: true }
+      : { passed: false, reason: `JSONPath ${path} expected ${numeric.symbol} ${expected}, got ${actual}` };
+  }
 
   switch (operator) {
     case "exists":
