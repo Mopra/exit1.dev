@@ -1,5 +1,7 @@
 // Core website monitoring types
 
+import type { SSLAlertState } from './ssl-alert-state';
+
 // Check importance scale: P1 = critical (page me), P5 = minimal (badge only).
 // Mirrors the five Pushover priorities one-to-one.
 export type CheckSeverity = 1 | 2 | 3 | 4 | 5;
@@ -112,12 +114,12 @@ export interface Website {
   };
 
   // Durable record of the last SSL alert state we notified the user about
-  // ('ok' | 'warning' | 'error'). SSL alerting compares the freshly computed
+  // ('ok', a warning reminder band, or 'error'; see ssl-alert-state.ts). SSL alerting compares the freshly computed
   // cert state against THIS value (not a transient previous cert snapshot), so
   // an ok->warning transition can never be silently swallowed by whichever
   // writer (per-check probe or scheduled refreshSecurityMetadata) happens to
   // advance the cert across the threshold first. Undefined is treated as 'ok'.
-  sslAlertedState?: 'ok' | 'warning' | 'error';
+  sslAlertedState?: SSLAlertState;
 
   // Ordering
   orderIndex?: number; // For custom ordering

@@ -244,7 +244,10 @@ export const CONFIG = {
     website_up: 60 * 1000,                // 1 minute - allow state change emails
     website_error: 1 * 60 * 60 * 1000,    // 1 hour - errors can be transient
     ssl_error: 24 * 60 * 60 * 1000,       // 24 hours - SSL errors are urgent but don't spam
-    ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
+    // 20 hours: a duplicate guard across writers, not a reminder cadence. The
+    // reminder bands in ssl-alert-state.ts (30/14/7/3/1 days) decide when a
+    // warning repeats; a 7-day window here swallowed the 3-day and 1-day ones.
+    ssl_warning: 20 * 60 * 60 * 1000,
     ssl_expiring: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
     ssl_expired: 24 * 60 * 60 * 1000,     // 24 hours - SSL expired is urgent but don't spam
     // Domain Intelligence events
@@ -300,7 +303,7 @@ export const CONFIG = {
     website_up: 5 * 60 * 1000,              // 5 minutes - prevent flap storms
     website_error: 5 * 60 * 1000,           // 5 minutes
     ssl_error: 60 * 60 * 1000,              // 1 hour
-    ssl_warning: 24 * 60 * 60 * 1000,       // 24 hours
+    ssl_warning: 20 * 60 * 60 * 1000,       // 20 hours, see EMAIL_THROTTLE_WINDOWS
     ssl_expiring: 24 * 60 * 60 * 1000,      // 24 hours
     ssl_expired: 24 * 60 * 60 * 1000,       // 24 hours
     domain_expiring: 24 * 60 * 60 * 1000,   // 24 hours
@@ -320,7 +323,10 @@ export const CONFIG = {
     website_up: 60 * 1000,                // 1 minute - allow state change texts
     website_error: 1 * 60 * 60 * 1000,    // 1 hour - errors can be transient
     ssl_error: 24 * 60 * 60 * 1000,       // 24 hours - SSL errors are urgent but don't spam
-    ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
+    // 20 hours: a duplicate guard across writers, not a reminder cadence. The
+    // reminder bands in ssl-alert-state.ts (30/14/7/3/1 days) decide when a
+    // warning repeats; a 7-day window here swallowed the 3-day and 1-day ones.
+    ssl_warning: 20 * 60 * 60 * 1000,
     ssl_expiring: 7 * 24 * 60 * 60 * 1000,
     ssl_expired: 24 * 60 * 60 * 1000,
     // Domain Intelligence events

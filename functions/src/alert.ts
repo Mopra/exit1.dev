@@ -26,7 +26,7 @@ import * as emailModule from './alert-email';
 import * as smsModule from './alert-sms';
 import { CONFIG } from './config';
 import { firestore } from './init';
-import { decideSSLAlertTransition, type SSLAlertState } from './ssl-alert-state';
+import { decideSSLAlertTransition, normalizeSSLAlertState, type SSLAlertState } from './ssl-alert-state';
 import { sendTransactionalEmail } from './email-send';
 
 // Re-exported so external consumers can `import { SSLAlertState } from './alert'`.
@@ -754,7 +754,7 @@ export async function triggerSSLAlert(
     // ok->warning edge is detected exactly once, regardless of which writer
     // recomputed the cert or whether the cert object was reused while "fresh".
     const currentState = helpers.getSSLAlertState(sslCertificate);
-    const previousState: SSLAlertState = website.sslAlertedState ?? 'ok';
+    const previousState: SSLAlertState = normalizeSSLAlertState(website.sslAlertedState);
     const decision = decideSSLAlertTransition(currentState, previousState);
 
     // No change since we last notified — nothing to do.
@@ -767,6 +767,12 @@ export async function triggerSSLAlert(
     // warning/error fires again.
     if (decision.kind === 'reset') {
       return { delivered: false, reason: 'none', nextAlertedState: 'ok' };
+    }
+
+    // Moved to a less urgent reminder band (renewed onto a short-lived cert).
+    // Record it without alerting so the next band crossing reminds again.
+    if (decision.kind === 'rebase') {
+      return { delivered: false, reason: 'none', nextAlertedState: decision.state };
     }
 
     const eventType: WebhookEvent = decision.eventType;

@@ -1431,7 +1431,9 @@ setStatusUpdateHook((checkId: string, data: {
     daysUntilExpiry?: number;
     error?: string;
   };
-  sslAlertedState?: 'ok' | 'warning' | 'error';
+  // 'ok', a warning reminder band ('warning', 'warning_14', ...) or 'error'.
+  // Opaque here: the alert code in functions/lib owns the values.
+  sslAlertedState?: string;
 }) => {
   if (data.nextCheckAt != null) {
     schedule.updateNextCheckAt(checkId, data.nextCheckAt);

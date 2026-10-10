@@ -22,6 +22,8 @@
  * promised was immediate.
  */
 
+import type { SSLAlertState } from './ssl-alert-state';
+
 /** The subset of StatusUpdateData the classifier consults and snapshots. */
 export interface TransitionFields {
   status?: string;
@@ -30,7 +32,7 @@ export interface TransitionFields {
   maintenanceMode?: boolean | null;
   lastError?: string | null;
   consecutiveFailures?: number;
-  sslAlertedState?: 'ok' | 'warning' | 'error';
+  sslAlertedState?: SSLAlertState;
 }
 
 /** Per-check snapshot of the transition fields as last written to Firestore. */

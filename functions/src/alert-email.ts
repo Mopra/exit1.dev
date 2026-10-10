@@ -406,7 +406,9 @@ export async function sendSSLEmailNotification(
   const subject =
     eventType === 'ssl_error'
       ? `SSL ERROR: ${website.name} certificate is invalid`
-      : `SSL WARNING: ${website.name} certificate expires soon`;
+      : sslCertificate.daysUntilExpiry !== undefined
+        ? `SSL WARNING: ${website.name} certificate expires in ${sslCertificate.daysUntilExpiry} ${sslCertificate.daysUntilExpiry === 1 ? 'day' : 'days'}`
+        : `SSL WARNING: ${website.name} certificate expires soon`;
 
   const formatDate = (timestamp?: number) => formatDateOnlyForCheck(timestamp, website.timezone);
 

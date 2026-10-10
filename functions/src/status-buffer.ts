@@ -1,5 +1,6 @@
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
+import type { SSLAlertState } from "./ssl-alert-state";
 import { isTransition, mergeLastWritten, type LastWrittenState } from "./status-transition";
 
 // Type definition for status updates
@@ -57,7 +58,7 @@ export interface StatusUpdateData {
   // transitions so the per-check probe and scheduled refresh agree on what the
   // user has already been told about, and the VPS in-memory schedule stays in
   // sync via the status hook.
-  sslAlertedState?: 'ok' | 'warning' | 'error';
+  sslAlertedState?: SSLAlertState;
   disabled?: boolean;
   disabledAt?: number;
   disabledReason?: string;

@@ -480,7 +480,7 @@ export const webhookAppliesToCheck = (webhook: WebhookSettings, checkId: string,
 // module so it is the single source of truth and unit-testable in isolation.
 // Re-exported here so existing consumers (`helpers.getSSLAlertState`) are
 // unchanged.
-export { getSSLAlertState, decideSSLAlertTransition, SSL_WARNING_THRESHOLD_DAYS } from './ssl-alert-state';
+export { getSSLAlertState, decideSSLAlertTransition, normalizeSSLAlertState, SSL_WARNING_THRESHOLD_DAYS, SSL_REMINDER_BANDS } from './ssl-alert-state';
 export type { SSLAlertState, SSLAlertDecision, SSLCertLike } from './ssl-alert-state';
 
 // ============================================================================
