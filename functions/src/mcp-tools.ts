@@ -175,6 +175,7 @@ const CHECK_ID_PROP = {
 };
 
 const CHECK_TYPE_ENUM = ["website", "rest_endpoint", "redirect", "ping", "tcp", "dns", "heartbeat", "domain"];
+const JSON_PATH_OPERATOR_ENUM = ["equals", "not_equals", "contains", "exists", "greater_than", "greater_or_equal", "less_than", "less_or_equal"];
 
 // ── Tool catalog ──
 
@@ -353,12 +354,43 @@ export const MCP_TOOLS: McpToolDefinition[] = [
           type: "object",
           properties: {
             containsText: { type: "array", items: { type: "string" }, maxItems: 10 },
-            jsonPath: { type: "string", description: "JSONPath expression, e.g. $.status" },
-            jsonPathOperator: { type: "string", enum: ["equals", "not_equals", "contains", "exists"] },
+            containsTextMode: {
+              type: "string",
+              enum: ["all", "any"],
+              description: "'all' (default): every containsText entry must appear. 'any': at least one.",
+            },
+            notContainsText: {
+              type: "array",
+              items: { type: "string" },
+              maxItems: 10,
+              description: "Fail if any of these appear in the body (case-insensitive)",
+            },
+            jsonPath: { type: "string", description: "Single JSONPath expression, e.g. $.status. Ignored when jsonAssertions is set." },
+            jsonPathOperator: { type: "string", enum: JSON_PATH_OPERATOR_ENUM },
             expectedValue: { description: "Value the JSONPath result is compared against" },
+            jsonAssertions: {
+              type: "array",
+              maxItems: 20,
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string", description: "JSONPath, e.g. $.engines['mail-intake'].sinceMs" },
+                  operator: { type: "string", enum: JSON_PATH_OPERATOR_ENUM },
+                  expectedValue: { description: "Compared value. A number for the greater/less operators. Omit for 'exists'." },
+                },
+                required: ["path"],
+                additionalProperties: false,
+              },
+              description: "Several JSONPath assertions, combined by jsonAssertionsMode. Replaces jsonPath/jsonPathOperator/expectedValue.",
+            },
+            jsonAssertionsMode: {
+              type: "string",
+              enum: ["all", "any"],
+              description: "'all' (default): every assertion must pass (AND). 'any': one is enough (OR).",
+            },
           },
           additionalProperties: false,
-          description: "Body assertions — this is what turns a 200 into a real health check.",
+          description: "Body assertions: this is what turns a 200 into a real health check.",
         },
         response_time_limit_ms: { type: "number", description: "Fail the check if it responds slower than this" },
         record_types: {
