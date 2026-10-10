@@ -49,6 +49,7 @@ import {
   type StatusSnapshot,
   type StatusSourceDoc,
 } from "./public-api-status";
+import { normalizeFolderParam, folderRange, folderMatches, compareByOrder, pageInMemory } from "./public-api-folder";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -2412,6 +2413,51 @@ export const publicApi = onRequest({
       const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
       const cursor = parseCursor(cursorParam);
       const includeTotal = String(req.query.includeTotal || 'true') !== 'false';
+      const folder = normalizeFolderParam(typeof req.query.folder === 'string' ? req.query.folder : null);
+      const recursiveParam = String(req.query.recursive ?? 'false');
+      if (recursiveParam !== 'true' && recursiveParam !== 'false') {
+        res.status(400).json({ error: 'recursive must be true or false' });
+        return;
+      }
+
+      // ?folder= : range over folder (index userId+folder, or userId+status+folder),
+      // then exact/subfolder match, sort and page in memory.
+      if (folder) {
+        const recursive = recursiveParam === 'true';
+        const range = folderRange(folder);
+        let folderQuery = firestore.collection('checks').where('userId', '==', userId);
+        if (statusFilter !== 'all') folderQuery = folderQuery.where('status', '==', statusFilter);
+        folderQuery = folderQuery.where('folder', '>=', range.start).where('folder', '<', range.end);
+
+        const folderSnap = await folderQuery.get();
+        const matched = folderSnap.docs
+          .map(d => ({ id: d.id, data: d.data(), orderIndex: typeof d.data().orderIndex === 'number' ? d.data().orderIndex as number : 0 }))
+          .filter(row => folderMatches(row.data.folder, folder, recursive))
+          .sort(compareByOrder);
+
+        const rows = pageInMemory(matched, { limit, page, cursor });
+        const total = matched.length;
+        const totalPages = Math.ceil(total / limit);
+        const last = rows[rows.length - 1];
+        const nextCursor = last
+          ? Buffer.from(JSON.stringify({ orderIndex: last.orderIndex, id: last.id }), 'utf8').toString('base64')
+          : null;
+        const hasNext = last ? compareByOrder(matched[matched.length - 1], last) > 0 : false;
+
+        res.json({
+          data: rows.map(row => sanitizeCheck({ id: row.id, ...row.data })),
+          meta: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext,
+            hasPrev: cursor ? true : page > 1,
+            nextCursor,
+          }
+        });
+        return;
+      }
 
       let countQuery = firestore.collection('checks')
         .where('userId', '==', userId);
