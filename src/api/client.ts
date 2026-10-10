@@ -17,6 +17,7 @@ import type {
   ManualLogEntry,
   ApiKey,
   CreateApiKeyResponse,
+  CreateApiKeyOptions,
   OrganizationBillingProfile,
   McpAuthorizationRequest,
   McpConnection,
@@ -499,8 +500,12 @@ export class Exit1ApiClient {
 
   // ---- API Keys ----
 
-  createApiKey(name: string, scopes: string[] = []) {
-    return this.call<CreateApiKeyResponse>("createApiKey", { name, scopes }, 'Failed to create API key');
+  createApiKey(name: string, { scopes = [], expiresInSeconds = null, access = null }: CreateApiKeyOptions = {}) {
+    return this.call<CreateApiKeyResponse>(
+      "createApiKey",
+      { name, scopes, expiresInSeconds, access },
+      'Failed to create API key',
+    );
   }
 
   listApiKeys() {

@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { firestore, getUserTierLive } from "./init";
 import { CONFIG } from "./config";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { KeyAccessError, parseExpiresInSeconds, parseKeyAccess, readStoredAccess, type KeyAccess } from "./public-api-access";
 
 const API_KEYS_COLLECTION = 'apiKeys';
 
@@ -14,6 +15,8 @@ type ApiKeyDoc = {
   enabled: boolean;
   disabledReason?: string | null;
   scopes?: string[];
+  expiresAt?: number | null;
+  access?: KeyAccess | null;
   createdAt: number;
   lastUsedAt?: number;
   lastUsedPath?: string;
@@ -71,10 +74,31 @@ export const createApiKey = onCall({
     );
   }
 
-  const { name = '' , scopes = [] } = request.data || {};
+  const { name = '' , scopes = [], expiresInSeconds, access: rawAccess } = request.data || {};
+
+  let expiresIn: number | null;
+  let access: KeyAccess | null;
+  try {
+    expiresIn = parseExpiresInSeconds(expiresInSeconds);
+    access = parseKeyAccess(rawAccess);
+  } catch (e) {
+    if (e instanceof KeyAccessError) throw new HttpsError("invalid-argument", e.message);
+    throw e;
+  }
+
+  // Every granted check must be the caller's own.
+  if (access && access.checkIds.length > 0) {
+    const refs = access.checkIds.map((id) => firestore.collection('checks').doc(id));
+    const docs = await firestore.getAll(...refs);
+    if (docs.some((d) => !d.exists || d.data()?.userId !== uid)) {
+      throw new HttpsError("invalid-argument", "One or more of the selected checks was not found");
+    }
+  }
+
   const key = await generateApiKey();
   const hash = await hashApiKey(key);
   const now = Date.now();
+  const expiresAt = expiresIn === null ? null : now + expiresIn * 1000;
 
   const docRef = await firestore.collection(API_KEYS_COLLECTION).add({
     userId: uid,
@@ -84,6 +108,8 @@ export const createApiKey = onCall({
     last4: last4(key),
     enabled: true,
     scopes: Array.isArray(scopes) ? scopes : [],
+    expiresAt,
+    access,
     createdAt: now,
   } as ApiKeyDoc);
 
@@ -94,6 +120,8 @@ export const createApiKey = onCall({
     prefix: extractPrefix(key),
     last4: last4(key),
     createdAt: now,
+    expiresAt,
+    access,
   };
 });
 
@@ -122,6 +150,8 @@ export const listApiKeys = onCall({
       createdAt: data.createdAt,
       lastUsedAt: data.lastUsedAt || null,
       scopes: data.scopes || [],
+      expiresAt: data.expiresAt ?? null,
+      access: data.access ? readStoredAccess(data.access) : null,
     };
   });
 

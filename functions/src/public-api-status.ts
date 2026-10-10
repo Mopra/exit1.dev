@@ -35,7 +35,7 @@ export const STATUS_CACHE_MAX_USERS = 2_000;
 export const STATUS_SELECT_FIELDS = [
   "name", "url", "type", "status", "lastStatusChange", "lastError", "disabled",
   "maintenanceMode", "checkRegion", "peerRegion", "peerStatus", "peerCheckedAt",
-  "peerReachable", "orderIndex", "updatedAt",
+  "peerReachable", "orderIndex", "updatedAt", "folder",
 ] as const;
 
 export interface StatusSourceDoc {
@@ -54,6 +54,7 @@ export interface StatusSourceDoc {
   peerReachable?: unknown;
   orderIndex?: unknown;
   updatedAt?: unknown;
+  folder?: unknown;
 }
 
 export interface CheckRegions {
@@ -118,6 +119,8 @@ export function toStatusEntry(id: string, doc: StatusSourceDoc): CheckStatusEntr
 interface SnapshotRow {
   entry: CheckStatusEntry;
   orderIndex: number;
+  /** Not in the response; kept so a folder-restricted API key can be filtered. */
+  folder: string | null;
 }
 
 export interface StatusSnapshot {
@@ -138,18 +141,35 @@ export interface SourceRow {
 const sortRows = (a: SnapshotRow, b: SnapshotRow) =>
   a.orderIndex - b.orderIndex || (a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0);
 
-function finalize(rows: Map<string, SnapshotRow>, syncedAt: number, fullAt: number): StatusSnapshot {
-  const data = [...rows.values()].sort(sortRows).map((r) => r.entry);
+function render(rows: Iterable<SnapshotRow>): { body: string; etag: string } {
+  const data = [...rows].sort(sortRows).map((r) => r.entry);
   // The body carries no timestamps of its own, so it (and its ETag) only
   // changes when a check's reported state changes.
   const body = JSON.stringify({ data, meta: { total: data.length } });
   const etag = `"${createHash("sha1").update(body).digest("base64url")}"`;
-  return { rows, syncedAt, fullAt, body, etag };
+  return { body, etag };
+}
+
+function finalize(rows: Map<string, SnapshotRow>, syncedAt: number, fullAt: number): StatusSnapshot {
+  return { rows, syncedAt, fullAt, ...render(rows.values()) };
+}
+
+/**
+ * The snapshot narrowed to the checks an API key may see. The full snapshot
+ * stays shared per user; this re-renders the body and ETag for the subset.
+ */
+export function restrictSnapshot(
+  snapshot: StatusSnapshot,
+  allowed: (checkId: string, folder: string | null) => boolean,
+): StatusSnapshot {
+  const rows = new Map([...snapshot.rows].filter(([id, row]) => allowed(id, row.folder)));
+  return finalize(rows, snapshot.syncedAt, snapshot.fullAt);
 }
 
 const toRow = (r: SourceRow): SnapshotRow => ({
   entry: toStatusEntry(r.id, r.data),
   orderIndex: num(r.data.orderIndex) ?? 0,
+  folder: str(r.data.folder),
 });
 
 export function buildSnapshot(source: SourceRow[], now: number): StatusSnapshot {

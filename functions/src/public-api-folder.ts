@@ -60,3 +60,18 @@ export function pageInMemory<T extends Orderable>(
   const offset = (page - 1) * limit;
   return sorted.slice(offset, offset + limit);
 }
+
+/** Same limits as getFolderPathError in src/lib/folder-utils.ts. */
+export const MAX_FOLDER_DEPTH = 10;
+export const MAX_FOLDER_SEGMENT_LENGTH = 48;
+
+export function folderPathError(folder: string): string | null {
+  const parts = folder.split('/').filter(Boolean);
+  if (parts.length > MAX_FOLDER_DEPTH) {
+    return `Folders can be nested at most ${MAX_FOLDER_DEPTH} levels deep`;
+  }
+  if (parts.some((p) => p.length > MAX_FOLDER_SEGMENT_LENGTH)) {
+    return `Folder names can be at most ${MAX_FOLDER_SEGMENT_LENGTH} characters each`;
+  }
+  return null;
+}

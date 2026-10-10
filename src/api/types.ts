@@ -559,6 +559,22 @@ export interface ApiKey {
   createdAt: number;
   lastUsedAt?: number | null;
   scopes?: string[];
+  /** ms epoch the key stops working; null = never. */
+  expiresAt?: number | null;
+  /** null = every check. */
+  access?: ApiKeyAccess | null;
+}
+
+/** Checks and folders (subfolders included) a restricted key may use. */
+export interface ApiKeyAccess {
+  checkIds: string[];
+  folders: string[];
+}
+
+export interface CreateApiKeyOptions {
+  scopes?: string[];
+  expiresInSeconds?: number | null;
+  access?: ApiKeyAccess | null;
 }
 
 export interface CreateApiKeyResponse {
@@ -568,6 +584,8 @@ export interface CreateApiKeyResponse {
   prefix: string;
   last4: string;
   createdAt: number;
+  expiresAt?: number | null;
+  access?: ApiKeyAccess | null;
 }
 
 // MCP / agent connection types

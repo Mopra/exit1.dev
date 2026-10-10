@@ -42,6 +42,7 @@ import {
   STATUS_CACHE_MAX_USERS,
   buildSnapshot,
   mergeDelta,
+  restrictSnapshot,
   planRefresh,
   deltaSince,
   ifNoneMatchHits,
@@ -49,7 +50,8 @@ import {
   type StatusSnapshot,
   type StatusSourceDoc,
 } from "./public-api-status";
-import { normalizeFolderParam, folderRange, folderMatches, compareByOrder, pageInMemory } from "./public-api-folder";
+import { normalizeFolderParam, folderRange, folderMatches, folderPathError, compareByOrder, pageInMemory } from "./public-api-folder";
+import { canAccessCheck, canCreateInFolder, isKeyExpired, readStoredAccess, type KeyAccess } from "./public-api-access";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -73,6 +75,9 @@ interface CachedApiKey {
   userId: string;
   enabled: boolean;
   scopes: string[];
+  keyExpiresAt: number | null;
+  access: KeyAccess | null;
+  /** When this cache entry goes stale. */
   expiresAt: number;
 }
 const apiKeyValidationCache = new Map<string, CachedApiKey>();
@@ -89,12 +94,12 @@ const getCachedApiKey = (hash: string): CachedApiKey | null => {
   return cached;
 };
 
-const setCachedApiKey = (hash: string, keyDocId: string, userId: string, enabled: boolean, scopes: string[]): void => {
+const setCachedApiKey = (
+  hash: string,
+  key: Omit<CachedApiKey, 'expiresAt'>,
+): void => {
   apiKeyValidationCache.set(hash, {
-    keyDocId,
-    userId,
-    enabled,
-    scopes,
+    ...key,
     expiresAt: Date.now() + API_KEY_CACHE_TTL_MS,
   });
   if (apiKeyValidationCache.size > API_KEY_CACHE_MAX) {
@@ -682,7 +687,8 @@ function isValidDocId(id: string): boolean {
 async function getOwnedCheck(
   checkId: string,
   userId: string,
-  res: Parameters<Parameters<typeof onRequest>[0]>[1]
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  access: KeyAccess | null = null
 ): Promise<Website | null> {
   if (!isValidDocId(checkId)) {
     res.status(400).json({ error: 'Invalid check ID format' });
@@ -698,6 +704,12 @@ async function getOwnedCheck(
     res.status(403).json({ error: 'Forbidden' });
     return null;
   }
+  // A restricted key gets the same answer as for a check that doesn't exist,
+  // so it can't probe for check ids outside its grant.
+  if (!canAccessCheck(access, doc.id, data.folder)) {
+    res.status(404).json({ error: 'Check not found' });
+    return null;
+  }
   return { ...data, id: doc.id };
 }
 
@@ -711,7 +723,8 @@ async function handleCreateCheck(
   userId: string,
   keyDocId: string,
   path: string,
-  isAgentSession = false
+  isAgentSession = false,
+  access: KeyAccess | null = null
 ): Promise<void> {
   // Idempotency key required for POST
   const idempotencyKey = req.header('Idempotency-Key') || '';
@@ -739,11 +752,30 @@ async function handleCreateCheck(
     maxRedirects,
     responseTimeLimit, downConfirmationAttempts,
     cacheControlNoCache, checkRegionOverride,
-    pingPackets, timezone,
+    pingPackets, timezone, folder: rawFolder,
   } = body;
 
   if (maxRedirects !== undefined && maxRedirects !== null && (typeof maxRedirects !== 'number' || !Number.isInteger(maxRedirects) || maxRedirects < 0 || maxRedirects > 10)) {
     res.status(400).json({ error: 'maxRedirects must be an integer between 0 and 10' });
+    return;
+  }
+
+  if (rawFolder !== undefined && rawFolder !== null && typeof rawFolder !== 'string') {
+    res.status(400).json({ error: 'folder must be a string like "Clients/Acme"' });
+    return;
+  }
+  const folder = normalizeFolderParam(rawFolder);
+  const folderError = folder ? folderPathError(folder) : null;
+  if (folderError) {
+    res.status(400).json({ error: folderError });
+    return;
+  }
+  if (!canCreateInFolder(access, folder)) {
+    res.status(403).json({
+      error: access && access.folders.length > 0
+        ? `This API key can only create checks in: ${access.folders.join(', ')} (or their subfolders). Pass one as folder.`
+        : 'This API key is restricted to specific checks and cannot create new ones.',
+    });
     return;
   }
 
@@ -1056,6 +1088,7 @@ async function handleCreateCheck(
       nextCheckAt: resolvedType === 'domain' ? null : now,
       orderIndex: maxOrderIndex + ORDER_INDEX_GAP,
       type: resolvedType,
+      ...(folder ? { folder } : {}),
       // Attribution — lets us compare agent-onboarded accounts against the
       // normal funnel. Checks added in the dashboard carry no value here.
       createdVia: isAgentSession ? 'mcp' : 'api',
@@ -2064,7 +2097,8 @@ async function deliverWebhookTest(
 async function handleGetAccount(
   res: Parameters<Parameters<typeof onRequest>[0]>[1],
   userId: string,
-  scopes: string[]
+  scopes: string[],
+  key: { expiresAt: number | null; access: KeyAccess | null } | null
 ): Promise<void> {
   const [tier, stats, webhookSnap, emailSnap] = await Promise.all([
     getUserTier(userId),
@@ -2084,6 +2118,8 @@ async function handleGetAccount(
     data: {
       tier,
       scopes,
+      // The calling API key's own limits. null for OAuth (MCP) sessions.
+      key,
       limits: {
         maxChecks,
         minCheckIntervalMinutes: tierLimits.minCheckIntervalMinutes,
@@ -2154,6 +2190,9 @@ export const publicApi = onRequest({
     let userId: string;
     let keyScopes: string[];
     let isAgentSession = false;
+    // Checks/folders an API key is restricted to. null = every check (and always for OAuth).
+    let access: KeyAccess | null = null;
+    let keyExpiresAt: number | null = null;
 
     if (bearerToken) {
       const resolved = await resolveBearerToken(bearerToken);
@@ -2176,6 +2215,8 @@ export const publicApi = onRequest({
         userId = cachedKey.userId;
         keyEnabled = cachedKey.enabled;
         keyScopes = cachedKey.scopes;
+        keyExpiresAt = cachedKey.keyExpiresAt;
+        access = cachedKey.access;
       } else {
         const keySnap = await firestore
           .collection(API_KEYS_COLLECTION)
@@ -2194,12 +2235,19 @@ export const publicApi = onRequest({
         userId = key.userId;
         keyEnabled = key.enabled;
         keyScopes = key.scopes || [];
+        keyExpiresAt = typeof key.expiresAt === 'number' ? key.expiresAt : null;
+        access = key.access ? readStoredAccess(key.access) : null;
 
-        setCachedApiKey(hash, principalId, userId, keyEnabled, keyScopes);
+        setCachedApiKey(hash, { keyDocId: principalId, userId, enabled: keyEnabled, scopes: keyScopes, keyExpiresAt, access });
       }
 
       if (!keyEnabled) {
         res.status(401).json({ error: 'API key disabled' });
+        return;
+      }
+      // Checked against the clock on every request, cached or not.
+      if (isKeyExpired(keyExpiresAt, Date.now())) {
+        res.status(401).json({ error: 'API key expired' });
         return;
       }
     }
@@ -2309,6 +2357,12 @@ export const publicApi = onRequest({
     // ============== ALERT CHANNEL ROUTES ==============
 
     const isAlertRoute = segments.length >= 4 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'alerts';
+    if (isAlertRoute && access) {
+      // Alert channels are account-wide: a webhook or recipient added here
+      // would receive alerts for checks outside the key's grant.
+      res.status(403).json({ error: 'This API key is restricted to specific checks or folders. Account-wide alert settings need an unrestricted key.' });
+      return;
+    }
     if (isAlertRoute) {
       // PATCH /v1/public/alerts/email
       if (req.method === 'PATCH' && segments.length === 4 && segments[3] === 'email') {
@@ -2352,15 +2406,23 @@ export const publicApi = onRequest({
 
     // GET /v1/public/account
     if (req.method === 'GET' && segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'account') {
-      await handleGetAccount(res, userId, keyScopes.length > 0 ? keyScopes : [API_SCOPES.CHECKS_READ]);
+      await handleGetAccount(res, userId, keyScopes.length > 0 ? keyScopes : [API_SCOPES.CHECKS_READ], isAgentSession ? null : { expiresAt: keyExpiresAt, access });
       return;
+    }
+
+    // Every /v1/public/checks/:id[/...] route: a restricted key gets 404 for
+    // checks outside its grant, before any handler runs.
+    const isSingleCheckRoute = segments.length >= 4 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[3] !== 'status';
+    if (isSingleCheckRoute && access) {
+      const allowed = await getOwnedCheck(segments[3], userId, res, access);
+      if (!allowed) return;
     }
 
     // ============== WRITE ROUTES ==============
 
     // POST /v1/public/checks - Create check
     if (req.method === 'POST' && segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
-      await handleCreateCheck(req, res, userId, keyDocId, reqPath, isAgentSession);
+      await handleCreateCheck(req, res, userId, keyDocId, reqPath, isAgentSession, access);
       return;
     }
 
@@ -2421,18 +2483,23 @@ export const publicApi = onRequest({
       }
 
       // ?folder= : range over folder (index userId+folder, or userId+status+folder),
-      // then exact/subfolder match, sort and page in memory.
-      if (folder) {
+      // then exact/subfolder match, sort and page in memory. A restricted key
+      // takes the same in-memory path (over all the user's checks when there
+      // is no folder param) so its grant filters before paging.
+      if (folder || access) {
         const recursive = recursiveParam === 'true';
-        const range = folderRange(folder);
         let folderQuery = firestore.collection('checks').where('userId', '==', userId);
         if (statusFilter !== 'all') folderQuery = folderQuery.where('status', '==', statusFilter);
-        folderQuery = folderQuery.where('folder', '>=', range.start).where('folder', '<', range.end);
+        if (folder) {
+          const range = folderRange(folder);
+          folderQuery = folderQuery.where('folder', '>=', range.start).where('folder', '<', range.end);
+        }
 
         const folderSnap = await folderQuery.get();
         const matched = folderSnap.docs
           .map(d => ({ id: d.id, data: d.data(), orderIndex: typeof d.data().orderIndex === 'number' ? d.data().orderIndex as number : 0 }))
-          .filter(row => folderMatches(row.data.folder, folder, recursive))
+          .filter(row => !folder || folderMatches(row.data.folder, folder, recursive))
+          .filter(row => canAccessCheck(access, row.id, row.data.folder))
           .sort(compareByOrder);
 
         const rows = pageInMemory(matched, { limit, page, cursor });
@@ -2520,7 +2587,10 @@ export const publicApi = onRequest({
 
     // GET /v1/public/checks/status
     if (routeName === 'checks_status') {
-      const snapshot = await getStatusSnapshot(userId);
+      const fullSnapshot = await getStatusSnapshot(userId);
+      const snapshot = access
+        ? restrictSnapshot(fullSnapshot, (id, checkFolder) => canAccessCheck(access, id, checkFolder))
+        : fullSnapshot;
       res.set('ETag', snapshot.etag);
       res.set('Cache-Control', 'private, no-cache');
       if (ifNoneMatchHits(req.header('if-none-match'), snapshot.etag)) {

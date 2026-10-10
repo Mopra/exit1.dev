@@ -498,6 +498,10 @@ export interface ApiKeyDoc {
   last4: string;
   enabled: boolean;
   scopes?: string[];
+  /** ms epoch; the key stops authenticating at this time. Absent = never. */
+  expiresAt?: number | null;
+  /** Restricts the key to these checks and/or folders (subfolders included). Absent = every check. */
+  access?: { checkIds: string[]; folders: string[] } | null;
   createdAt: number;
   lastUsedAt?: number;
   lastUsedPath?: string;

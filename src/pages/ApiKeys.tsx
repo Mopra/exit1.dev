@@ -14,7 +14,8 @@ import {
 import { toast } from "sonner";
 
 import { apiClient } from "@/api/client";
-import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
+import type { ApiKey, ApiKeyAccess, CreateApiKeyResponse } from "@/api/types";
+import KeyAccessPicker from "@/components/api-keys/KeyAccessPicker";
 import { PageContainer, PageHeader } from "@/components/layout";
 import { usePlan } from "@/hooks/usePlan";
 import { nextTierWithMore } from "@/lib/subscription";
@@ -50,6 +51,13 @@ import {
   DialogTitle,
   Input,
   Label,
+  RadioGroup,
+  RadioGroupItem,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -63,6 +71,29 @@ import {
 import { copyToClipboard } from "@/utils/clipboard";
 
 const dateFmt = (ts?: number | null) => (ts ? new Date(ts).toLocaleString() : "—");
+
+const HOUR = 60 * 60;
+const DAY = 24 * HOUR;
+// Value is seconds from creation; "never" sends no expiry.
+const EXPIRY_OPTIONS = [
+  { value: "never", label: "Never", seconds: null },
+  { value: "1h", label: "1 hour", seconds: HOUR },
+  { value: "8h", label: "8 hours", seconds: 8 * HOUR },
+  { value: "24h", label: "24 hours", seconds: DAY },
+  { value: "7d", label: "7 days", seconds: 7 * DAY },
+  { value: "30d", label: "30 days", seconds: 30 * DAY },
+  { value: "90d", label: "90 days", seconds: 90 * DAY },
+] as const;
+type ExpiryValue = (typeof EXPIRY_OPTIONS)[number]["value"];
+
+const EMPTY_ACCESS: ApiKeyAccess = { checkIds: [], folders: [] };
+
+function accessSummary(access: ApiKeyAccess): string {
+  const parts: string[] = [];
+  if (access.folders.length) parts.push(`${access.folders.length} ${access.folders.length === 1 ? "folder" : "folders"}`);
+  if (access.checkIds.length) parts.push(`${access.checkIds.length} ${access.checkIds.length === 1 ? "check" : "checks"}`);
+  return parts.join(", ") || "No checks";
+}
 
 const SCOPE_OPTIONS = [
   { value: "checks:read", label: "Read", description: "List and view checks, history, and stats" },
@@ -86,6 +117,9 @@ export default function ApiKeys() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [scopes, setScopes] = React.useState<string[]>(["checks:read"]);
+  const [expiry, setExpiry] = React.useState<ExpiryValue>("never");
+  const [restricted, setRestricted] = React.useState(false);
+  const [access, setAccess] = React.useState<ApiKeyAccess>(EMPTY_ACCESS);
   const [createdKey, setCreatedKey] = React.useState<CreateApiKeyResponse | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [revokeId, setRevokeId] = React.useState<string | null>(null);
@@ -117,13 +151,20 @@ export default function ApiKeys() {
 
   async function onCreate() {
     setCreating(true);
-    const res = await apiClient.createApiKey(name || "Default", scopes);
+    const res = await apiClient.createApiKey(name || "Default", {
+      scopes,
+      expiresInSeconds: EXPIRY_OPTIONS.find((o) => o.value === expiry)?.seconds ?? null,
+      access: restricted ? access : null,
+    });
     setCreating(false);
     if (res.success && res.data) {
       setCreatedKey(res.data);
       setCreateOpen(false);
       setName("");
       setScopes(["checks:read"]);
+      setExpiry("never");
+      setRestricted(false);
+      setAccess(EMPTY_ACCESS);
       load();
     } else {
       // A failed create used to be swallowed here, so a blocked request or a
@@ -181,6 +222,10 @@ export default function ApiKeys() {
     if (ok) toast.success("MCP config copied");
     else toast.error("Copy failed");
   }
+
+  const restrictedEmpty = restricted && access.checkIds.length === 0 && access.folders.length === 0;
+  // Snapshot "now" once per render for the expired badges.
+  const now = Date.now();
 
   const atLimit = keys.length >= maxApiKeys;
   const hasDowngradedKeys = keys.some((k) => k.disabledReason === 'plan_downgrade');
@@ -245,6 +290,7 @@ export default function ApiKeys() {
                   <div className="font-medium text-foreground">API key created</div>
                   <div className="text-sm text-muted-foreground">
                     Copy this key now. You won't be able to see it again.
+                    {createdKey.expiresAt ? ` It stops working on ${dateFmt(createdKey.expiresAt)}.` : ""}
                   </div>
                 </div>
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
@@ -418,6 +464,7 @@ export default function ApiKeys() {
                         <TableHead className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Name</TableHead>
                         <TableHead className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Key</TableHead>
                         <TableHead className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Scopes</TableHead>
+                        <TableHead className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Access</TableHead>
                         <TableHead className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Created</TableHead>
                         <TableHead className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Last used</TableHead>
                         <TableHead className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status</TableHead>
@@ -461,15 +508,43 @@ export default function ApiKeys() {
                               })}
                             </div>
                           </TableCell>
+                          <TableCell className="px-4 py-3 text-xs whitespace-nowrap">
+                            {k.access ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help">{accessSummary(k.access)}</span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <div className="space-y-1">
+                                    {k.access.folders.map((f) => <div key={f}>Folder: {f}</div>)}
+                                    {k.access.checkIds.length > 0 && (
+                                      <div>{k.access.checkIds.length} individual {k.access.checkIds.length === 1 ? "check" : "checks"}</div>
+                                    )}
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <span className="text-muted-foreground">All checks</span>
+                            )}
+                          </TableCell>
                           <TableCell className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{dateFmt(k.createdAt)}</TableCell>
                           <TableCell className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{dateFmt(k.lastUsedAt ?? null)}</TableCell>
                           <TableCell className="px-4 py-3">
-                            {k.enabled ? (
-                              <Badge variant="success">Enabled</Badge>
-                            ) : k.disabledReason === 'plan_downgrade' ? (
-                              <Badge variant="secondary">Disabled</Badge>
+                            {!k.enabled ? (
+                              k.disabledReason === 'plan_downgrade' ? (
+                                <Badge variant="secondary">Disabled</Badge>
+                              ) : (
+                                <Badge variant="destructive">Revoked</Badge>
+                              )
+                            ) : k.expiresAt && k.expiresAt <= now ? (
+                              <Badge variant="secondary">Expired</Badge>
                             ) : (
-                              <Badge variant="destructive">Revoked</Badge>
+                              <Badge variant="success">Enabled</Badge>
+                            )}
+                            {k.enabled && k.expiresAt && k.expiresAt > now && (
+                              <div className="mt-1 text-[11px] text-muted-foreground whitespace-nowrap">
+                                Expires {dateFmt(k.expiresAt)}
+                              </div>
                             )}
                           </TableCell>
                           <TableCell className="px-4 py-3 text-right">
@@ -506,11 +581,11 @@ export default function ApiKeys() {
         </div>
 
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create API key</DialogTitle>
               <DialogDescription>
-                Give this key a name and choose its permissions.
+                Give this key a name, choose its permissions, and optionally limit how long and on what it works.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -566,6 +641,42 @@ export default function ApiKeys() {
                   })}
                 </div>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="key-expiry">Expires</Label>
+                <Select value={expiry} onValueChange={(v) => setExpiry(v as ExpiryValue)}>
+                  <SelectTrigger id="key-expiry" className="w-full cursor-pointer">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EXPIRY_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value} className="cursor-pointer">
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  A short expiry suits a key you hand to an AI tool or a one-off script.
+                </p>
+              </div>
+              <div className="space-y-3">
+                <Label>Access</Label>
+                <RadioGroup
+                  value={restricted ? "selected" : "all"}
+                  onValueChange={(v) => setRestricted(v === "selected")}
+                  className="gap-2"
+                >
+                  <label className="flex items-center gap-3 cursor-pointer text-sm">
+                    <RadioGroupItem value="all" />
+                    All checks
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer text-sm">
+                    <RadioGroupItem value="selected" />
+                    Only selected checks and folders
+                  </label>
+                </RadioGroup>
+                {restricted && <KeyAccessPicker value={access} onChange={setAccess} />}
+              </div>
             </div>
             <DialogFooter>
               <Button
@@ -575,7 +686,12 @@ export default function ApiKeys() {
               >
                 Cancel
               </Button>
-              <Button onClick={onCreate} disabled={creating} className="cursor-pointer">
+              <Button
+                onClick={onCreate}
+                disabled={creating || restrictedEmpty}
+                title={restrictedEmpty ? "Select at least one check or folder" : undefined}
+                className="cursor-pointer"
+              >
                 {creating ? "Creating..." : "Create"}
               </Button>
             </DialogFooter>
