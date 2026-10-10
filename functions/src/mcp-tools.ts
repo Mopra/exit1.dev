@@ -136,6 +136,7 @@ interface RawCheck {
   url?: string;
   status?: string;
   disabled?: boolean;
+  folder?: string | null;
   maintenanceMode?: boolean;
   responseTime?: number | null;
   lastStatusCode?: number | null;
@@ -151,6 +152,7 @@ function formatCheck(check: RawCheck) {
     name: check.name ?? null,
     url: check.url,
     status: check.status,
+    folder: check.folder ?? null,
     disabled: !!check.disabled,
     maintenanceMode: !!check.maintenanceMode,
     responseTimeMs: check.responseTime ?? null,
@@ -197,11 +199,13 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     readOnly: true,
     scope: API_SCOPES.CHECKS_READ,
     description:
-      "List monitored checks with their current status. Use for an overview, to find offline checks, or to see what is already monitored before creating duplicates.",
+      "List monitored checks with their current status and folder. Use for an overview, to find offline checks, or to see what is already monitored before creating duplicates. Pass folder to list one folder; add recursive to include its subfolders.",
     inputSchema: {
       type: "object",
       properties: {
         status: { type: "string", enum: ["online", "offline", "unknown"], description: "Filter by current status" },
+        folder: { type: "string", description: "Only checks in this folder, as a path like \"Clients/Acme\" (exact match unless recursive is true)" },
+        recursive: { type: "boolean", description: "With folder, also include checks in its subfolders (default false)" },
         limit: { type: "integer", minimum: 1, maximum: 100, description: "Results per page (default 25)" },
         page: { type: "integer", minimum: 1, description: "Page number" },
       },
@@ -209,7 +213,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     },
     handler: async (args, api) => {
       const body = unwrap(
-        await api.call("GET", "/checks", { query: { status: args.status, limit: args.limit, page: args.page } })
+        await api.call("GET", "/checks", { query: { status: args.status, folder: args.folder, recursive: args.recursive, limit: args.limit, page: args.page } })
       ) as { data: RawCheck[]; meta: unknown };
       const checks = (body.data || []).map(formatCheck);
       const counts = checks.reduce<Record<string, number>>((acc, c) => {
