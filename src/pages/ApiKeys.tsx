@@ -277,8 +277,7 @@ export default function ApiKeys() {
                   ? `You've reached the maximum of ${maxApiKeys} API ${maxApiKeys === 1 ? 'key' : 'keys'}. Upgrade to ${nextApiKeyTier.name} for up to ${nextApiKeyTier.max}, or revoke a key to free a slot.`
                   : `You've reached the maximum of ${maxApiKeys} API keys. Revoke and delete unused keys to create new ones.`
               }
-              ctaLabel="View billing"
-              ctaHref="/billing"
+              targetTier={nextApiKeyTier?.tier}
             />
           )}
 

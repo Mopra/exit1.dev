@@ -1,4 +1,5 @@
 import React from "react";
+import { billingPlansHref } from "@/lib/billing-links";
 import { Link } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 
@@ -51,7 +52,7 @@ export function FeatureGate({
   currentTier,
   title,
   description,
-  ctaHref = "/billing",
+  ctaHref,
   ctaLabel,
   children,
   className,
@@ -99,7 +100,7 @@ export function FeatureGate({
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button asChild className="cursor-pointer">
-            <Link to={ctaHref}>{resolvedCtaLabel}</Link>
+            <Link to={ctaHref ?? billingPlansHref(effectiveRequired)}>{resolvedCtaLabel}</Link>
           </Button>
           <Button asChild variant="outline" className="cursor-pointer">
             <Link to="/billing?tab=plans">See plans</Link>

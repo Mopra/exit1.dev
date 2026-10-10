@@ -190,11 +190,11 @@ export const pageItems: SearchItem[] = [
   },
   {
     id: 'page-billing',
-    name: 'Billing',
-    description: 'Manage your subscription and plan',
+    name: 'Plans & billing',
+    description: 'Upgrade, change your card, download invoices, cancel',
     path: '/billing',
     iconName: 'CreditCard',
-    keywords: ['upgrade', 'plan', 'subscription', 'payment', 'nano', 'scale', 'pricing'],
+    keywords: ['upgrade', 'plan', 'subscription', 'payment', 'card', 'credit card', 'invoice', 'receipt', 'vat', 'cancel', 'downgrade', 'indie', 'nano', 'pro', 'pricing', 'billing'],
     category: 'page',
   },
   {
@@ -318,7 +318,7 @@ export const docItems: SearchItem[] = [
     description: 'Plans, limits, and billing',
     path: 'https://docs.exit1.dev/billing',
     iconName: 'CreditCard',
-    keywords: ['billing', 'plan', 'pricing', 'upgrade', 'nano', 'scale', 'free'],
+    keywords: ['billing', 'plan', 'pricing', 'upgrade', 'indie', 'nano', 'pro', 'free', 'card', 'invoice', 'cancel'],
     category: 'doc',
     external: true,
   },

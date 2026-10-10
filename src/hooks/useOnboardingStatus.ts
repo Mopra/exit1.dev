@@ -86,10 +86,23 @@ const ONBOARDING_BYPASS_PATTERNS: RegExp[] = [
 // /checks) if the user is already onboarded.
 export function resolvePostAuthDestination(from?: string | null): string {
   if (!from) return '/onboarding';
-  if (ONBOARDING_BYPASS_PATTERNS.some((pattern) => pattern.test(from))) {
+  const pathname = from.split(/[?#]/, 1)[0];
+  if (ONBOARDING_BYPASS_PATTERNS.some((pattern) => pattern.test(pathname))) {
     return from;
   }
   return `/onboarding?next=${encodeURIComponent(from)}`;
+}
+
+/**
+ * The page AuthGuard bounced a signed-out visitor away from, with its query
+ * string. Keeping the query matters for links like
+ * `/billing?tab=plans&plan=nano` from the pricing page: dropping it sends the
+ * user back to a generic page after sign-in instead of the plan they picked.
+ */
+export function fromLocationState(state: unknown): string | undefined {
+  const from = (state as { from?: { pathname?: string; search?: string } } | null)?.from;
+  if (!from?.pathname) return undefined;
+  return `${from.pathname}${from.search ?? ''}`;
 }
 
 // Retry the server hydration aggressively before falling back to the per-user

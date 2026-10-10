@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from "react-router-dom"
 import { AppSidebar } from './AppSidebar';
 import { SystemAlert } from './SystemAlert';
+import { PastDueBanner } from './PastDueBanner';
 import { DeployModeBanner } from './DeployModeBanner';
 import NotificationBell from './NotificationBell';
 import HelpButton from './HelpButton';
@@ -49,10 +50,15 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                 {isSignedIn && !isLoading && (
                   <span className="select-none inline-flex items-center gap-1 text-xs font-medium whitespace-nowrap">
                     {tierVisual.palette ? (
-                      <span
+                      // The plan name doubles as the way into billing, so a
+                      // paying user looking for their card or invoices has an
+                      // obvious place to click.
+                      <Link
+                        to="/billing"
                         data-tier-accent
+                        title="Plans & billing"
                         className={cn(
-                          "inline-flex items-center gap-1",
+                          "inline-flex items-center gap-1 cursor-pointer rounded-sm hover:opacity-80 transition-opacity",
                           tierVisual.palette.shadow,
                         )}
                         style={{ ['--tier-accent' as string]: tierVisual.palette.glow }}
@@ -61,15 +67,15 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                         <span className="font-semibold lowercase">
                           {tierVisual.label}
                         </span>
-                      </span>
+                      </Link>
                     ) : (
                       <>
-                        <span className="font-semibold text-muted-foreground/90">free</span>
+                        <span className="hidden sm:inline font-semibold text-muted-foreground/90">free</span>
                         <Button
                           asChild
                           size="sm"
                           variant="outline"
-                          className="btn-upgrade-shine h-6 px-2 text-xs font-medium cursor-pointer bg-tier-nano/15 border-tier-nano/40 text-tier-nano hover:bg-tier-nano/25 hover:border-tier-nano/60 hover:text-tier-nano touch-manipulation whitespace-nowrap hidden sm:inline-flex"
+                          className="btn-upgrade-shine h-6 px-2 text-xs font-medium cursor-pointer bg-tier-nano/15 border-tier-nano/40 text-tier-nano hover:bg-tier-nano/25 hover:border-tier-nano/60 hover:text-tier-nano touch-manipulation whitespace-nowrap inline-flex"
                         >
                           <Link to="/billing?tab=plans">Upgrade</Link>
                         </Button>
@@ -107,6 +113,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           <main className="flex flex-1 flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden" style={{ overscrollBehavior: 'contain' }}>
             <div className="flex flex-1 flex-col pt-16 pb-6 px-1 sm:px-4 md:px-6 lg:px-12">
               <SystemAlert />
+              {isSignedIn && <PastDueBanner />}
               {children}
             </div>
             <Footer />

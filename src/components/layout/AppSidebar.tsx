@@ -17,6 +17,7 @@ import {
   Radio,
   Plug,
   Bot,
+  CreditCard,
 } from "lucide-react"
 
 function DiscordIcon({ className }: { className?: string }) {
@@ -158,6 +159,13 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
     },
   ] : [],
   navSecondary: [
+    // Billing used to be reachable only from the avatar menu, and people kept
+    // asking how to upgrade or change their card. It sits here, always visible.
+    {
+      title: "Plans & billing",
+      url: "/billing",
+      icon: CreditCard,
+    },
     {
       title: "Docs",
       url: "https://docs.exit1.dev",

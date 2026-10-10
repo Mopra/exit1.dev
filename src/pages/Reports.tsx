@@ -730,6 +730,7 @@ const Reports: React.FC = () => {
         <div className="px-4 sm:px-6 pt-4">
           <UpgradeBanner
             variant="teaser"
+            targetTier={nextRetentionTier?.tier}
             message={
               nextRetentionTier && reportWindowDays < 90
                 ? `Your plan keeps ${formatRetentionForTier(tier)} of history. Upgrade to ${nextRetentionTier.name} for ${formatRetentionForTier(nextRetentionTier.tier)}.`

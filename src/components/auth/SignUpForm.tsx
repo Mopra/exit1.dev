@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { resolvePostAuthDestination } from '@/hooks/useOnboardingStatus';
+import { resolvePostAuthDestination, fromLocationState } from '@/hooks/useOnboardingStatus';
 
 type Phase = 'initial' | 'verifying';
 
@@ -122,7 +122,7 @@ export function SignUpForm({
 
       if (result.status === 'complete') {
         await setActive!({ session: result.createdSessionId });
-        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
+        navigate(resolvePostAuthDestination(fromLocationState(location.state)), { replace: true });
       } else if (result.status === 'missing_requirements') {
         await signUp!.prepareEmailAddressVerification({ strategy: 'email_code' });
         setPhase('verifying');
@@ -168,7 +168,7 @@ export function SignUpForm({
       const result = await signUp!.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive!({ session: result.createdSessionId });
-        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
+        navigate(resolvePostAuthDestination(fromLocationState(location.state)), { replace: true });
       } else {
         setError('Verification failed. Please try again.');
       }
@@ -194,7 +194,7 @@ export function SignUpForm({
     setError(null);
 
     try {
-      const from = resolvePostAuthDestination(location.state?.from?.pathname);
+      const from = resolvePostAuthDestination(fromLocationState(location.state));
 
       const redirectUrl = new URL(`${window.location.origin}/sso-callback`);
       redirectUrl.searchParams.set('__clerk_strategy', strategy);

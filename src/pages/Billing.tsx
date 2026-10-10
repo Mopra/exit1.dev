@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ComponentProps } from "react"
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react"
 import { useSearchParams } from "react-router-dom"
 import {
   SignedIn,
@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   LayoutDashboard,
   Building2,
+  ExternalLink,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/Badge"
@@ -65,6 +66,7 @@ import {
   type PlanMatrixEntry,
 } from "@/components/billing/plan-matrix-data"
 import { usePlan, type Tier } from "@/hooks/usePlan"
+import { useOpenPaymentSettings } from "@/hooks/usePaymentSettings"
 import { getActivePaidSubscriptionItem } from "@/lib/subscription"
 import {
   formatEmailBudget,
@@ -87,7 +89,16 @@ const FOUNDERS_FEATURES: PlanFeatureRow[] = PLAN_MATRIX.find(
 // Tabs that exist for each audience. Used to validate `?tab=` before trusting
 // it, so a stale link can never select a tab that isn't rendered.
 const PAID_TABS = ["overview", "plans", "payment-methods", "history", "organization"]
+// Free accounts that paid us before (or still have a card saved) keep the
+// card, invoice and receipt tabs. Hiding them left churned customers with no
+// way to fetch an old invoice or remove their card.
+const FORMER_PAID_TABS = ["plans", "payment-methods", "history", "organization"]
 const FREE_TABS = ["plans"]
+
+/** `?plan=` values a deep link may preselect. */
+const SELECTABLE_PLAN_KEYS: string[] = PLAN_MATRIX.filter((p) => p.priceMonthly > 0).map(
+  (p) => p.key,
+)
 
 /**
  * A plan change that needs the user to confirm something Clerk's checkout
@@ -195,8 +206,14 @@ export default function Billing() {
   } = usePaymentAttempts({ for: "user", pageSize: 6 })
   const { user } = useUser()
   const { organization } = useOrganization()
+  const openPaymentSettings = useOpenPaymentSettings()
+
+  const paymentAttemptItems = paymentAttempts ?? []
+  const hasBillingHistory =
+    (paymentMethods?.length ?? 0) > 0 || paymentAttemptItems.length > 0
 
   const showPaidTabs = realNano
+  const showAccountTabs = realNano || hasBillingHistory
   const defaultTab = showPaidTabs ? "overview" : "plans"
 
   // Tab selection lives in the URL so every upgrade CTA in the app can deep
@@ -205,7 +222,11 @@ export default function Billing() {
   // plan picker, and had to discover the Plans tab on their own.
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedTab = searchParams.get("tab")
-  const availableTabs = showPaidTabs ? PAID_TABS : FREE_TABS
+  const availableTabs = showPaidTabs
+    ? PAID_TABS
+    : showAccountTabs
+      ? FORMER_PAID_TABS
+      : FREE_TABS
   const activeTab =
     requestedTab && availableTabs.includes(requestedTab) ? requestedTab : defaultTab
 
@@ -241,9 +262,34 @@ export default function Billing() {
   // Default the plan-grid toggle to the user's current billing cadence so the
   // displayed price matches what they're already paying. Fall back to annual
   // for free users since annual is the recommended/discounted option.
+  // A `?period=` from the pricing page wins, so the price the visitor clicked
+  // on is the price they see here.
+  const requestedPeriod = searchParams.get("period")
   const currentPeriod: BillingPeriod =
-    nanoItem?.planPeriod === "month" ? "month" : "annual"
+    requestedPeriod === "monthly" || requestedPeriod === "month"
+      ? "month"
+      : requestedPeriod === "annual"
+        ? "annual"
+        : nanoItem?.planPeriod === "month"
+          ? "month"
+          : "annual"
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>(currentPeriod)
+
+  // `?plan=nano` marks the card the user came here for (from an upgrade prompt
+  // or the pricing page) and scrolls it into view, so on a phone they don't
+  // land on Free and have to hunt for it.
+  const requestedPlan = searchParams.get("plan")
+  const selectedPlanKey =
+    requestedPlan && SELECTABLE_PLAN_KEYS.includes(requestedPlan) ? requestedPlan : null
+  useEffect(() => {
+    if (activeTab !== "plans" || !selectedPlanKey) return
+    const timer = window.setTimeout(() => {
+      document
+        .getElementById(`plan-${selectedPlanKey}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" })
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [activeTab, selectedPlanKey])
 
   // Clerk plan catalogue — used to resolve plan IDs for CheckoutButton.
   const { data: clerkPlans } = usePlans()
@@ -293,8 +339,6 @@ export default function Billing() {
       .join(", ")
     return paymentMethods.length > 2 ? `${cards} +${paymentMethods.length - 2}` : cards
   }, [isPaymentMethodsLoading, paymentMethods])
-
-  const paymentAttemptItems = paymentAttempts ?? []
 
   // Clerk grants a free trial only to accounts that have never paid, so a
   // churned user coming back to Free must not be shown trial wording. Any
@@ -355,19 +399,19 @@ export default function Billing() {
                   <Sparkles className="w-4 h-4 flex-shrink-0" />
                   <span className="text-[10px] sm:text-sm leading-tight">Plans</span>
                 </TabsTrigger>
-                {showPaidTabs && (
+                {showAccountTabs && (
                   <TabsTrigger value="payment-methods" className={TAB_TRIGGER_CLASS}>
                     <CreditCard className="w-4 h-4 flex-shrink-0" />
                     <span className="text-[10px] sm:text-sm leading-tight">Payment</span>
                   </TabsTrigger>
                 )}
-                {showPaidTabs && (
+                {showAccountTabs && (
                   <TabsTrigger value="history" className={TAB_TRIGGER_CLASS}>
                     <Receipt className="w-4 h-4 flex-shrink-0" />
                     <span className="text-[10px] sm:text-sm leading-tight">Invoices</span>
                   </TabsTrigger>
                 )}
-                {showPaidTabs && (
+                {showAccountTabs && (
                   <TabsTrigger value="organization" className={TAB_TRIGGER_CLASS}>
                     <Building2 className="w-4 h-4 flex-shrink-0" />
                     <span className="text-[10px] sm:text-sm leading-tight">Org</span>
@@ -414,6 +458,26 @@ export default function Billing() {
                     </CardHeader>
 
                     <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-6">
+                      {subscription?.status === "past_due" && (
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm">
+                          <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+                          <div className="flex-1 space-y-1">
+                            <p className="font-medium">Your last payment failed</p>
+                            <p className="text-muted-foreground">
+                              Your plan is still active while the charge is retried.
+                              Add a working card to keep it.
+                            </p>
+                          </div>
+                          <Button
+                            variant="destructive"
+                            className="cursor-pointer shrink-0"
+                            onClick={openPaymentSettings}
+                          >
+                            Update card
+                          </Button>
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <p className="text-sm text-muted-foreground">Plan</p>
@@ -457,13 +521,24 @@ export default function Billing() {
                           className="cursor-pointer"
                           onClick={() => handleTabChange("plans")}
                         >
-                          Change plan
+                          Upgrade or change plan
                         </Button>
-                        <SubscriptionDetailsButton>
-                          <Button variant="outline" className="cursor-pointer">
-                            Subscription details
-                          </Button>
-                        </SubscriptionDetailsButton>
+                        <Button
+                          variant="outline"
+                          className="cursor-pointer gap-2"
+                          onClick={openPaymentSettings}
+                        >
+                          <CreditCard className="h-4 w-4" />
+                          Update card
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="cursor-pointer gap-2"
+                          onClick={() => handleTabChange("history")}
+                        >
+                          <Receipt className="h-4 w-4" />
+                          Invoices
+                        </Button>
                         {realNano && (
                           <Button
                             variant="ghost"
@@ -495,13 +570,14 @@ export default function Billing() {
               )}
 
               {/* ---- Payment methods tab ---- */}
-              {showPaidTabs && (
+              {showAccountTabs && (
                 <TabsContent value="payment-methods" className="space-y-6 mt-0">
                   <Card className="bg-card border-0 shadow-lg">
                     <CardHeader className="p-4 sm:p-6 lg:p-8">
                       <CardTitle className="text-xl">Payment Methods</CardTitle>
                       <CardDescription>
-                        Manage your saved payment methods for subscriptions and purchases.
+                        The card we charge for your plan. Add a new card, make it the
+                        default, or remove an old one.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-4">
@@ -512,13 +588,15 @@ export default function Billing() {
                           <CreditCard className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
                           <p className="text-sm font-medium mb-2">No payment methods</p>
                           <p className="text-sm text-muted-foreground mb-4">
-                            Add a payment method to subscribe to a plan.
+                            You add a card when you pick a plan, or you can add one now.
                           </p>
-                          <SubscriptionDetailsButton>
-                            <Button variant="default" className="cursor-pointer">
-                              Add payment method
-                            </Button>
-                          </SubscriptionDetailsButton>
+                          <Button
+                            variant="default"
+                            className="cursor-pointer"
+                            onClick={openPaymentSettings}
+                          >
+                            Add a card
+                          </Button>
                         </div>
                       ) : (
                         <div className="space-y-3">
@@ -552,11 +630,14 @@ export default function Billing() {
                     </CardContent>
                     {paymentMethods && paymentMethods.length > 0 && (
                       <CardFooter className="px-4 sm:px-6 lg:px-8 pt-0 pb-4 sm:pb-6 lg:pb-8">
-                        <SubscriptionDetailsButton>
-                          <Button variant="outline" className="cursor-pointer">
-                            Manage payment methods
-                          </Button>
-                        </SubscriptionDetailsButton>
+                        <Button
+                          variant="default"
+                          className="cursor-pointer gap-2"
+                          onClick={openPaymentSettings}
+                        >
+                          <CreditCard className="h-4 w-4" />
+                          Add or change card
+                        </Button>
                       </CardFooter>
                     )}
                   </Card>
@@ -564,14 +645,29 @@ export default function Billing() {
               )}
 
               {/* ---- Billing history tab ---- */}
-              {showPaidTabs && (
+              {showAccountTabs && (
                 <TabsContent value="history" className="space-y-6 mt-0">
                   <Card className="bg-card border-0 shadow-lg">
                     <CardHeader className="p-4 sm:p-6 lg:p-8">
-                      <CardTitle className="text-xl">Billing History</CardTitle>
-                      <CardDescription>
-                        Review your payment history and download receipts.
-                      </CardDescription>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <CardTitle className="text-xl">Invoices & receipts</CardTitle>
+                          <CardDescription className="mt-1.5">
+                            Every charge, with a PDF receipt. Add your company name,
+                            address and VAT number on the Org tab and they show on
+                            the receipt.
+                          </CardDescription>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="cursor-pointer gap-2"
+                          onClick={openPaymentSettings}
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          Monthly statements
+                        </Button>
+                      </div>
                     </CardHeader>
                     <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8">
                       {isPaymentAttemptsLoading ? (
@@ -666,7 +762,7 @@ export default function Billing() {
               )}
 
               {/* ---- Organization tab ---- */}
-              {showPaidTabs && (
+              {showAccountTabs && (
                 <TabsContent value="organization" className="space-y-6 mt-0">
                   <OrganizationBillingForm />
                 </TabsContent>
@@ -712,7 +808,15 @@ export default function Billing() {
                       subscribedPeriod={subscribedPeriod}
                       clerkPlans={clerkPlans}
                       hasEverPaid={hasEverPaid}
+                      selectedPlanKey={selectedPlanKey}
                       onRequestAction={setPlanAction}
+                    />
+
+                    <BillingHelp
+                      isPaid={realNano}
+                      onOpenPaymentSettings={openPaymentSettings}
+                      onShowInvoices={showAccountTabs ? () => handleTabChange("history") : null}
+                      onCancel={realNano ? () => setPlanAction({ kind: "cancel" }) : null}
                     />
 
                     <p className="text-center text-xs text-muted-foreground">
@@ -874,6 +978,8 @@ interface PlanMatrixProps {
   clerkPlans: ClerkPlan[] | null | undefined
   /** Whether the account has any settled payment (blocks trial wording). */
   hasEverPaid: boolean
+  /** Plan key from `?plan=`, marked and scrolled to. */
+  selectedPlanKey: string | null
   onRequestAction: (action: PlanAction) => void
 }
 
@@ -885,6 +991,7 @@ function PlanMatrix({
   subscribedPeriod,
   clerkPlans,
   hasEverPaid,
+  selectedPlanKey,
   onRequestAction,
 }: PlanMatrixProps) {
   const plansLoaded = Array.isArray(clerkPlans) && clerkPlans.length > 0
@@ -903,12 +1010,16 @@ function PlanMatrix({
     // Only a free user starting their first paid subscription gets the trial.
     // See the note on TRIAL_DAYS in plan-matrix-data.ts.
     const isTrialCta = isTrialEligible(realTier, isFounders, hasEverPaid, entry)
+    // The plan the user came here to buy takes the badge from "Most popular".
+    const isSelected = selectedPlanKey === entry.key && !isCurrent
     return (
       <PlanCard
         key={entry.key}
+        id={`plan-${entry.key}`}
         entry={entry}
         billingPeriod={billingPeriod}
-        highlighted={highlighted}
+        highlighted={selectedPlanKey && !isCurrent ? isSelected : highlighted}
+        highlightLabel={isSelected ? "Your pick" : undefined}
         isCurrent={isCurrent}
         ctaNote={isTrialCta ? trialNote(entry, billingPeriod) : null}
         cta={
@@ -1162,6 +1273,77 @@ function FoundersCard({ period }: { period: BillingPeriod }) {
         If you cancel, new pricing applies if you re-subscribe. Your Founders
         pricing won't come back.
       </p>
+    </div>
+  )
+}
+
+// ---- Billing help ----
+
+/**
+ * The four questions support gets most, answered right under the plan grid,
+ * each with the button that does the thing. Anyone unsure how upgrading or
+ * paying works should never have to leave this page to find out.
+ */
+function BillingHelp({
+  isPaid,
+  onOpenPaymentSettings,
+  onShowInvoices,
+  onCancel,
+}: {
+  isPaid: boolean
+  onOpenPaymentSettings: () => void
+  /** Null when the account has no invoices to show yet. */
+  onShowInvoices: (() => void) | null
+  /** Null when there is no subscription to cancel. */
+  onCancel: (() => void) | null
+}) {
+  const items: { q: string; a: string; action?: { label: string; onClick: () => void } }[] = [
+    {
+      q: "How do I upgrade?",
+      a: isPaid
+        ? "Click Upgrade on the plan you want. It switches on right away, and you only pay the difference for the rest of this billing period."
+        : "Click the button on the plan you want and pay by card. Your new limits switch on right away.",
+    },
+    {
+      q: "How do I change my card?",
+      a: "Add a new card, make it the default, and remove the old one. The next charge goes to the default card.",
+      action: { label: "Update card", onClick: onOpenPaymentSettings },
+    },
+    {
+      q: "Where are my invoices?",
+      a: onShowInvoices
+        ? "Every charge has a PDF receipt on the Invoices tab. Add your company details on the Org tab first."
+        : "After your first payment, every charge shows up here with a PDF receipt.",
+      action: onShowInvoices ? { label: "Open invoices", onClick: onShowInvoices } : undefined,
+    },
+    {
+      q: "How do I cancel?",
+      a: "Cancel any time here. You keep your plan until the end of the period you paid for, then move to Free. Nothing is deleted.",
+      action: onCancel ? { label: "Cancel subscription", onClick: onCancel } : undefined,
+    },
+  ]
+
+  return (
+    <div className="rounded-xl border bg-background/40 p-4 sm:p-6">
+      <h4 className="text-sm font-semibold mb-4">Billing, in plain words</h4>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+        {items.map((item) => (
+          <div key={item.q} className="flex flex-col gap-1.5">
+            <p className="text-sm font-medium">{item.q}</p>
+            <p className="text-sm text-muted-foreground flex-1">{item.a}</p>
+            {item.action && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="cursor-pointer w-fit mt-1"
+                onClick={item.action.onClick}
+              >
+                {item.action.label}
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

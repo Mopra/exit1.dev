@@ -134,6 +134,8 @@ interface PlanCardProps {
   ctaNote?: ReactNode
   /** Optional content rendered below the feature list (e.g. a testimonial). */
   footer?: ReactNode
+  /** DOM id, so a deep link can scroll the card into view. */
+  id?: string
 }
 
 export function PlanCard({
@@ -145,13 +147,15 @@ export function PlanCard({
   cta,
   ctaNote,
   footer,
+  id,
 }: PlanCardProps) {
   const tierVisual = getTierVisual(entry.tier)
 
   return (
     <div
+      id={id}
       className={cn(
-        "relative flex flex-col rounded-xl border backdrop-blur p-5 transition-shadow",
+        "relative flex flex-col rounded-xl border backdrop-blur p-5 transition-shadow scroll-mt-24",
         TIER_CARD_BG[entry.tier],
         TIER_CARD_BORDER[entry.tier],
         highlighted && TIER_CARD_GLOW[entry.tier],

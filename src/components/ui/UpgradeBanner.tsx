@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { Rocket, Sparkles, X } from 'lucide-react';
 import { Alert, AlertDescription } from './alert';
 import { Button } from './Button';
+import { billingPlansHref } from '@/lib/billing-links';
+import type { TierKey } from '@/lib/subscription';
 
 type TargetTier = 'indie' | 'nano' | 'pro';
 
@@ -17,8 +19,12 @@ interface UpgradeBannerProps {
   description?: string;
   variant?: 'limit' | 'teaser';
   onDismiss?: () => void;
-  /** Tier being promoted. Drives the default `ctaLabel` when not overridden. */
-  targetTier?: TargetTier;
+  /**
+   * Tier being promoted. Drives the default label and preselects that plan on
+   * the Billing page. Pass the tier the message names, or the button and the
+   * message disagree. `free` and null mean no tier: the button says "See plans".
+   */
+  targetTier?: TierKey | null;
   ctaLabel?: string;
   ctaHref?: string;
 }
@@ -30,10 +36,12 @@ export const UpgradeBanner: React.FC<UpgradeBannerProps> = ({
   onDismiss,
   targetTier,
   ctaLabel,
-  ctaHref = '/billing',
+  ctaHref,
 }) => {
+  const target: TargetTier | null = targetTier && targetTier !== 'free' ? targetTier : null;
   const resolvedCtaLabel =
-    ctaLabel ?? (targetTier ? `Upgrade to ${TIER_LABEL[targetTier]}` : 'Upgrade to Nano');
+    ctaLabel ?? (target ? `Upgrade to ${TIER_LABEL[target]}` : 'See plans');
+  const resolvedCtaHref = ctaHref ?? billingPlansHref(target);
 
   if (variant === 'teaser') {
     return (
@@ -49,7 +57,7 @@ export const UpgradeBanner: React.FC<UpgradeBannerProps> = ({
             </div>
           </div>
           <Button asChild size="sm" className="cursor-pointer w-full sm:w-auto shrink-0">
-            <Link to={ctaHref}>{resolvedCtaLabel}</Link>
+            <Link to={resolvedCtaHref}>{resolvedCtaLabel}</Link>
           </Button>
         </div>
       </div>
@@ -62,7 +70,7 @@ export const UpgradeBanner: React.FC<UpgradeBannerProps> = ({
       <AlertDescription className={`text-sm text-foreground flex items-center gap-3 flex-wrap ${onDismiss ? 'pr-8' : ''}`}>
         <span>{message}</span>
         <Button asChild size="sm" className="cursor-pointer w-fit shrink-0">
-          <Link to={ctaHref}>{resolvedCtaLabel}</Link>
+          <Link to={resolvedCtaHref}>{resolvedCtaLabel}</Link>
         </Button>
       </AlertDescription>
       {onDismiss && (

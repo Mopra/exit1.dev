@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/Label"
 import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { resolvePostAuthDestination } from '@/hooks/useOnboardingStatus';
+import { resolvePostAuthDestination, fromLocationState } from '@/hooks/useOnboardingStatus';
 
 type Phase = 'sign-in' | 'verifying' | 'second-factor';
 
@@ -70,7 +70,7 @@ export function LoginForm({
     setError(null);
 
     try {
-      const from = resolvePostAuthDestination(location.state?.from?.pathname);
+      const from = resolvePostAuthDestination(fromLocationState(location.state));
       log('Starting OAuth redirect', { strategy, from });
       
       // Add strategy and redirect URL as query parameters for better tracking
@@ -150,7 +150,7 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Sign-up fallback complete, setting active session');
         await setActive?.({ session: result.createdSessionId });
-        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
+        navigate(resolvePostAuthDestination(fromLocationState(location.state)), { replace: true });
       } else if (result.status === 'missing_requirements') {
         log('Sign-up requires email verification - preparing code');
         await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
@@ -231,7 +231,7 @@ export function LoginForm({
           // /onboarding self-redirects to `?next` (or /checks) if the user has
           // already onboarded, so we don't need to branch on onboarding state
           // here — and doing so pre-auth read the wrong user's cache.
-          const from = resolvePostAuthDestination(location.state?.from?.pathname);
+          const from = resolvePostAuthDestination(fromLocationState(location.state));
           log('Navigating after successful sign in', { from });
           navigate(from, { replace: true });
         } else if (result.status === 'needs_second_factor') {
@@ -341,7 +341,7 @@ export function LoginForm({
       const result = await signUp.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive?.({ session: result.createdSessionId });
-        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
+        navigate(resolvePostAuthDestination(fromLocationState(location.state)), { replace: true });
       } else {
         setError('Verification failed. Please try again.');
       }
@@ -378,7 +378,7 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Second factor complete, setting active session');
         await setActive({ session: result.createdSessionId });
-        const from = resolvePostAuthDestination(location.state?.from?.pathname);
+        const from = resolvePostAuthDestination(fromLocationState(location.state));
         log('Navigating after successful second factor', { from });
         navigate(from, { replace: true });
       } else {

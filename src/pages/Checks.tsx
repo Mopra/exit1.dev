@@ -36,6 +36,7 @@ import { generateFriendlyName } from '../lib/check-utils';
 import BulkImportModal from '../components/check/BulkImportModal';
 import { ExportChecksModal, type ExportSubmitParams } from '../components/check/ExportChecksModal';
 import { MaintenanceDialog } from '../components/check/MaintenanceDialog';
+import { billingPlansHref } from '../lib/billing-links';
 
 const CheckMapView = lazy(() => import("../components/check/CheckMapView"));
 
@@ -178,7 +179,7 @@ const Checks: React.FC = () => {
       if (!nano) {
         toast('Maintenance mode is a Nano feature', {
           description: 'Suppress alerts during planned downtime.',
-          action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
+          action: { label: 'Upgrade to Nano', onClick: () => navigate(billingPlansHref('nano')) },
         });
         return;
       }
@@ -190,19 +191,19 @@ const Checks: React.FC = () => {
       if (!nano) {
         toast('Maintenance mode is a Nano feature', {
           description: 'Suppress alerts during planned downtime.',
-          action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
+          action: { label: 'Upgrade to Nano', onClick: () => navigate(billingPlansHref('nano')) },
         });
         return;
       }
       setMaintenanceDialog({ open: true, checks: [check] });
     }
-  }, [nano, toggleMaintenanceMode]);
+  }, [nano, toggleMaintenanceMode, navigate]);
 
   const handleBulkToggleMaintenance = useCallback((selected: Website[], enabled: boolean) => {
     if (!nano) {
       toast('Maintenance mode is a Nano feature', {
         description: 'Suppress alerts during planned downtime.',
-        action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
+        action: { label: 'Upgrade to Nano', onClick: () => navigate(billingPlansHref('nano')) },
       });
       return;
     }
@@ -218,7 +219,7 @@ const Checks: React.FC = () => {
         .then(() => toast.success(`Exited maintenance for ${selected.filter(c => c.maintenanceMode).length} check(s)`))
         .catch((err: Error) => toast.error(err.message || 'Failed to exit maintenance'));
     }
-  }, [nano, toggleMaintenanceMode]);
+  }, [nano, toggleMaintenanceMode, navigate]);
 
   const handleMaintenanceConfirm = useCallback(async (result: import('../components/check/MaintenanceDialog').MaintenanceDialogResult) => {
     setMaintenanceLoading(true);
@@ -680,7 +681,7 @@ const Checks: React.FC = () => {
           <UpgradeBanner message={isGrandfathered
             ? `Your ${TIER_DISPLAY_NAME[tier]} plan now includes ${maxChecks} checks. Your existing ${checks.length} checks will keep running${nextCheckTier ? `, but upgrade to ${nextCheckTier.name} to add more` : ''}.`
             : `You've reached the ${TIER_DISPLAY_NAME[tier]} plan limit of ${maxChecks} checks.${nextCheckTier ? ` Upgrade to ${nextCheckTier.name} to monitor up to ${nextCheckTier.max}.` : ''}`
-          } />
+          } targetTier={nextCheckTier?.tier} />
         </div>
       )}
 

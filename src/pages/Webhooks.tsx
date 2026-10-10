@@ -13,7 +13,7 @@ import type { WebhookCheckFilter, WebhookSettings, TestResult, WebhookEvent } fr
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
 import { usePlan } from '@/hooks/usePlan';
-import { getMaxWebhooksForTier } from '../lib/subscription';
+import { getMaxWebhooksForTier, nextTierWithMore } from '../lib/subscription';
 import type { IntegrationScope, WebhookPlatformType } from '../lib/integration-scope';
 import {
   labelsForScope,
@@ -425,7 +425,10 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
         )}
 
         {atWebhookLimit && !hasDowngradedWebhooks && (
-          <UpgradeBanner message={labels.upgradeLimitMessage(tier)} />
+          <UpgradeBanner
+            message={labels.upgradeLimitMessage(tier)}
+            targetTier={nextTierWithMore(tier, 'maxWebhooks')?.tier}
+          />
         )}
 
         {/* Cross-link to the sibling page so existing users can find items that
