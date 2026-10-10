@@ -15,7 +15,7 @@ const ROUTE_DOCS: Array<{ pattern: string; path: string; label: string }> = [
   { pattern: "/reports", path: "/analytics/reports", label: "Reports docs" },
   { pattern: "/api", path: "/api-reference", label: "API reference docs" },
   { pattern: "/api-keys", path: "/api-reference/authentication", label: "API authentication docs" },
-  { pattern: "/billing", path: "/billing", label: "Billing docs" },
+  { pattern: "/billing", path: "/billing/manage", label: "How billing works" },
   { pattern: "/domain-intelligence", path: "/domain-intelligence", label: "Domain intelligence docs" },
   { pattern: "/status", path: "/status-pages", label: "Status pages docs" },
   { pattern: "/status/:checkId", path: "/status-pages", label: "Status pages docs" },

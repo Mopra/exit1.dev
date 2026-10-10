@@ -776,7 +776,7 @@ export default function Billing() {
                       <div>
                         <CardTitle className="text-xl">Plans & Pricing</CardTitle>
                         <CardDescription className="mt-2">
-                          Choose the plan that's right for you. Secure checkout handled by Clerk — cancel anytime.
+                          Choose the plan that's right for you. Pay by card in a secure checkout. Cancel any time.
                         </CardDescription>
                       </div>
                       <TierBadge
