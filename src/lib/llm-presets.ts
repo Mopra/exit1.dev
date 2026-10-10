@@ -1,3 +1,5 @@
+import type { JsonPathOperator } from '../types';
+
 // One-click presets for the LLM check type. Selecting a provider prefills the
 // CheckForm fields with a working canary request: a tiny "Reply with PONG"
 // prompt plus a default assertion that catches silent model fallback
@@ -25,7 +27,7 @@ export interface LlmPreset {
   /** Comma-joined substrings that must appear in the response body. */
   containsText: string;
   jsonPath: string;
-  jsonPathOperator: 'equals' | 'not_equals' | 'contains' | 'exists';
+  jsonPathOperator: JsonPathOperator;
   expectedValue: string;
   /** Short hint shown under the preset selector. */
   hint: string;

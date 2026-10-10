@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { cn } from '@/lib/utils';
 import * as z from 'zod';
@@ -61,9 +61,10 @@ import {
   HeartPulse,
   FileBadge,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { BadgeEmbed } from './BadgeEmbed';
-import type { Website } from '../../types';
+import type { JsonPathOperator, MatchMode, ResponseValidation, Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
@@ -119,6 +120,36 @@ const TIMEZONE_OPTIONS = [
   { value: 'Africa/Lagos', label: 'Lagos (WAT)' },
 ];
 
+const JSON_PATH_OPERATORS = [
+  'equals',
+  'not_equals',
+  'contains',
+  'exists',
+  'greater_than',
+  'greater_or_equal',
+  'less_than',
+  'less_or_equal',
+] as const satisfies readonly JsonPathOperator[];
+
+const JSON_PATH_OPERATOR_LABELS: Record<JsonPathOperator, string> = {
+  equals: 'equals',
+  not_equals: 'not equals',
+  contains: 'contains',
+  exists: 'exists',
+  greater_than: '>',
+  greater_or_equal: '>=',
+  less_than: '<',
+  less_or_equal: '<=',
+};
+
+const NUMERIC_JSON_PATH_OPERATORS: ReadonlySet<JsonPathOperator> = new Set([
+  'greater_than', 'greater_or_equal', 'less_than', 'less_or_equal',
+]);
+
+const isNumericText = (v: string) => v.trim() !== '' && Number.isFinite(Number(v.trim()));
+
+const EMPTY_JSON_ASSERTION = { path: '', operator: 'equals' as JsonPathOperator, expectedValue: '' };
+
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string(),
@@ -141,9 +172,18 @@ const formSchema = z.object({
   requestHeaders: z.string().optional(),
   requestBody: z.string().optional(),
   containsText: z.string().optional(),
-  jsonPath: z.string().optional(),
-  jsonPathOperator: z.enum(['equals', 'not_equals', 'contains', 'exists']).optional(),
-  expectedValue: z.string().optional(),
+  containsTextMode: z.enum(['all', 'any']).optional(),
+  notContainsText: z.string().optional(),
+  jsonAssertions: z.array(z.object({
+    path: z.string(),
+    operator: z.enum(JSON_PATH_OPERATORS),
+    expectedValue: z.string(),
+  }).superRefine((a, ctx) => {
+    if (a.path.trim() && NUMERIC_JSON_PATH_OPERATORS.has(a.operator) && !isNumericText(a.expectedValue)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedValue'], message: 'Enter a number' });
+    }
+  })).max(20).optional(),
+  jsonAssertionsMode: z.enum(['all', 'any']).optional(),
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.union([z.number().min(1).max(99), z.literal('')]).optional(),
   peerConfirmDisabled: z.boolean().optional(),
@@ -167,6 +207,67 @@ const formSchema = z.object({
 });
 
 type CheckFormData = z.infer<typeof formSchema>;
+type FormJsonAssertion = NonNullable<CheckFormData['jsonAssertions']>[number];
+
+const expectedValueToText = (v: unknown): string =>
+  v === undefined || v === null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
+
+// Stored validation -> form rows. The list wins over the legacy single assertion,
+// matching the runner. Always at least one (empty) row so the editor is visible.
+function toFormJsonAssertions(rv: ResponseValidation | undefined): FormJsonAssertion[] {
+  const stored = rv?.jsonAssertions?.length
+    ? rv.jsonAssertions
+    : rv?.jsonPath
+      ? [{ path: rv.jsonPath, operator: rv.jsonPathOperator, expectedValue: rv.expectedValue }]
+      : [];
+  const rows = stored.map((a) => ({
+    path: a.path,
+    operator: a.operator ?? 'equals',
+    expectedValue: expectedValueToText(a.expectedValue),
+  }));
+  return rows.length ? rows : [EMPTY_JSON_ASSERTION];
+}
+
+const splitCommaList = (v: string | undefined): string[] =>
+  (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+// Form -> stored validation. One assertion is written to the legacy single fields,
+// so checks that never use AND/OR keep the shape every runner already understands;
+// two or more go to jsonAssertions.
+function toResponseValidation(data: CheckFormData): ResponseValidation {
+  const validation: ResponseValidation = {};
+  const containsText = splitCommaList(data.containsText);
+  if (containsText.length) {
+    validation.containsText = containsText;
+    if (data.containsTextMode === 'any' && containsText.length > 1) validation.containsTextMode = 'any';
+  }
+  const notContainsText = splitCommaList(data.notContainsText);
+  if (notContainsText.length) validation.notContainsText = notContainsText;
+
+  const assertions = (data.jsonAssertions ?? [])
+    .filter((a) => a.path.trim())
+    .map((a) => {
+      const out: { path: string; operator: JsonPathOperator; expectedValue?: unknown } = {
+        path: a.path.trim(),
+        operator: a.operator,
+      };
+      // 'exists' ignores expectedValue; numeric operators store a real number.
+      if (a.operator !== 'exists') {
+        out.expectedValue = NUMERIC_JSON_PATH_OPERATORS.has(a.operator) ? Number(a.expectedValue.trim()) : a.expectedValue;
+      }
+      return out;
+    });
+  if (assertions.length === 1) {
+    const [only] = assertions;
+    validation.jsonPath = only.path;
+    validation.jsonPathOperator = only.operator;
+    if ('expectedValue' in only) validation.expectedValue = only.expectedValue;
+  } else if (assertions.length > 1) {
+    validation.jsonAssertions = assertions;
+    validation.jsonAssertionsMode = (data.jsonAssertionsMode ?? 'all') as MatchMode;
+  }
+  return validation;
+}
 
 type UrlProtocol = 'https://' | 'http://' | 'tcp://' | 'udp://' | 'ping://' | 'ws://' | 'wss://';
 
@@ -285,12 +386,7 @@ interface CheckFormProps {
     expectedStatusCodes?: number[];
     requestHeaders?: { [key: string]: string };
     requestBody?: string;
-    responseValidation?: {
-      containsText?: string[];
-      jsonPath?: string;
-      expectedValue?: unknown;
-      jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
-    };
+    responseValidation?: ResponseValidation;
     redirectValidation?: {
       expectedTarget: string;
       matchMode: 'contains' | 'exact';
@@ -354,9 +450,10 @@ export default function CheckForm({
       requestHeaders: '',
       requestBody: '',
       containsText: '',
-      jsonPath: '',
-      jsonPathOperator: 'equals',
-      expectedValue: '',
+      containsTextMode: 'all',
+      notContainsText: '',
+      jsonAssertions: [EMPTY_JSON_ASSERTION],
+      jsonAssertionsMode: 'all',
       immediateRecheckEnabled: true, // Default to enabled
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
       peerConfirmDisabled: false, // Default off — peer confirmation ON for eligible checks
@@ -377,7 +474,8 @@ export default function CheckForm({
   const watchHttpMethod = form.watch('httpMethod');
   const watchType = form.watch('type');
   const watchPublic = form.watch('public');
-  const watchJsonPathOperator = form.watch('jsonPathOperator');
+  const jsonAssertionFields = useFieldArray({ control: form.control, name: 'jsonAssertions' });
+  const watchJsonAssertions = form.watch('jsonAssertions');
   const isLlmType = watchType === 'llm';
   const isHttpType = watchType === 'website' || watchType === 'rest_endpoint' || watchType === 'llm' || watchType === 'redirect';
   const isSocketType = watchType === 'tcp' || watchType === 'udp';
@@ -481,15 +579,10 @@ export default function CheckForm({
     const containsText = source.responseValidation?.containsText?.length
       ? source.responseValidation.containsText.join(',')
       : '';
-    const jsonPath = source.responseValidation?.jsonPath ?? '';
-    const jsonPathOperator = source.responseValidation?.jsonPathOperator ?? 'equals';
-    const expectedValueRaw = source.responseValidation?.expectedValue;
-    const expectedValue =
-      expectedValueRaw === undefined || expectedValueRaw === null
-        ? ''
-        : typeof expectedValueRaw === 'string'
-          ? expectedValueRaw
-          : JSON.stringify(expectedValueRaw);
+    const notContainsText = source.responseValidation?.notContainsText?.length
+      ? source.responseValidation.notContainsText.join(',')
+      : '';
+    const jsonAssertions = toFormJsonAssertions(source.responseValidation);
     setUrlProtocol(protocol);
 
     form.reset({
@@ -504,9 +597,10 @@ export default function CheckForm({
       requestHeaders,
       requestBody: source.requestBody ?? '',
       containsText,
-      jsonPath,
-      jsonPathOperator,
-      expectedValue,
+      containsTextMode: source.responseValidation?.containsTextMode ?? 'all',
+      notContainsText,
+      jsonAssertions,
+      jsonAssertionsMode: source.responseValidation?.jsonAssertionsMode ?? 'all',
       immediateRecheckEnabled: source.immediateRecheckEnabled !== false,
       downConfirmationAttempts: source.downConfirmationAttempts ?? 4,
       peerConfirmDisabled: (source as { peerConfirmDisabled?: boolean }).peerConfirmDisabled === true,
@@ -766,9 +860,9 @@ export default function CheckForm({
     form.setValue('requestHeaders', preset.requestHeaders);
     form.setValue('requestBody', preset.requestBody);
     form.setValue('containsText', preset.containsText);
-    form.setValue('jsonPath', preset.jsonPath);
-    form.setValue('jsonPathOperator', preset.jsonPathOperator);
-    form.setValue('expectedValue', preset.expectedValue);
+    form.setValue('jsonAssertions', [
+      { path: preset.jsonPath, operator: preset.jsonPathOperator, expectedValue: preset.expectedValue },
+    ]);
     if (!form.getValues('name')?.trim()) {
       form.setValue('name', `${preset.label} LLM`);
       userEditedName.current = true;
@@ -875,18 +969,7 @@ export default function CheckForm({
       });
     }
 
-    const validation: any = {};
-    if (isHttpCheck && data.containsText?.trim()) {
-      validation.containsText = data.containsText.split(',').map(s => s.trim()).filter(s => s);
-    }
-    if (isHttpCheck && data.jsonPath?.trim()) {
-      validation.jsonPath = data.jsonPath.trim();
-      validation.jsonPathOperator = data.jsonPathOperator ?? 'equals';
-      // 'exists' ignores expectedValue; everything else compares against it.
-      if (data.jsonPathOperator !== 'exists' && data.expectedValue !== undefined) {
-        validation.expectedValue = data.expectedValue;
-      }
-    }
+    const validation: ResponseValidation = isHttpCheck ? toResponseValidation(data) : {};
 
     const submitData = {
       id: effectiveCheck?.id,
@@ -2061,92 +2144,192 @@ export default function CheckForm({
                             )}
 
                             {!isRedirectType && (
-                              <FormField
-                                control={form.control}
-                                name="containsText"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <FormLabel className="text-xs font-medium">Response contains text</FormLabel>
-                                    <FormControl>
-                                      <Input
-                                        {...field}
-                                        placeholder={isLlmType ? 'PONG' : 'success,online,healthy'}
-                                        className="h-8 text-base md:text-xs"
-                                      />
-                                    </FormControl>
-                                    <FormDescription className="text-xs">
-                                      Comma-separated text that must appear in the response
-                                    </FormDescription>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-                            )}
-
-                            {!isRedirectType && (
                               <div className="space-y-3 rounded-lg border border-border/40 p-3">
-                                <div className="text-xs font-medium text-muted-foreground">
-                                  JSONPath assertion
-                                  {isLlmType && <span className="ml-1.5 text-muted-foreground/70">— assert the served model to catch silent fallback</span>}
-                                </div>
-                                <FormField
-                                  control={form.control}
-                                  name="jsonPath"
-                                  render={({ field }) => (
-                                    <FormItem>
-                                      <FormControl>
-                                        <Input
-                                          {...field}
-                                          placeholder={isLlmType ? '$.model' : '$.data.status'}
-                                          className="h-8 text-base md:text-xs font-mono"
-                                        />
-                                      </FormControl>
-                                      <FormDescription className="text-xs">
-                                        Path into the JSON response, e.g. <span className="font-mono">$.choices[0].message.content</span>
-                                      </FormDescription>
-                                      <FormMessage />
-                                    </FormItem>
-                                  )}
-                                />
+                                <div className="text-xs font-medium text-muted-foreground">Response text</div>
                                 <div className="flex items-start gap-2">
                                   <FormField
                                     control={form.control}
-                                    name="jsonPathOperator"
+                                    name="containsTextMode"
                                     render={({ field }) => (
                                       <FormItem className="shrink-0">
-                                        <Select value={field.value || 'equals'} onValueChange={field.onChange}>
+                                        <Select value={field.value || 'all'} onValueChange={field.onChange}>
                                           <FormControl>
-                                            <SelectTrigger className="h-8 text-xs w-auto min-w-[110px]">
+                                            <SelectTrigger className="h-8 text-xs w-auto min-w-[150px]">
                                               <SelectValue />
                                             </SelectTrigger>
                                           </FormControl>
                                           <SelectContent>
-                                            <SelectItem value="equals">equals</SelectItem>
-                                            <SelectItem value="contains">contains</SelectItem>
-                                            <SelectItem value="not_equals">not equals</SelectItem>
-                                            <SelectItem value="exists">exists</SelectItem>
+                                            <SelectItem value="all">Must contain all</SelectItem>
+                                            <SelectItem value="any">Must contain any</SelectItem>
                                           </SelectContent>
                                         </Select>
                                       </FormItem>
                                     )}
                                   />
-                                  {watchJsonPathOperator !== 'exists' && (
+                                  <FormField
+                                    control={form.control}
+                                    name="containsText"
+                                    render={({ field }) => (
+                                      <FormItem className="flex-1">
+                                        <FormControl>
+                                          <Input
+                                            {...field}
+                                            placeholder={isLlmType ? 'PONG' : 'success,online,healthy'}
+                                            className="h-8 text-base md:text-xs"
+                                          />
+                                        </FormControl>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                </div>
+                                <FormField
+                                  control={form.control}
+                                  name="notContainsText"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel className="text-xs font-normal text-muted-foreground">Must not contain</FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          {...field}
+                                          placeholder="error,maintenance"
+                                          className="h-8 text-base md:text-xs"
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                                <FormDescription className="text-xs">
+                                  Comma-separated, case-insensitive. Only the first part of a large response is searched.
+                                </FormDescription>
+                              </div>
+                            )}
+
+                            {!isRedirectType && (
+                              <div className="space-y-3 rounded-lg border border-border/40 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="text-xs font-medium text-muted-foreground">
+                                    JSON assertions
+                                    {isLlmType && <span className="ml-1.5 text-muted-foreground/70">(assert the served model to catch silent fallback)</span>}
+                                  </div>
+                                  {jsonAssertionFields.fields.length > 1 && (
                                     <FormField
                                       control={form.control}
-                                      name="expectedValue"
+                                      name="jsonAssertionsMode"
                                       render={({ field }) => (
-                                        <FormItem className="flex-1">
-                                          <FormControl>
-                                            <Input
-                                              {...field}
-                                              placeholder={isLlmType ? 'claude-opus-4-8' : 'expected value'}
-                                              className="h-8 text-base md:text-xs font-mono"
-                                            />
-                                          </FormControl>
-                                          <FormMessage />
+                                        <FormItem className="shrink-0">
+                                          <Select value={field.value || 'all'} onValueChange={field.onChange}>
+                                            <FormControl>
+                                              <SelectTrigger className="h-7 text-xs w-auto min-w-[130px]">
+                                                <SelectValue />
+                                              </SelectTrigger>
+                                            </FormControl>
+                                            <SelectContent>
+                                              <SelectItem value="all">All must pass</SelectItem>
+                                              <SelectItem value="any">Any can pass</SelectItem>
+                                            </SelectContent>
+                                          </Select>
                                         </FormItem>
                                       )}
                                     />
+                                  )}
+                                </div>
+                                {jsonAssertionFields.fields.map((row, index) => {
+                                  const operator = watchJsonAssertions?.[index]?.operator ?? 'equals';
+                                  const numeric = NUMERIC_JSON_PATH_OPERATORS.has(operator);
+                                  return (
+                                    <div key={row.id} className="space-y-2">
+                                      <div className="flex items-start gap-2">
+                                        <FormField
+                                          control={form.control}
+                                          name={`jsonAssertions.${index}.path`}
+                                          render={({ field }) => (
+                                            <FormItem className="flex-1">
+                                              <FormControl>
+                                                <Input
+                                                  {...field}
+                                                  aria-label={`JSONPath ${index + 1}`}
+                                                  placeholder={isLlmType ? '$.model' : '$.data.status'}
+                                                  className="h-8 text-base md:text-xs font-mono"
+                                                />
+                                              </FormControl>
+                                              <FormMessage />
+                                            </FormItem>
+                                          )}
+                                        />
+                                        {jsonAssertionFields.fields.length > 1 && (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 w-8 shrink-0 p-0 text-muted-foreground"
+                                            aria-label={`Remove assertion ${index + 1}`}
+                                            onClick={() => jsonAssertionFields.remove(index)}
+                                          >
+                                            <X className="h-3.5 w-3.5" />
+                                          </Button>
+                                        )}
+                                      </div>
+                                      <div className="flex items-start gap-2">
+                                        <FormField
+                                          control={form.control}
+                                          name={`jsonAssertions.${index}.operator`}
+                                          render={({ field }) => (
+                                            <FormItem className="shrink-0">
+                                              <Select value={field.value || 'equals'} onValueChange={field.onChange}>
+                                                <FormControl>
+                                                  <SelectTrigger className="h-8 text-xs w-auto min-w-[110px]">
+                                                    <SelectValue />
+                                                  </SelectTrigger>
+                                                </FormControl>
+                                                <SelectContent>
+                                                  {JSON_PATH_OPERATORS.map((op) => (
+                                                    <SelectItem key={op} value={op}>{JSON_PATH_OPERATOR_LABELS[op]}</SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                            </FormItem>
+                                          )}
+                                        />
+                                        {operator !== 'exists' && (
+                                          <FormField
+                                            control={form.control}
+                                            name={`jsonAssertions.${index}.expectedValue`}
+                                            render={({ field }) => (
+                                              <FormItem className="flex-1">
+                                                <FormControl>
+                                                  <Input
+                                                    {...field}
+                                                    inputMode={numeric ? 'decimal' : undefined}
+                                                    placeholder={numeric ? '300000' : isLlmType ? 'claude-opus-4-8' : 'expected value'}
+                                                    className="h-8 text-base md:text-xs font-mono"
+                                                  />
+                                                </FormControl>
+                                                <FormMessage />
+                                              </FormItem>
+                                            )}
+                                          />
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-xs text-muted-foreground">
+                                    Path into the JSON response, e.g. <span className="font-mono">$.engines['mail-intake'].sinceMs</span>
+                                  </p>
+                                  {jsonAssertionFields.fields.length < 20 && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 shrink-0 gap-1 text-xs"
+                                      onClick={() => jsonAssertionFields.append(EMPTY_JSON_ASSERTION)}
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                      Add assertion
+                                    </Button>
                                   )}
                                 </div>
                               </div>

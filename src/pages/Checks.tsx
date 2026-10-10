@@ -21,7 +21,7 @@ import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
-import type { Website } from '../types';
+import type { ResponseValidation, Website } from '../types';
 import { usePlan } from "@/hooks/usePlan";
 import {
   TIER_DISPLAY_NAME,
@@ -385,12 +385,7 @@ const Checks: React.FC = () => {
     expectedStatusCodes?: number[];
     requestHeaders?: { [key: string]: string };
     requestBody?: string;
-    responseValidation?: {
-      containsText?: string[];
-      jsonPath?: string;
-      expectedValue?: unknown;
-      jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
-    };
+    responseValidation?: ResponseValidation;
     redirectValidation?: {
       expectedTarget: string;
       matchMode: 'contains' | 'exact';

@@ -1,6 +1,38 @@
 // Shared types for the application
 import type { WebhookEvent } from './api/types';
 
+// Response body assertions for HTTP checks. Mirrors functions/src/response-validation.ts.
+// Legacy checks use the single jsonPath/jsonPathOperator/expectedValue; jsonAssertions,
+// when non-empty, replaces it.
+export type JsonPathOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'contains'
+  | 'exists'
+  | 'greater_than'
+  | 'greater_or_equal'
+  | 'less_than'
+  | 'less_or_equal';
+
+export type MatchMode = 'all' | 'any';
+
+export interface JsonAssertion {
+  path: string;
+  operator?: JsonPathOperator;
+  expectedValue?: unknown;
+}
+
+export interface ResponseValidation {
+  containsText?: string[];
+  containsTextMode?: MatchMode;
+  notContainsText?: string[];
+  jsonPath?: string;
+  expectedValue?: unknown;
+  jsonPathOperator?: JsonPathOperator;
+  jsonAssertions?: JsonAssertion[];
+  jsonAssertionsMode?: MatchMode;
+}
+
 export interface Website {
   id: string;
   userId: string;
@@ -66,12 +98,7 @@ export interface Website {
   requestHeaders?: Record<string, string>;
   requestBody?: string;
   cacheControlNoCache?: boolean;
-  responseValidation?: {
-    containsText?: string[];
-    jsonPath?: string;
-    expectedValue?: unknown;
-    jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
-  };
+  responseValidation?: ResponseValidation;
 
   // Redirect validation (for redirect check type)
   redirectValidation?: {

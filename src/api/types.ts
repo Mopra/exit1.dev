@@ -1,3 +1,4 @@
+import type { ResponseValidation } from '../types';
 // Shared API types for all Exit1 clients
 // This file should be kept in sync across all projects (web, CLI, native apps)
 
@@ -46,11 +47,7 @@ export interface Website {
   requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
   requestBody?: string; // JSON string for POST/PUT requests
   cacheControlNoCache?: boolean;
-  responseValidation?: {
-    containsText?: string[]; // Text that should be present in response
-    jsonPath?: string; // JSONPath expression to validate response
-    expectedValue?: any; // Expected value for JSONPath validation
-  };
+  responseValidation?: ResponseValidation;
   
   // NEW FIELDS for SSL certificate validation
   sslCertificate?: {
@@ -325,12 +322,7 @@ export interface AddWebsiteRequest {
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
   requestBody?: string;
-  responseValidation?: {
-    containsText?: string[];
-    jsonPath?: string;
-    expectedValue?: any;
-    jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
-  };
+  responseValidation?: ResponseValidation;
   redirectValidation?: {
     expectedTarget: string;
     matchMode: 'contains' | 'exact';
@@ -357,12 +349,7 @@ export interface UpdateWebsiteRequest {
   requestHeaders?: { [key: string]: string };
   requestBody?: string;
   cacheControlNoCache?: boolean;
-  responseValidation?: {
-    containsText?: string[];
-    jsonPath?: string;
-    expectedValue?: any;
-    jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
-  };
+  responseValidation?: ResponseValidation;
   redirectValidation?: {
     expectedTarget: string;
     matchMode: 'contains' | 'exact';
