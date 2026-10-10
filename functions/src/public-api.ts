@@ -53,6 +53,7 @@ import {
 import { normalizeFolderParam, folderRange, folderMatches, folderPathError, compareByOrder, pageInMemory } from "./public-api-folder";
 import { canAccessCheck, canCreateInFolder, isKeyExpired, readStoredAccess, type KeyAccess } from "./public-api-access";
 import { JSON_PATH_OPERATORS, parseJsonPath, type JsonPathOperator } from "./json-path";
+import { parseIncludeParam, UptimeCache, type Window24h } from "./public-api-uptime";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -67,6 +68,32 @@ const checksTotalCache = new Map<string, { count: number; expiresAt: number }>()
 const STATS_MULTI_CACHE_TTL_MS = 60 * 60 * 1000;
 const STATS_MULTI_CACHE_MAX = 2000;
 const statsMultiCache = new Map<string, { data: Record<string, CheckStatsResult>; expiresAt: number }>();
+const listUptimeCache = new UptimeCache();
+
+/** ?include=uptime: adds uptime24h, uptime30d and avgResponseTime24h to each listed check. */
+async function attachUptime(rows: Array<{ id: string; [key: string]: unknown }>, userId: string) {
+  if (!rows.length) return rows;
+  const { getListUptime24h, getUptimeFromDailySummaries } = await import('./bigquery.js');
+  let fields: Awaited<ReturnType<UptimeCache['lookup']>>;
+  try {
+    fields = await listUptimeCache.lookup(userId, rows.map(r => r.id), {
+      fetch24h: (ids) => getListUptime24h(ids, userId) as Promise<Map<string, Window24h>>,
+      fetch30d: async (ids) => {
+        const stats = await getUptimeFromDailySummaries(ids, userId, Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const out = new Map<string, number>();
+        for (const s of stats) {
+          if (s.totalChecks > 0 || s.totalDurationMs > 0) out.set(s.websiteId, s.uptimePercentage);
+        }
+        return out;
+      },
+    });
+  } catch (err) {
+    // The list itself must not fail because stats did; report the figures as unknown.
+    logger.warn('include=uptime lookup failed', { userId, error: (err as Error)?.message ?? String(err) });
+    return rows.map(r => ({ ...r, uptime24h: null, uptime30d: null, avgResponseTime24h: null }));
+  }
+  return rows.map(r => ({ ...r, ...fields.get(r.id) }));
+}
 
 // API key validation cache - reduces Firestore reads for repeated API calls
 const API_KEY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -2541,6 +2568,13 @@ export const publicApi = onRequest({
       const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
       const cursor = parseCursor(cursorParam);
       const includeTotal = String(req.query.includeTotal || 'true') !== 'false';
+      let includeUptime: boolean;
+      try {
+        includeUptime = parseIncludeParam(req.query.include).has('uptime');
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+        return;
+      }
       const folder = normalizeFolderParam(typeof req.query.folder === 'string' ? req.query.folder : null);
       const recursiveParam = String(req.query.recursive ?? 'false');
       if (recursiveParam !== 'true' && recursiveParam !== 'false') {
@@ -2577,8 +2611,9 @@ export const publicApi = onRequest({
           : null;
         const hasNext = last ? compareByOrder(matched[matched.length - 1], last) > 0 : false;
 
+        const pageData = rows.map(row => sanitizeCheck({ id: row.id, ...row.data }));
         res.json({
-          data: rows.map(row => sanitizeCheck({ id: row.id, ...row.data })),
+          data: includeUptime ? await attachUptime(pageData, userId) : pageData,
           meta: {
             page,
             limit,
@@ -2625,7 +2660,8 @@ export const publicApi = onRequest({
       }
 
       const snap = await dataQuery.limit(limit).get();
-      const data = snap.docs.map(d => sanitizeCheck({ id: d.id, ...d.data() }));
+      const pageData = snap.docs.map(d => sanitizeCheck({ id: d.id, ...d.data() }));
+      const data = includeUptime ? await attachUptime(pageData, userId) : pageData;
       const lastDoc = snap.docs[snap.docs.length - 1];
       const nextCursor = lastDoc ? buildCursor(lastDoc) : null;
 

@@ -2055,6 +2055,102 @@ export const getCheckStatsBatch = async (
   }
 };
 
+// Last-24h uptime and average response time for a page of checks
+// (GET /v1/public/checks?include=uptime). Same duration-weighted maths as
+// getCheckStatsBatch, but the seed-row lookup is bounded to 7 days before the
+// window, so the scan stays at ~8 day partitions instead of the whole
+// retention. That bound is what lets it take a full 100-id page in one query.
+const LIST_24H_SEED_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+export const LIST_24H_MAX_IDS = 100;
+
+export const getListUptime24h = async (
+  websiteIds: string[],
+  userId: string,
+): Promise<Map<string, { uptime: number | null; avgResponseTime: number | null }>> => {
+  const out = new Map<string, { uptime: number | null; avgResponseTime: number | null }>();
+  if (!websiteIds.length) return out;
+
+  const ids = truncateWebsiteIds(websiteIds, LIST_24H_MAX_IDS, 'getListUptime24h');
+  const endDate = Date.now();
+  const startDate = endDate - ONE_DAY_MS;
+
+  const query = `
+    WITH range_rows AS (
+      SELECT website_id, timestamp, status, response_time, confirmed, maintenance
+      FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+      WHERE website_id IN UNNEST(@websiteIds)
+        AND user_id = @userId
+        AND timestamp >= @startDate
+        AND timestamp <= @endDate
+    ),
+    prior_rows AS (
+      SELECT website_id, timestamp, status, confirmed, maintenance
+      FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+      WHERE website_id IN UNNEST(@websiteIds)
+        AND user_id = @userId
+        AND timestamp < @startDate
+        AND timestamp >= @seedStart
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
+    ),
+    seeded AS (
+      SELECT website_id, timestamp, status, confirmed, maintenance FROM range_rows
+      UNION ALL
+      SELECT website_id, @startDate AS timestamp, status, confirmed, maintenance FROM prior_rows
+    ),
+    ordered AS (
+      SELECT
+        website_id,
+        timestamp,
+        CASE
+          WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
+          ELSE 0
+        END AS is_offline,
+        LEAD(timestamp) OVER (PARTITION BY website_id ORDER BY timestamp) AS next_timestamp
+      FROM seeded
+    ),
+    agg_durations AS (
+      SELECT
+        website_id,
+        SUM(GREATEST(0, UNIX_MILLIS(COALESCE(next_timestamp, @endDate)) - UNIX_MILLIS(timestamp))) AS totalDurationMs,
+        SUM(IF(is_offline = 0, GREATEST(0, UNIX_MILLIS(COALESCE(next_timestamp, @endDate)) - UNIX_MILLIS(timestamp)), 0)) AS onlineDurationMs
+      FROM ordered
+      WHERE timestamp < @endDate
+      GROUP BY website_id
+    ),
+    agg_response AS (
+      SELECT website_id, AVG(IF(response_time > 0, response_time, NULL)) AS avgResponseTime
+      FROM range_rows
+      GROUP BY website_id
+    )
+    SELECT agg_durations.website_id, totalDurationMs, onlineDurationMs, agg_response.avgResponseTime
+    FROM agg_durations
+    LEFT JOIN agg_response USING (website_id)
+  `;
+
+  const [rows] = await bigquery.query({
+    query,
+    params: {
+      websiteIds: ids,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      seedStart: new Date(startDate - LIST_24H_SEED_LOOKBACK_MS),
+    },
+    maximumBytesBilled: STATS_MAX_BYTES_BILLED,
+  });
+
+  for (const row of rows as Record<string, unknown>[]) {
+    const total = Number(row.totalDurationMs) || 0;
+    const online = Number(row.onlineDurationMs) || 0;
+    const avg = row.avgResponseTime === null || row.avgResponseTime === undefined ? null : Number(row.avgResponseTime);
+    out.set(String(row.website_id || ''), {
+      uptime: total > 0 ? (online / total) * 100 : null,
+      avgResponseTime: avg !== null && Number.isFinite(avg) ? avg : null,
+    });
+  }
+  return out;
+};
+
 export const getLatestCheckStatuses = async (
   userId: string,
   checkIds: string[]
