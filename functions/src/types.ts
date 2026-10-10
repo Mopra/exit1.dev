@@ -14,6 +14,7 @@ export interface Website {
   url: string
   type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain' // Type of endpoint being monitored. 'llm' = HTTP POST against an LLM chat/completions API with a canary prompt + response assertion. 'domain' = standalone domain-expiry tracking (no uptime probing).
   status?: 'online' | 'offline' | 'degraded' | 'unknown'
+  lastStatusChange?: number // ms; set on the probe that flipped `status`. Absent on checks that have not changed since this field was added.
   lastChecked?: number
   lastHistoryAt?: number
   checkFrequency?: number // in minutes

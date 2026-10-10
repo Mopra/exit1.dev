@@ -36,6 +36,19 @@ import {
   DAY3_FROM,
 } from "./env";
 import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
+import {
+  STATUS_POLL_RATE_LIMITS,
+  STATUS_SELECT_FIELDS,
+  STATUS_CACHE_MAX_USERS,
+  buildSnapshot,
+  mergeDelta,
+  planRefresh,
+  deltaSince,
+  ifNoneMatchHits,
+  buildRegions,
+  type StatusSnapshot,
+  type StatusSourceDoc,
+} from "./public-api-status";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -143,6 +156,53 @@ const buildCursor = (doc: QueryDocumentSnapshot): string => {
   const orderIndex = typeof data.orderIndex === 'number' ? data.orderIndex : 0;
   return Buffer.from(JSON.stringify({ orderIndex, id: doc.id }), 'utf8').toString('base64');
 };
+
+// --- Status poll snapshots (GET /v1/public/checks/status) ---
+// Per-user, per-instance. See public-api-status.ts for the cost model.
+const statusSnapshots = new Map<string, StatusSnapshot>();
+const statusRefreshes = new Map<string, Promise<StatusSnapshot>>();
+
+const toSourceRows = (docs: QueryDocumentSnapshot[]) =>
+  docs.map((d) => ({ id: d.id, data: d.data() as StatusSourceDoc }));
+
+async function refreshStatusSnapshot(userId: string): Promise<StatusSnapshot> {
+  const now = Date.now();
+  const prev = statusSnapshots.get(userId);
+  const plan = planRefresh(prev, now);
+  if (plan === 'cached' && prev) return prev;
+
+  const userChecks = firestore.collection('checks').where('userId', '==', userId);
+  let next: StatusSnapshot | null = null;
+  if (plan === 'delta' && prev) {
+    const [countSnap, deltaSnap] = await Promise.all([
+      userChecks.count().get(),
+      userChecks.where('updatedAt', '>', deltaSince(prev)).select(...STATUS_SELECT_FIELDS).get(),
+    ]);
+    next = mergeDelta(prev, toSourceRows(deltaSnap.docs), countSnap.data().count, now);
+  }
+  if (!next) {
+    const fullSnap = await userChecks.select(...STATUS_SELECT_FIELDS).get();
+    next = buildSnapshot(toSourceRows(fullSnap.docs), now);
+  }
+
+  statusSnapshots.delete(userId);
+  statusSnapshots.set(userId, next);
+  if (statusSnapshots.size > STATUS_CACHE_MAX_USERS) {
+    // Map keeps insertion order and we re-insert on every refresh, so the first key is the stalest.
+    const oldest = statusSnapshots.keys().next().value;
+    if (oldest !== undefined) statusSnapshots.delete(oldest);
+  }
+  return next;
+}
+
+/** Coalesces concurrent polls for one user onto a single refresh. */
+function getStatusSnapshot(userId: string): Promise<StatusSnapshot> {
+  const inflight = statusRefreshes.get(userId);
+  if (inflight) return inflight;
+  const p = refreshStatusSnapshot(userId).finally(() => statusRefreshes.delete(userId));
+  statusRefreshes.set(userId, p);
+  return p;
+}
 
 // --- Rate limiters ---
 // Read limits
@@ -322,6 +382,10 @@ function getRouteName(segments: string[], method: string): string {
   if (segments.length === 3 && segments[2] === 'account') {
     return 'account_get';
   }
+  // /v1/public/checks/status (fixed name; must win over /checks/:id)
+  if (segments.length === 4 && segments[2] === 'checks' && segments[3] === 'status' && method === 'GET') {
+    return 'checks_status';
+  }
   // /v1/public/checks/:id/history
   if (segments.length === 5 && segments[2] === 'checks' && segments[4] === 'history') {
     return 'checks_history';
@@ -458,6 +522,8 @@ function sanitizeCheck(doc: { id: string; [key: string]: unknown }) {
     folder: doc.folder || null,
     severity: doc.severity ?? null,
     lastError: doc.lastError ?? null,
+    lastStatusChange: doc.lastStatusChange ?? null,
+    regions: buildRegions(doc as StatusSourceDoc),
     disabled: !!doc.disabled,
     maintenanceMode: !!doc.maintenanceMode,
     maintenanceUntil: doc.maintenanceMode ? (doc.maintenanceExpiresAt ?? null) : null,
@@ -2053,8 +2119,8 @@ export const publicApi = onRequest({
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key, Authorization, Idempotency-Key');
-  res.set('Access-Control-Expose-Headers', 'RateLimit, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Retry-After, WWW-Authenticate');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key, Authorization, Idempotency-Key, If-None-Match');
+  res.set('Access-Control-Expose-Headers', 'RateLimit, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Retry-After, WWW-Authenticate, ETag');
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return;
@@ -2141,50 +2207,69 @@ export const publicApi = onRequest({
     const limits: RateLimitProfile = isAgentSession ? AGENT_RATE_LIMITS : RATE_LIMITS;
     const writeLimits: WriteRateLimitProfile = isAgentSession ? AGENT_WRITE_RATE_LIMITS : WRITE_RATE_LIMITS;
 
-    // Daily quota checks
-    const dailyKeyQuota = dailyQuotaLimiter.consume(`daily:key:${keyDocId}`, limits.perKeyDaily);
-    if (!dailyKeyQuota.allowed) {
-      applyRateLimitHeaders(res, dailyKeyQuota);
-      res.status(429).json({
-        error: `Daily quota exceeded for this credential. Limit: ${limits.perKeyDaily} requests/day. The window resets 24 hours after it started (see quotaReset).`,
-        quotaLimit: limits.perKeyDaily,
-        quotaReset: dailyKeyQuota.resetAtMs,
-        retryAfter: dailyKeyQuota.retryAfterSeconds
-      });
-      logger.warn(`Credential ${keyDocId} exceeded daily quota (${limits.perKeyDaily} req/day)`);
-      return;
-    }
-
-    const dailyUserQuota = dailyQuotaLimiter.consume(`daily:user:${userId}`, limits.perUserDaily);
-    if (!dailyUserQuota.allowed) {
-      applyRateLimitHeaders(res, dailyUserQuota);
-      res.status(429).json({
-        error: `Daily user quota exceeded. Limit: ${limits.perUserDaily} requests/day across all credentials. The window resets 24 hours after it started (see quotaReset).`,
-        quotaLimit: limits.perUserDaily,
-        quotaReset: dailyUserQuota.resetAtMs,
-        retryAfter: dailyUserQuota.retryAfterSeconds
-      });
-      logger.warn(`User ${userId} exceeded daily quota (${limits.perUserDaily} req/day)`);
-      return;
-    }
-
     const reqPath = (req.path || req.url || '').replace(/\/+$/, '');
     const segments = reqPath.split('?')[0].split('/').filter(Boolean);
-
-    // Post-auth rate limits
-    const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDocId}:total`, limits.perKeyTotalPerMinute);
-    if (!globalKeyDecision.allowed) {
-      applyRateLimitHeaders(res, globalKeyDecision);
-      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: globalKeyDecision.retryAfterSeconds });
-      return;
-    }
-
     const routeName = getRouteName(segments, req.method);
-    const endpointDecision = apiKeyLimiter.consume(`key:${keyDocId}:route:${routeName}`, limits.perEndpointPerMinute);
-    applyRateLimitHeaders(res, endpointDecision);
-    if (!endpointDecision.allowed) {
-      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: endpointDecision.retryAfterSeconds });
-      return;
+
+    if (routeName === 'checks_status') {
+      // The status route is built for 10 to 30 second polling. It has its own
+      // per-minute caps and stays out of the daily quotas and the per-key
+      // total, so a poller can't starve the key's other calls (or itself).
+      const userPollDecision = apiKeyLimiter.consume(`user:${userId}:route:checks_status`, STATUS_POLL_RATE_LIMITS.perUserPerMinute);
+      if (!userPollDecision.allowed) {
+        applyRateLimitHeaders(res, userPollDecision);
+        res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: userPollDecision.retryAfterSeconds });
+        return;
+      }
+      const keyPollDecision = apiKeyLimiter.consume(`key:${keyDocId}:route:checks_status`, STATUS_POLL_RATE_LIMITS.perKeyPerMinute);
+      applyRateLimitHeaders(res, keyPollDecision);
+      if (!keyPollDecision.allowed) {
+        res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: keyPollDecision.retryAfterSeconds });
+        return;
+      }
+    } else {
+      // Daily quota checks
+      const dailyKeyQuota = dailyQuotaLimiter.consume(`daily:key:${keyDocId}`, limits.perKeyDaily);
+      if (!dailyKeyQuota.allowed) {
+        applyRateLimitHeaders(res, dailyKeyQuota);
+        res.status(429).json({
+          error: `Daily quota exceeded for this credential. Limit: ${limits.perKeyDaily} requests/day. The window resets 24 hours after it started (see quotaReset).`,
+          quotaLimit: limits.perKeyDaily,
+          quotaReset: dailyKeyQuota.resetAtMs,
+          retryAfter: dailyKeyQuota.retryAfterSeconds
+        });
+        logger.warn(`Credential ${keyDocId} exceeded daily quota (${limits.perKeyDaily} req/day)`);
+        return;
+      }
+
+      const dailyUserQuota = dailyQuotaLimiter.consume(`daily:user:${userId}`, limits.perUserDaily);
+      if (!dailyUserQuota.allowed) {
+        applyRateLimitHeaders(res, dailyUserQuota);
+        res.status(429).json({
+          error: `Daily user quota exceeded. Limit: ${limits.perUserDaily} requests/day across all credentials. The window resets 24 hours after it started (see quotaReset).`,
+          quotaLimit: limits.perUserDaily,
+          quotaReset: dailyUserQuota.resetAtMs,
+          retryAfter: dailyUserQuota.retryAfterSeconds
+        });
+        logger.warn(`User ${userId} exceeded daily quota (${limits.perUserDaily} req/day)`);
+        return;
+      }
+
+
+      // Post-auth rate limits
+      const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDocId}:total`, limits.perKeyTotalPerMinute);
+      if (!globalKeyDecision.allowed) {
+        applyRateLimitHeaders(res, globalKeyDecision);
+        res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: globalKeyDecision.retryAfterSeconds });
+        return;
+      }
+
+      const endpointDecision = apiKeyLimiter.consume(`key:${keyDocId}:route:${routeName}`, limits.perEndpointPerMinute);
+      applyRateLimitHeaders(res, endpointDecision);
+      if (!endpointDecision.allowed) {
+        res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: endpointDecision.retryAfterSeconds });
+        return;
+      }
     }
 
     // Track usage (best-effort). Only API keys live in the apiKeys collection —
@@ -2384,6 +2469,19 @@ export const publicApi = onRequest({
           nextCursor,
         }
       });
+      return;
+    }
+
+    // GET /v1/public/checks/status
+    if (routeName === 'checks_status') {
+      const snapshot = await getStatusSnapshot(userId);
+      res.set('ETag', snapshot.etag);
+      res.set('Cache-Control', 'private, no-cache');
+      if (ifNoneMatchHits(req.header('if-none-match'), snapshot.etag)) {
+        res.status(304).end();
+        return;
+      }
+      res.type('application/json').send(snapshot.body);
       return;
     }
 

@@ -1914,6 +1914,9 @@ export async function processOneCheck(
     if (historyRecordedAt) {
       updateData.lastHistoryAt = historyRecordedAt;
     }
+    if (isTransitionRow) {
+      updateData.lastStatusChange = now;
+    }
     if (typeof checkResult.targetMetadataLastChecked === "number") {
       updateData.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
     }
@@ -2255,6 +2258,9 @@ export async function processOneCheck(
     };
     if (historyRecordedAt) {
       updateData.lastHistoryAt = historyRecordedAt;
+    }
+    if (isErrorTransitionRow) {
+      updateData.lastStatusChange = now;
     }
 
     // Reuse the same buffer-aware view computed above for the transition-row

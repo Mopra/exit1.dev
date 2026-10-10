@@ -6,6 +6,9 @@ import { isTransition, mergeLastWritten, type LastWrittenState } from "./status-
 // Type definition for status updates
 export interface StatusUpdateData {
   status?: string;
+  // When `status` last changed (ms). Written only on the update that flips
+  // status, so it is material: it never churns between transitions.
+  lastStatusChange?: number;
   lastChecked: number;
   lastHistoryAt?: number;
   responseTime?: number | null;
@@ -218,7 +221,7 @@ type NormalizedStatusData = ReturnType<typeof normalizeStatusData>;
 // processBatchEntries).
 const materialHashOf = (n: NormalizedStatusData) => {
   const ssl = n.sslCertificate;
-  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${n.pendingDownWebhooks}|${n.pendingUpWebhooks}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
+  return `${n.status}|${n.lastStatusChange}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${n.pendingDownWebhooks}|${n.pendingUpWebhooks}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
 };
 
 const timingHashOf = (n: NormalizedStatusData) =>
@@ -232,7 +235,7 @@ const timingHashOf = (n: NormalizedStatusData) =>
 // at the top level; its subfields are split inline — lastChecked is timing,
 // the rest are material.)
 type HashCoveredField =
-  | 'status' | 'lastStatusCode' | 'statusCode' | 'consecutiveFailures'
+  | 'status' | 'lastStatusChange' | 'lastStatusCode' | 'statusCode' | 'consecutiveFailures'
   | 'consecutiveSuccesses' | 'detailedStatus' | 'lastError' | 'checkRegion'
   | 'targetCountry' | 'targetRegion' | 'targetCity' | 'targetLatitude'
   | 'targetLongitude' | 'targetHostname' | 'targetIp' | 'targetIpsJson'
