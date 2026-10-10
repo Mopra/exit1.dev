@@ -913,6 +913,7 @@ const MINIMAL_HISTORY_COLUMNS = `
   response_time,
   status_code,
   error,
+  redirect_location,
   confirmed,
   alert_sent,
   peer_checked_at

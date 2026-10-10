@@ -408,6 +408,9 @@ async function hashApiKey(key: string): Promise<string> {
   return createHash('sha256').update(pepper + key).digest('hex');
 }
 
+// A bad client-supplied parameter. The catch-all turns it into a 400, not a 500.
+class InvalidParamError extends Error {}
+
 function parseDateParam(dateStr: string): number {
   const isoDate = new Date(dateStr);
   if (!isNaN(isoDate.getTime())) {
@@ -420,7 +423,7 @@ function parseDateParam(dateStr: string): number {
     return timestamp < 1e12 ? timestamp * 1000 : timestamp;
   }
 
-  throw new Error(`Invalid date format: ${dateStr}. Use ISO 8601 (2023-12-21T22:30:56Z) or Unix timestamp`);
+  throw new InvalidParamError(`Invalid date format: ${dateStr}. Use ISO 8601 (2023-12-21T22:30:56Z) or Unix timestamp`);
 }
 
 // Values the list endpoint's ?status= accepts; anything else used to reach
@@ -1136,6 +1139,16 @@ async function handleUpdateCheck(
   if (existingType !== 'domain' && targetType === 'domain') {
     res.status(400).json({ error: "A check can't be converted into a domain-only check. Create a new domain entry instead." });
     return;
+  }
+
+  // DNS and heartbeat checks need setup that only create does (the paid-plan
+  // gate, the DNS interval floor and record baseline, the heartbeat token), so
+  // switching into or out of them via PATCH would skip it.
+  for (const special of ['dns', 'heartbeat'] as const) {
+    if ((existingType === special) !== (targetType === special)) {
+      res.status(400).json({ error: `A check can't be converted to or from the ${special} type. Delete and re-create it instead.` });
+      return;
+    }
   }
 
   // Domain-only: force-preserve the existing synthetic URL — the registered
@@ -2133,7 +2146,7 @@ export const publicApi = onRequest({
     if (!dailyKeyQuota.allowed) {
       applyRateLimitHeaders(res, dailyKeyQuota);
       res.status(429).json({
-        error: `Daily quota exceeded for this credential. Limit: ${limits.perKeyDaily} requests/day. Resets at midnight UTC.`,
+        error: `Daily quota exceeded for this credential. Limit: ${limits.perKeyDaily} requests/day. The window resets 24 hours after it started (see quotaReset).`,
         quotaLimit: limits.perKeyDaily,
         quotaReset: dailyKeyQuota.resetAtMs,
         retryAfter: dailyKeyQuota.retryAfterSeconds
@@ -2146,7 +2159,7 @@ export const publicApi = onRequest({
     if (!dailyUserQuota.allowed) {
       applyRateLimitHeaders(res, dailyUserQuota);
       res.status(429).json({
-        error: `Daily user quota exceeded. Limit: ${limits.perUserDaily} requests/day across all credentials. Resets at midnight UTC.`,
+        error: `Daily user quota exceeded. Limit: ${limits.perUserDaily} requests/day across all credentials. The window resets 24 hours after it started (see quotaReset).`,
         quotaLimit: limits.perUserDaily,
         quotaReset: dailyUserQuota.resetAtMs,
         retryAfter: dailyUserQuota.retryAfterSeconds
@@ -2494,6 +2507,10 @@ export const publicApi = onRequest({
         const { getCheckStatsMultiRange, ALLOWED_RANGES } = await import('./bigquery.js');
         const requested = rangesParam.split(',').map(r => r.trim()).filter(Boolean);
 
+        if (requested.length === 0) {
+          res.status(400).json({ error: `ranges is empty. Allowed: ${ALLOWED_RANGES.join(', ')}` });
+          return;
+        }
         const invalid = requested.filter(r => !ALLOWED_RANGES.includes(r));
         if (invalid.length) {
           res.status(400).json({ error: `Invalid ranges: ${invalid.join(', ')}. Allowed: ${ALLOWED_RANGES.join(', ')}` });
@@ -2507,7 +2524,8 @@ export const publicApi = onRequest({
         const endDate = req.query.to ? parseDateParam(String(req.query.to)) : undefined;
 
         const cacheKey = `${checkId}::${[...requested].sort().join(',')}`;
-        const cached = statsMultiCache.get(cacheKey);
+        // Only "up to now" results are cached, so a request with `to` must skip the lookup too.
+        const cached = req.query.to ? undefined : statsMultiCache.get(cacheKey);
         if (cached && cached.expiresAt > Date.now()) {
           res.json({ data: cached.data });
           return;
@@ -2538,6 +2556,10 @@ export const publicApi = onRequest({
 
     res.status(404).json({ error: 'Not found' });
   } catch (e: unknown) {
+    if (e instanceof InvalidParamError) {
+      res.status(400).json({ error: e.message });
+      return;
+    }
     logger.error('publicApi error', e);
     res.status(500).json({ error: 'Internal error' });
   }
