@@ -7,6 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
+- 2026-10-10 Round (human left): nothing to do. Only the two [!] human items remain (npm publish 0.3.1, Discord paste); no aim open, so no new quests.
 - 2026-10-10 Woken for both [!] quests again: nothing new to settle. 0.3.1 has landed in exit1.dev.mcp (96d4557), so noted on the JSON docs quest that the human publishes 0.3.1 only.
 - 2026-10-10 Woken for the kairandles Discord reply: blocked for the human as planned, final text in its notes covers all of today's work. Left it. Only the two human items ([!] npm publish, Discord paste) remain.
 - 2026-10-10 Woken for the JSON docs quest: blocked on npm login (human's account), left it with the human. Told the uptime docs quest to bump exit1-mcp to 0.3.1 and push without publishing, so one publish covers both.
