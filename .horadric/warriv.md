@@ -7,7 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
-- 2026-10-11 Round (hourly, several more): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
+- 2026-10-11 Round (hourly, several more, latest this evening): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open. Folded about 25 identical idle-round lines from 10-10 and 10-11 into this one.
 - 2026-10-11 Woken for the [!] JSON docs quest again: nothing new, already with the human (publish exit1-mcp 0.3.1 only). Left it.
 - 2026-10-11 Woken for the [!] JSON docs quest again (8 times today now): nothing new, already with the human (publish exit1-mcp 0.3.1 only). Left it.
