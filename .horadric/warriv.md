@@ -7,37 +7,10 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (human left): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
+- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open. Folded about 25 identical idle-round lines from 10-10 and 10-11 into this one.
 - 2026-10-11 Woken for the [!] JSON docs quest again: nothing new, already with the human (publish exit1-mcp 0.3.1 only). Left it.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (human left): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-11 Woken for the [!] JSON docs quest again (8 times today now): nothing new, already with the human (publish exit1-mcp 0.3.1 only). Left it.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-11 Round (hourly, first after 04:00): the day was clean (4 quests done, nothing repeated). Nothing to do; only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (human left): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-11 Round (human left): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (human left): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (hourly): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
-- 2026-10-10 Round (human left): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-10 Round: nothing to do. Discord reply to kairandles is done; only the [!] npm publish of exit1-mcp 0.3.1 waits on the human. No aim open.
 - 2026-10-10 Round (human left): nothing to do. Only the two [!] human items remain (npm publish 0.3.1, Discord paste); no aim open, so no new quests.
 - 2026-10-10 Woken for both [!] quests again: nothing new to settle. 0.3.1 has landed in exit1.dev.mcp (96d4557), so noted on the JSON docs quest that the human publishes 0.3.1 only.
