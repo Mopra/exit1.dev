@@ -1,0 +1,282 @@
+/* Icon motion for the rest of the app (the sidebar has its own, hand-drawn
+   per icon in components/ui/animated-icons.tsx).
+
+   When a button, link, menu item or tab is hovered or keyboard-focused, the
+   lucide icon directly inside it plays one short gesture. Lucide tags every
+   icon with `lucide-<name>`, so this works on every existing icon without
+   touching the 130-odd files that render them.
+
+   - Every icon gets a small hop by default (--icon-motion: icon-hop).
+   - About 40 common icons get a motion of their own by setting
+     --icon-motion on their class: refresh spins, trash lifts its lid,
+     arrows nudge the way they point.
+   - Only the icon that is a DIRECT child of the hovered control moves, so
+     hovering a big link card does not set off every icon inside it.
+   - Icons that are already animating (spinners, pulses) are left alone, and
+     so are disabled controls.
+   - Animations use `transform`, which composes with Tailwind v4's separate
+     `rotate`/`translate`/`scale` properties, so a rotate-180 chevron keeps
+     its rotation while it moves.
+   - Nothing moves under prefers-reduced-motion. */
+
+@media (prefers-reduced-motion: no-preference) {
+  /* One compound selector: no whitespace between :is/:not/:is, or it turns
+     into a descendant combinator and matches nothing useful. */
+  :is(button, a, label, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="tab"], [role="option"], [role="switch"]):not(:disabled, [aria-disabled="true"], [data-disabled]):is(:hover, :focus-visible)
+    > svg.lucide:not(.animate-spin, .animate-pulse, .animate-ping) {
+    animation: var(--icon-motion, icon-hop) var(--icon-motion-duration, 0.45s)
+      var(--icon-motion-ease, cubic-bezier(0.22, 1, 0.36, 1));
+  }
+
+  /* Icons whose motion lives on one part of the drawing, not the whole
+     glyph. The svg itself stays still (--icon-motion: none) and the part
+     moves instead. */
+  :is(button, a, label, [role="button"], [role="menuitem"], [role="tab"], [role="option"]):not(:disabled, [aria-disabled="true"], [data-disabled]):is(:hover, :focus-visible)
+    > svg.lucide {
+    /* Clock: the hands sweep once round the face. */
+    &.lucide-clock > path {
+      animation: icon-spin 0.7s cubic-bezier(0.65, 0, 0.35, 1);
+    }
+    /* Trash: the lid and handle lift off and drop back. */
+    &.lucide-trash-2 > path:nth-child(n + 4),
+    &.lucide-trash > path:nth-child(n + 2) {
+      animation: icon-lid 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    /* Copy: the front sheet slides off the one behind it. */
+    &.lucide-copy > rect {
+      animation: icon-copy 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    /* Check: the tick draws itself. */
+    &.lucide-check > path {
+      stroke-dasharray: 24;
+      animation: icon-draw 0.4s ease-out;
+    }
+  }
+}
+
+/* Origins for the part-level motions above. Inert until something animates. */
+svg.lucide-clock > path {
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+}
+svg.lucide-trash-2 > path,
+svg.lucide-trash > path {
+  transform-box: view-box;
+  transform-origin: 4px 6px;
+}
+svg.lucide-bell,
+svg.lucide-bell-ring {
+  transform-origin: 50% 12%;
+}
+svg.lucide-search {
+  transform-origin: 40% 40%;
+}
+svg.lucide-key-round,
+svg.lucide-key {
+  transform-origin: 30% 70%;
+}
+
+/* Which gesture each icon makes. Drag handles stay still: they are grabbed,
+   not clicked, and a hop under the cursor reads as the row moving. */
+svg.lucide-grip-vertical,
+svg.lucide-grip-horizontal,
+svg.lucide-grip,
+svg.lucide-clock,
+svg.lucide-trash-2,
+svg.lucide-trash,
+svg.lucide-copy,
+svg.lucide-check {
+  --icon-motion: none;
+}
+
+svg.lucide-refresh-cw,
+svg.lucide-rotate-cw,
+svg.lucide-loader-circle {
+  --icon-motion: icon-spin;
+  --icon-motion-duration: 0.6s;
+  --icon-motion-ease: cubic-bezier(0.65, 0, 0.35, 1);
+}
+svg.lucide-refresh-ccw,
+svg.lucide-rotate-ccw,
+svg.lucide-history,
+svg.lucide-undo-2 {
+  --icon-motion: icon-spin-back;
+  --icon-motion-duration: 0.6s;
+  --icon-motion-ease: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+svg.lucide-plus,
+svg.lucide-circle-plus,
+svg.lucide-x,
+svg.lucide-circle-x {
+  --icon-motion: icon-quarter-turn;
+}
+svg.lucide-settings,
+svg.lucide-settings-2,
+svg.lucide-cog,
+svg.lucide-sun {
+  --icon-motion: icon-quarter-turn;
+  --icon-motion-duration: 0.7s;
+}
+
+svg.lucide-arrow-right,
+svg.lucide-chevron-right,
+svg.lucide-chevrons-right,
+svg.lucide-log-out,
+svg.lucide-move-right {
+  --icon-motion: icon-nudge-right;
+}
+svg.lucide-arrow-left,
+svg.lucide-chevron-left,
+svg.lucide-chevrons-left,
+svg.lucide-log-in {
+  --icon-motion: icon-nudge-left;
+}
+svg.lucide-download,
+svg.lucide-arrow-down,
+svg.lucide-chevron-down,
+svg.lucide-arrow-down-to-line {
+  --icon-motion: icon-nudge-down;
+}
+svg.lucide-upload,
+svg.lucide-arrow-up,
+svg.lucide-chevron-up,
+svg.lucide-arrow-up-from-line {
+  --icon-motion: icon-nudge-up;
+}
+svg.lucide-external-link,
+svg.lucide-arrow-up-right,
+svg.lucide-send,
+svg.lucide-share,
+svg.lucide-share-2 {
+  --icon-motion: icon-nudge-out;
+}
+
+svg.lucide-pencil,
+svg.lucide-square-pen,
+svg.lucide-pen,
+svg.lucide-pen-line,
+svg.lucide-wrench,
+svg.lucide-link,
+svg.lucide-link-2,
+svg.lucide-search {
+  --icon-motion: icon-wiggle;
+  --icon-motion-duration: 0.5s;
+}
+svg.lucide-key-round,
+svg.lucide-key {
+  --icon-motion: icon-key-turn;
+  --icon-motion-duration: 0.55s;
+}
+svg.lucide-lock,
+svg.lucide-lock-open,
+svg.lucide-shield,
+svg.lucide-shield-check {
+  --icon-motion: icon-shake;
+  --icon-motion-duration: 0.4s;
+}
+svg.lucide-bell,
+svg.lucide-bell-ring {
+  --icon-motion: icon-swing;
+  --icon-motion-duration: 0.8s;
+  --icon-motion-ease: ease-in-out;
+}
+svg.lucide-eye,
+svg.lucide-eye-off {
+  --icon-motion: icon-blink;
+  --icon-motion-duration: 0.35s;
+}
+svg.lucide-sparkles,
+svg.lucide-star {
+  --icon-motion: icon-twinkle;
+  --icon-motion-duration: 0.6s;
+}
+svg.lucide-zap {
+  --icon-motion: icon-flash;
+  --icon-motion-duration: 0.45s;
+}
+svg.lucide-play,
+svg.lucide-pause,
+svg.lucide-power,
+svg.lucide-power-off,
+svg.lucide-save,
+svg.lucide-ellipsis,
+svg.lucide-ellipsis-vertical {
+  --icon-motion: icon-press;
+  --icon-motion-duration: 0.35s;
+}
+
+@keyframes icon-hop {
+  40% { transform: translateY(-1.5px) scale(1.08); }
+}
+@keyframes icon-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes icon-spin-back {
+  to { transform: rotate(-360deg); }
+}
+@keyframes icon-quarter-turn {
+  to { transform: rotate(90deg); }
+}
+@keyframes icon-nudge-right {
+  40% { transform: translateX(3px); }
+}
+@keyframes icon-nudge-left {
+  40% { transform: translateX(-3px); }
+}
+@keyframes icon-nudge-down {
+  40% { transform: translateY(2.5px); }
+}
+@keyframes icon-nudge-up {
+  40% { transform: translateY(-2.5px); }
+}
+@keyframes icon-nudge-out {
+  40% { transform: translate(2px, -2px); }
+}
+@keyframes icon-wiggle {
+  25% { transform: rotate(-14deg); }
+  55% { transform: rotate(10deg); }
+  80% { transform: rotate(-4deg); }
+}
+@keyframes icon-key-turn {
+  45% { transform: rotate(-35deg); }
+}
+@keyframes icon-shake {
+  20% { transform: translateX(-1.5px); }
+  40% { transform: translateX(1.5px); }
+  60% { transform: translateX(-1px); }
+  80% { transform: translateX(1px); }
+}
+@keyframes icon-swing {
+  15% { transform: rotate(-12deg); }
+  35% { transform: rotate(10deg); }
+  55% { transform: rotate(-8deg); }
+  75% { transform: rotate(5deg); }
+  90% { transform: rotate(-2deg); }
+}
+@keyframes icon-blink {
+  50% { transform: scaleY(0.1); }
+}
+@keyframes icon-twinkle {
+  40% { transform: rotate(15deg) scale(1.2); }
+  70% { transform: rotate(-5deg) scale(0.95); }
+}
+@keyframes icon-flash {
+  20% { opacity: 0.3; }
+  40% { opacity: 1; transform: scale(1.15); }
+  60% { opacity: 0.5; }
+}
+@keyframes icon-press {
+  35% { transform: scale(0.8); }
+  70% { transform: scale(1.1); }
+}
+@keyframes icon-lid {
+  45% { transform: translateY(-2px) rotate(-12deg); }
+}
+@keyframes icon-copy {
+  45% { transform: translate(-2px, -2px); }
+}
+@keyframes icon-draw {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}

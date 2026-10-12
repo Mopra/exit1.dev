@@ -5,6 +5,7 @@ import { dark } from '@clerk/themes';
 import Clarity from '@microsoft/clarity';
 import App from './App.tsx';
 import './style.css';
+import './icon-motion.css';
 
 Clarity.init('wd31lyfz9z');
 

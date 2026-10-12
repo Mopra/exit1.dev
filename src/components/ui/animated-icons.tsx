@@ -70,9 +70,11 @@ function Svg({
   className,
   variants,
   style,
+  viewBox = "0 0 24 24",
   children,
 }: AnimatedIconProps & {
   variants?: Variants
+  viewBox?: string
   style?: React.ComponentProps<typeof m.svg>["style"]
   children: React.ReactNode
 }) {
@@ -82,7 +84,7 @@ function Svg({
       xmlns="http://www.w3.org/2000/svg"
       width={24}
       height={24}
-      viewBox="0 0 24 24"
+      viewBox={viewBox}
       fill="none"
       stroke="currentColor"
       strokeWidth={2}
@@ -311,6 +313,77 @@ export const BookOpenIcon = define("BookOpenIcon", (p) => (
     <m.path
       d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
       variants={PAGES}
+    />
+  </Svg>
+))
+
+// Admin Dashboard: the shield pulses once, like a guard standing to attention.
+const GUARD: Variants = {
+  normal: { scale: 1, transition: OUT },
+  animate: { scale: [1, 0.85, 1.1, 1], transition: IN },
+}
+export const ShieldIcon = define("ShieldIcon", (p) => (
+  <Svg {...p} variants={GUARD}>
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  </Svg>
+))
+
+// System Notifications: the bell rocks from its crown and the clapper lags a
+// beat behind, which is what makes it read as a bell and not a tilting shape.
+const BELL: Variants = {
+  normal: { rotate: 0, transition: OUT },
+  animate: { rotate: [0, -12, 10, -8, 5, -2, 0], transition: { ...IN, duration: 0.8 } },
+}
+const CLAPPER: Variants = {
+  normal: { x: 0, transition: OUT },
+  animate: { x: [0, 1.4, -1.2, 0.9, -0.5, 0], transition: { ...IN, duration: 0.8, delay: 0.05 } },
+}
+export const BellIcon = define("BellIcon", (p) => (
+  <Svg {...p} variants={BELL} style={{ originX: 0.5, originY: 0.12 }}>
+    <m.path d="M10.268 21a2 2 0 0 0 3.464 0" variants={CLAPPER} />
+    <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+  </Svg>
+))
+
+// User Admin: same bob as Team, for the square-shouldered version.
+export const UsersIcon = define("UsersIcon", (p) => (
+  <Svg {...p}>
+    <m.g custom={0} variants={PERSON}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+    </m.g>
+    <m.g custom={1} variants={PERSON}>
+      <path d="M16 3.128a4 4 0 0 1 0 7.744" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    </m.g>
+  </Svg>
+))
+
+// Onboarding Responses: the answers get written in, line by line.
+export const ClipboardListIcon = define("ClipboardListIcon", (p) => (
+  <Svg {...p}>
+    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    <m.path d="M12 11h4" custom={0} variants={DRAW} />
+    <m.path d="M12 16h4" custom={2} variants={DRAW} />
+    <path d="M8 11h.01" />
+    <path d="M8 16h.01" />
+  </Svg>
+))
+
+// Discord: the logo hops, as if someone just joined the voice channel.
+const HOP: Variants = {
+  normal: { y: 0, rotate: 0, transition: OUT },
+  animate: { y: [0, -3, 0, -1, 0], rotate: [0, -6, 4, 0, 0], transition: IN },
+}
+export const DiscordIcon = define("DiscordIcon", (p) => (
+  <Svg {...p} variants={HOP} viewBox="0 0 512 365.467">
+    <path
+      fill="currentColor"
+      stroke="none"
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M378.186 365.028s-15.794-18.865-28.956-35.099c57.473-16.232 79.41-51.77 79.41-51.77-17.989 11.846-35.099 20.182-50.454 25.885-21.938 9.213-42.997 14.917-63.617 18.866-42.118 7.898-80.726 5.703-113.631-.438-25.008-4.827-46.506-11.407-64.494-18.867-10.091-3.947-21.059-8.774-32.027-14.917-1.316-.877-2.633-1.316-3.948-2.193-.877-.438-1.316-.878-1.755-.878-7.898-4.388-12.285-7.458-12.285-7.458s21.06 34.659 76.779 51.331c-13.163 16.673-29.395 35.977-29.395 35.977C36.854 362.395 0 299.218 0 299.218 0 159.263 63.177 45.633 63.177 45.633 126.354-1.311 186.022.005 186.022.005l4.388 5.264C111.439 27.645 75.461 62.305 75.461 62.305s9.653-5.265 25.886-12.285c46.945-20.621 84.236-25.885 99.592-27.64 2.633-.439 4.827-.878 7.458-.878 26.763-3.51 57.036-4.387 88.624-.878 41.68 4.826 86.43 17.111 132.058 41.68 0 0-34.66-32.906-109.244-55.281l6.143-7.019s60.105-1.317 122.844 45.628c0 0 63.178 113.631 63.178 253.585 0-.438-36.854 62.739-133.813 65.81l-.001.001zm-43.874-203.133c-25.006 0-44.75 21.498-44.75 48.262 0 26.763 20.182 48.26 44.75 48.26 25.008 0 44.752-21.497 44.752-48.26 0-26.764-20.182-48.262-44.752-48.262zm-160.135 0c-25.008 0-44.751 21.498-44.751 48.262 0 26.763 20.182 48.26 44.751 48.26 25.007 0 44.75-21.497 44.75-48.26.439-26.763-19.742-48.262-44.75-48.262z"
     />
   </Svg>
 ))
