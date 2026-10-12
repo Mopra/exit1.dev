@@ -25,6 +25,7 @@ import { PageHeader, PageContainer } from '../components/layout';
 import { functions } from '../firebase';
 import { httpsCallable } from '@/lib/callable';
 import { usePlan } from '@/hooks/usePlan';
+import { useAuthReady } from '../AuthReadyProvider';
 import { teamAccountLabel, useAccount, type TeamRole } from '@/AccountProvider';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 
@@ -91,10 +92,7 @@ function RoleSelect({ value, onChange, disabled, id }: { value: TeamRole; onChan
       <SelectContent>
         {(['editor', 'viewer'] as TeamRole[]).map((role) => (
           <SelectItem key={role} value={role} className="cursor-pointer">
-            <div className="flex flex-col">
-              <span>{ROLE_LABEL[role]}</span>
-              <span className="text-xs text-muted-foreground">{ROLE_HINT[role]}</span>
-            </div>
+            {ROLE_LABEL[role]}
           </SelectItem>
         ))}
       </SelectContent>
@@ -104,6 +102,7 @@ function RoleSelect({ value, onChange, disabled, id }: { value: TeamRole; onChan
 
 const Team: React.FC = () => {
   const account = useAccount();
+  const authReady = useAuthReady();
   const { tier } = usePlan();
   const [searchParams, setSearchParams] = useSearchParams();
   const linkInviteId = searchParams.get('invite');
@@ -132,9 +131,11 @@ const Team: React.FC = () => {
     }
   }, []);
 
+  // Callables need the Firebase session; firing before it exists fails as
+  // unauthenticated and leaves the page without a team.
   useEffect(() => {
-    void loadTeam();
-  }, [loadTeam]);
+    if (authReady) void loadTeam();
+  }, [authReady, loadTeam]);
 
   const pendingForMe = useMemo(() => {
     const list = [...account.invites];
@@ -411,16 +412,21 @@ const Team: React.FC = () => {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="invite-role">Role</Label>
-                      <RoleSelect id="invite-role" value={inviteRole} onChange={setInviteRole} disabled={inviting || seatsFull} />
+                      {/* Wrapped so Radix's hidden native select doesn't take a space-y gap and lift the field. */}
+                      <div className="flex h-9 items-start">
+                        <RoleSelect id="invite-role" value={inviteRole} onChange={setInviteRole} disabled={inviting || seatsFull} />
+                      </div>
                     </div>
                     <Button type="submit" className="cursor-pointer" disabled={inviting || seatsFull || !inviteEmail.trim()}>
                       {inviting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UserPlus className="w-4 h-4 mr-2" />}
                       Send invite
                     </Button>
                   </form>
-                  {seatsFull && (
-                    <p className="mt-3 text-sm text-muted-foreground">All seats are taken. Remove a member or cancel an invite to make room.</p>
-                  )}
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    {seatsFull
+                      ? 'All seats are taken. Remove a member or cancel an invite to make room.'
+                      : `${ROLE_LABEL[inviteRole]}: ${ROLE_HINT[inviteRole].toLowerCase()}.`}
+                  </p>
                 </CardContent>
               </Card>
             )}
