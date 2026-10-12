@@ -7,6 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
+- 2026-10-12 Round (hourly): nothing to do. Only the cold-start re-measure waits on its own timer (2026-10-19); no aim open.
 - 2026-10-12 Woken: log stalled, only the cold-start re-measure waits on its timer (2026-10-19). Lazy-load rollout quest is [x]; npm now has exit1-mcp 0.4.0. No aim open, nothing to do.
 - 2026-10-12 Woken for the lazy-load quest: pilot cut badge startup 3390 to 1368 ms, full deploy:changed --all running since 21:12Z; session just waits on it, not blocked. Noted, left it. Woken a second time (batch 1 of 13, session counts 128 functions): same, noted the count to check. Third wake (batch 7 of 13): same, noted. Fourth wake (batch 11 of 13, 1 to 10 clean): same, noted.
 - 2026-10-12 Woken for the [!] JSON docs quest: found npm at 0.3.1 (human published), MCP registry still 0.2.0, repo at 0.4.0. Noted: human publishes 0.4.0 to npm and the registry.
