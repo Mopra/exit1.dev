@@ -13,6 +13,7 @@ import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useOnboardingStatus } from './hooks/useOnboardingStatus';
+import { PendingFollow, PENDING_FOLLOW_STORAGE_KEY } from './components/follow/PendingFollow';
 
 // Website URL storage key
 const WEBSITE_URL_STORAGE_KEY = 'exit1_website_url';
@@ -43,6 +44,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const API = lazy(() => import('./pages/Api'));
 const ApiKeys = lazy(() => import('./pages/ApiKeys'));
 const Mcp = lazy(() => import('./pages/Mcp'));
+const Following = lazy(() => import('./pages/Following'));
 const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SystemNotifications = lazy(() => import('./pages/SystemNotifications'));
@@ -129,6 +131,18 @@ function App() {
     }
   }, []);
 
+  // ?follow=<slug> comes from "Alert me" on the marketing site's /status pages.
+  // Stash it so PendingFollow applies it once the user is signed in, which for
+  // a new visitor is after sign-up.
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    const follow = url.searchParams.get('follow');
+    if (!follow) return;
+    if (/^[a-z0-9.-]{1,200}$/i.test(follow)) localStorage.setItem(PENDING_FOLLOW_STORAGE_KEY, follow.toLowerCase());
+    url.searchParams.delete('follow');
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
   // Only log once on mount, not on every render
   React.useEffect(() => {
     log('App component mounted', {
@@ -142,6 +156,7 @@ function App() {
       <AccountProvider>
       <TooltipProvider>
         <Router>
+          <PendingFollow />
           <ErrorBoundary>
           <Suspense fallback={
             <Layout>
@@ -259,6 +274,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <ApiKeys />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/following"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Following />
                     </AuthGuard>
                   </Layout>
                 }

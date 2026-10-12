@@ -84,6 +84,11 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
       icon: ActivityIcon,
     },
     {
+      title: "Following",
+      url: "/following",
+      icon: BellIcon,
+    },
+    {
       title: "Webhooks",
       url: "/webhooks",
       icon: WebhookIcon,

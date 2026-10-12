@@ -610,6 +610,17 @@ export type AgentClaim =
     };
 
 /** An AI tool the user has connected and granted access to. */
+/** A public monitor (exit1.dev/status/<slug>) the user follows for alerts. */
+export interface PublicMonitorFollow {
+  checkId: string;
+  slug: string;
+  name: string;
+  host: string;
+  status: string;
+  uptime30d: number | null;
+  createdAt: number;
+}
+
 export interface McpConnection {
   clientId: string;
   clientName: string;

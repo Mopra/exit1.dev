@@ -22,6 +22,7 @@ import type {
   McpAuthorizationRequest,
   AgentClaim,
   McpConnection,
+  PublicMonitorFollow,
   EmailProviderSettingsInput,
   WebhookEvent,
   AlertCoverageReport,
@@ -559,6 +560,20 @@ export class Exit1ApiClient {
 
   revokeMcpConnection(clientId: string) {
     return this.callVoid("revokeMcpConnection", { clientId }, 'Failed to revoke the connection');
+  }
+
+  // ---- Followed services (public monitors) ----
+
+  listPublicMonitorFollows() {
+    return this.callUnwrap<PublicMonitorFollow[]>("listPublicMonitorFollows", {}, 'Failed to load followed services');
+  }
+
+  followPublicMonitor(slug: string) {
+    return this.callUnwrap<PublicMonitorFollow>("followPublicMonitor", { slug }, 'Failed to follow this service');
+  }
+
+  unfollowPublicMonitor(checkId: string) {
+    return this.callVoid("unfollowPublicMonitor", { checkId }, 'Failed to unfollow this service');
   }
 
   // ---- Domain Intelligence ----
