@@ -83,10 +83,10 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function RoleSelect({ value, onChange, disabled, id }: { value: TeamRole; onChange: (role: TeamRole) => void; disabled?: boolean; id?: string }) {
+function RoleSelect({ value, onChange, disabled, id, label }: { value: TeamRole; onChange: (role: TeamRole) => void; disabled?: boolean; id?: string; label?: string }) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as TeamRole)} disabled={disabled}>
-      <SelectTrigger id={id} className="w-full sm:w-36 cursor-pointer">
+      <SelectTrigger id={id} aria-label={label} className="w-full sm:w-36 cursor-pointer">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -142,11 +142,13 @@ const Team: React.FC = () => {
     // An invite opened from the email link that isn't in the list (sent to an
     // address this login hasn't verified) still gets a card, so accepting can
     // explain what's wrong instead of the link silently doing nothing.
-    if (linkInviteId && !list.some((i) => i.id === linkInviteId)) {
+    // Wait for the team context first, or the generic card flashes before the
+    // named one replaces it.
+    if (linkInviteId && !account.loading && !list.some((i) => i.id === linkInviteId)) {
       list.unshift({ id: linkInviteId, ownerName: null, ownerEmail: null, role: 'viewer', expiresAt: 0 });
     }
     return list;
-  }, [account.invites, linkInviteId]);
+  }, [account.invites, account.loading, linkInviteId]);
 
   const clearInviteParam = () => {
     if (!linkInviteId) return;
@@ -472,6 +474,7 @@ const Team: React.FC = () => {
                         {team.canManage ? (
                           <div className="flex items-center gap-2 shrink-0">
                             <RoleSelect
+                              label={`Role for ${member.name || member.email}`}
                               value={member.role}
                               onChange={(role) => changeRole(member, role)}
                               disabled={!!busy}
