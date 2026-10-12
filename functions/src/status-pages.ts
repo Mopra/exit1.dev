@@ -7,7 +7,10 @@ const MAX_CHECKS = 50;
 const HEARTBEAT_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Firestore-based cache TTLs (survives across Cloud Function instances)
-const UPTIME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — uptime % changes slowly
+// 1 hour: uptime % is read from the daily summary table, which
+// aggregateDailySummariesScheduled only rebuilds twice a day, so a shorter TTL
+// just re-ran the same BigQuery query for the same answer.
+const UPTIME_CACHE_TTL_MS = 60 * 60 * 1000;
 const HEARTBEAT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour — daily summaries change once/day
 // Date range for uptime calculation on status pages (limits BigQuery scan)
 const UPTIME_LOOKBACK_MS = 30 * DAY_MS;
@@ -320,7 +323,7 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
     return { success: true, data: { checkUptime: [] } };
   }
 
-  // Firestore-cached uptime % with 5-min TTL + 30-day BigQuery lookback
+  // Firestore-cached uptime % (UPTIME_CACHE_TTL_MS) + 30-day BigQuery lookback
   const uptimeMap = await getCachedUptimeMap(statusPageId, validCheckIds, statusPage.userId);
 
   const uptimeEntries: UptimeEntry[] = [];
@@ -334,10 +337,30 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
   return { success: true, data: { checkUptime: uptimeEntries } };
 });
 
+// Every open status page polls this every 60s, and each call reads the page
+// doc plus every check on it. Viewers of the same page within this window
+// share one set of reads. Kept well under the poll interval so a status
+// change still reaches the page within about a minute and a half.
+const SNAPSHOT_MEMO_TTL_MS = 30 * 1000;
+const snapshotMemo = new Map<string, {
+  expiresAt: number;
+  statusPage: StatusPageDoc;
+  result: { success: true; data: { checks: SnapshotEntry[] } };
+}>();
+
 export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, async (request) => {
   const { statusPageId } = request.data || {};
   if (!statusPageId || typeof statusPageId !== 'string') {
     throw new HttpsError("invalid-argument", "statusPageId is required");
+  }
+
+  const memo = snapshotMemo.get(statusPageId);
+  if (memo && memo.expiresAt > Date.now()) {
+    // Same access rule as the uncached path, against the memoized page doc.
+    if (memo.statusPage.visibility !== 'public' && !(await canViewPrivateStatusPage(request, memo.statusPage.userId))) {
+      throw new HttpsError("permission-denied", "Status page is private");
+    }
+    return memo.result;
   }
 
   const statusDoc = await firestore.collection('status_pages').doc(statusPageId).get();
@@ -419,7 +442,10 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
       } as SnapshotEntry;
     });
 
-  return { success: true, data: { checks } };
+  const result = { success: true as const, data: { checks } };
+  if (snapshotMemo.size >= 500) snapshotMemo.delete(snapshotMemo.keys().next().value!);
+  snapshotMemo.set(statusPageId, { expiresAt: Date.now() + SNAPSHOT_MEMO_TTL_MS, statusPage, result });
+  return result;
 });
 
 export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, async (request) => {
