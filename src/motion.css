@@ -103,3 +103,16 @@
   from { stroke-dashoffset: 24; }
   to { stroke-dashoffset: 0; }
 }
+
+/* ── Tabs (components/ui/tabs.tsx) ────────────────────────────────────
+   Once the sliding indicator has measured, it is the active pill: the
+   active trigger stops painting its own and sits above the slider. */
+[data-slot="tabs-list"][data-indicator] [data-slot="tabs-trigger"] {
+  position: relative;
+  z-index: 1;
+}
+[data-slot="tabs-list"][data-indicator] [data-slot="tabs-trigger"][data-state="active"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
