@@ -53,7 +53,12 @@ const KEY_PLACEHOLDER = "ek_live_your_key_here";
 
 const INLINE_CODE = "px-1 py-0.5 rounded bg-muted text-xs";
 
-/** The prompt from the marketing hero. Kept identical so both surfaces teach the same flow. */
+/**
+ * The prompt from the marketing hero, minus one branch. The website's copy
+ * (exit1.dev.website src/lib/setupPrompt.ts) also tells an agent with no
+ * account to create one through agent signup; this page is only seen signed
+ * in, so here that branch would just cost a 409. Keep the rest identical.
+ */
 const SETUP_PROMPT = `Set up uptime monitoring for this project with Exit1.
 
 1. Check whether the Exit1 tools (get_account, list_checks, create_check) are
