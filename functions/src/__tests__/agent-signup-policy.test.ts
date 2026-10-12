@@ -27,9 +27,16 @@ test("an unclaimed account's agent token works until anyone signs in", () => {
   assert.equal(agentTokenAllowed(base, 1_234), false);
 });
 
-test("a claimed account's surviving agent tokens work after sign-ins", () => {
-  // A "revoke" claim revokes the tokens themselves; survivors were approved.
-  assert.equal(agentTokenAllowed({ ...base, status: "claimed" }, 1_234), true);
+test("after a claim, the owner's decision governs the token, not the revocation sweep", () => {
+  assert.equal(agentTokenAllowed({ ...base, status: "claimed", keptAgentAccess: true }, 1_234), true);
+  // A token that slipped past revokeAgentTokens (a racing refresh) still dies.
+  assert.equal(agentTokenAllowed({ ...base, status: "claimed", keptAgentAccess: false }, 1_234), false);
+  assert.equal(agentTokenAllowed({ ...base, status: "claimed" }, 1_234), false);
+});
+
+test("the 7-day pause also stops the agent's token", () => {
+  // Otherwise it could re-enable the paused checks or create new ones.
+  assert.equal(agentTokenAllowed({ ...base, pausedAt: 5 }, null), false);
 });
 
 test("a token without signup state never works", () => {
@@ -78,6 +85,8 @@ test("the claim email escapes what the agent supplied", () => {
     claimUrl: "https://app.exit1.dev/claim?ticket=abc&x=1",
   });
   assert.match(mail.html, /Evil &quot;quoted&quot; &amp; co/);
+  // Attacker-chosen text never reaches the subject line.
+  assert.doesNotMatch(mail.subject, /Evil/);
   assert.match(mail.html, /ticket=abc&amp;x=1/);
   assert.match(mail.text, /https:\/\/app\.exit1\.dev\/claim\?ticket=abc&x=1/);
   assert.doesNotMatch(mail.subject, /[\r\n]/);

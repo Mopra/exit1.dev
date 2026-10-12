@@ -243,6 +243,11 @@ async function pushTierProperty(userId: string, tier: UserTier): Promise<void> {
  *   - user.created → adds to Resend Contacts (with signup_date + plan_tier + topic opt-in)
  *   - subscription.* → syncs tier from Clerk billing to Firestore + Resend plan_tier property
  */
+/** An agent-created account its owner hasn't claimed: kept out of every provider sync. */
+function isUnclaimedAgentSignup(user: { publicMetadata?: Record<string, unknown> | null }): boolean {
+  return (user.publicMetadata as { agentSignup?: { status?: string } } | null | undefined)?.agentSignup?.status === 'unclaimed';
+}
+
 /**
  * Mirror a new signup into the email providers: Resend contact, Day3 contact,
  * topic opt-ins and the `user.created` automation event. Runs from the Clerk
@@ -710,6 +715,7 @@ export const syncClerkUsersToResend = onCall({
       }
 
       for (const user of users) {
+        if (isUnclaimedAgentSignup(user)) continue; // see syncSignupToEmailProviders
         stats.total++;
 
         // Find the primary email
@@ -965,6 +971,7 @@ export const syncSegmentsToResend = onCall({
       if (users.length === 0) break;
 
       for (const user of users) {
+        if (isUnclaimedAgentSignup(user)) continue; // see syncSignupToEmailProviders
         stats.total++;
 
         const primaryEmail = user.emailAddresses.find(
@@ -1318,6 +1325,7 @@ export const resyncResendProperties = onCall({
       const freshCutoff = Date.now() - RESEND_SYNC_FRESH_WINDOW_MS;
 
       for (const user of users) {
+        if (isUnclaimedAgentSignup(user)) continue; // see syncSignupToEmailProviders
         stats.batchTotal++;
 
         const primaryEmail = user.emailAddresses.find(
@@ -1623,6 +1631,7 @@ export const backfillDay3Contacts = onCall({
       const userInfoMap = await loadUserInfoBatch(users.map((u) => u.id));
 
       for (const user of users) {
+        if (isUnclaimedAgentSignup(user)) continue; // see syncSignupToEmailProviders
         stats.batchTotal++;
 
         const primaryEmail = user.emailAddresses.find(

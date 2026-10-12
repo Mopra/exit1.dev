@@ -226,7 +226,9 @@ async function checkAndSendAlerts(
   const crossed = thresholds.filter(
     t => daysUntilExpiry <= t && !alertsSent.includes(t)
   );
-  if (crossed.length > 0) {
+  // Held for an unclaimed agent account: leave the thresholds unmarked so the
+  // warning still goes out once the owner claims it.
+  if (crossed.length > 0 && !check.agentUnclaimed) {
     await triggerDomainAlert(check, Math.min(...crossed), daysUntilExpiry);
 
     // Mark as sent (will be included in batch update)

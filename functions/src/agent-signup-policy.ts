@@ -16,6 +16,8 @@ export interface AgentSignupState {
   email: string;
   createdAt: number;
   claimedAt?: number;
+  /** Set by the claim: whether the owner let the agent keep its access. */
+  keptAgentAccess?: boolean;
   /** When the expiry sweep disabled the account's checks. */
   pausedAt?: number;
 }
@@ -54,11 +56,18 @@ export function sanitizeAgentName(raw: unknown): string {
  * the real owner's first sign-in, it could read whatever they add later. So:
  * while unclaimed, the token works only until anyone signs in as that user.
  * Signing in proves control of the inbox, and from then on only the owner's
- * claim decision can bring the token back (a "revoke" claim kills it outright).
+ * claim decision can bring the token back.
+ *
+ * The decision is read from stored state rather than relying on the claim
+ * having found and revoked every token: a refresh racing the revocation would
+ * otherwise leave a live token behind on a "revoke" claim. And once the 7-day
+ * pause lands the token stops too, or the agent could simply re-enable or
+ * recreate the checks the pause just disabled.
  */
 export function agentTokenAllowed(state: AgentSignupState | null | undefined, lastSignInAt: number | null): boolean {
   if (!state) return false;
-  if (state.status === "claimed") return true;
+  if (state.status === "claimed") return state.keptAgentAccess === true;
+  if (state.pausedAt) return false;
   return lastSignInAt === null;
 }
 
@@ -83,15 +92,25 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** Domain part of an address, for the per-domain signup cap. */
+export function emailDomain(email: string): string {
+  return email.slice(email.lastIndexOf("@") + 1);
+}
+
+/**
+ * The claim email. The agent's name is the only text in it an outsider picks,
+ * so it stays out of the subject line and is quoted as a claim the agent made,
+ * which keeps the message useless as a phishing vehicle.
+ */
 export function buildClaimEmail(args: { agentName: string; email: string; claimUrl: string }): {
   subject: string;
   html: string;
   text: string;
 } {
   const agent = args.agentName;
-  const subject = `${agent} set up uptime monitoring for you on exit1`;
+  const subject = "An AI agent set up uptime monitoring for you on exit1";
   const text = [
-    `${agent} created an exit1 account for ${args.email} and started monitoring for you.`,
+    `An AI agent (it calls itself "${agent}") created an exit1 account for ${args.email} and started monitoring for you.`,
     "",
     "Claim it to start receiving alerts and decide whether the agent keeps access:",
     args.claimUrl,
@@ -101,7 +120,7 @@ export function buildClaimEmail(args: { agentName: string; email: string; claimU
     "",
     "exit1.dev",
   ].join("\n");
-  const html = `<p>${escapeHtml(agent)} created an exit1 account for <strong>${escapeHtml(args.email)}</strong> and started monitoring for you.</p>
+  const html = `<p>An AI agent (it calls itself &ldquo;${escapeHtml(agent)}&rdquo;) created an exit1 account for <strong>${escapeHtml(args.email)}</strong> and started monitoring for you.</p>
 <p>Claim it to start receiving alerts and decide whether the agent keeps access:</p>
 <p><a href="${escapeHtml(args.claimUrl)}">Claim your account</a></p>
 <p style="color:#666">No alerts are sent until you claim it. If you didn't ask for this, ignore this email: the account is paused after 7 days and deleted after 30.</p>

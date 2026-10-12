@@ -596,13 +596,18 @@ export interface McpAuthorizationRequest {
 }
 
 /** An account an AI agent created, as shown to the person claiming it. */
-export interface AgentClaim {
-  status: "unclaimed" | "claimed";
-  agentName: string;
-  email: string;
-  checkCount: number;
-  createdAt: number;
-}
+export type AgentClaim =
+  | { status: "none" }
+  | {
+      status: "unclaimed" | "claimed";
+      agentName: string;
+      email: string;
+      checkCount: number;
+      createdAt: number;
+      /** Where the agent pointed alerts, so the owner sees it before deciding. */
+      emailRecipients: string[];
+      webhookHosts: string[];
+    };
 
 /** An AI tool the user has connected and granted access to. */
 export interface McpConnection {

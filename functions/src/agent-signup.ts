@@ -29,6 +29,7 @@ import {
   agentSignupExpiryAction,
   agentTokenAllowed,
   buildClaimEmail,
+  emailDomain,
   normalizeSignupEmail,
   sanitizeAgentName,
   type AgentSignupState,
@@ -50,11 +51,21 @@ import {
 
 const APP_ORIGIN = "https://app.exit1.dev";
 export const AGENT_SIGNUP_CLIENT_ID = "agent-signup";
-const CLAIM_TICKET_TTL_SECONDS = 30 * 24 * 60 * 60;
+// Matches the 7-day pause. After that the owner signs in with an email code
+// instead, and the app still routes an unclaimed account to /claim.
+const CLAIM_TICKET_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PAUSED_REASON = "Unclaimed agent account: open the claim email to resume";
 
+// The per-IP limit is best effort: X-Forwarded-For can be spoofed. The daily
+// caps below don't depend on the caller's address and are the real bound on
+// how much mail a flood can make exit1 send.
 const MAX_SIGNUPS_PER_IP_PER_HOUR = 3;
-const MAX_SIGNUPS_PER_DAY = 200;
+const MAX_SIGNUPS_PER_DAY = 100;
+// Stops one company's inbox being targeted with claim emails.
+const MAX_SIGNUPS_PER_DOMAIN_PER_DAY = 20;
+// Account lookups (which answer "does this email have an account?") are
+// capped separately, so the 409 can't be used for unbounded enumeration.
+const MAX_LOOKUPS_PER_DAY = 1000;
 const signupLimiter = new FixedWindowRateLimiter({ windowMs: 60 * 60 * 1000, maxKeys: 10_000 });
 
 type ClerkInstance = "prod" | "dev";
@@ -90,7 +101,9 @@ async function readState(uid: string): Promise<StoredAgentSignup | null> {
 export async function checkAgentToken(uid: string): Promise<{ allowed: boolean; unclaimed: boolean }> {
   const state = await readState(uid);
   if (!state) return { allowed: false, unclaimed: false };
-  if (state.status === "claimed") return { allowed: true, unclaimed: false };
+  // Both answers come from stored state alone, no Clerk call needed.
+  if (state.status === "claimed") return { allowed: agentTokenAllowed(state, null), unclaimed: false };
+  if (state.pausedAt) return { allowed: false, unclaimed: true };
 
   const clerk = clerkFor(state.clerkInstance);
   if (!clerk) {
@@ -123,14 +136,14 @@ function fail(res: HttpRes, status: number, error: string, description: string):
   res.status(status).json({ error, error_description: description });
 }
 
-/** Global cap per UTC day, so a distributed signup flood stops at a known size. */
-async function consumeDailySignup(): Promise<boolean> {
+/** Count one against a per-UTC-day cap; false once the cap is reached. */
+async function consumeDailyCounter(key: string, max: number): Promise<boolean> {
   const day = new Date().toISOString().slice(0, 10);
-  const ref = firestore.collection("system_counters").doc(`agent_signups_${day}`);
+  const ref = firestore.collection("system_counters").doc(`agent_signup_${key}_${day}`);
   return firestore.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const count = snap.exists ? Number(snap.data()?.count) || 0 : 0;
-    if (count >= MAX_SIGNUPS_PER_DAY) return false;
+    if (count >= max) return false;
     tx.set(ref, { count: count + 1, expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) }, { merge: true });
     return true;
   });
@@ -159,6 +172,11 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
     return;
   }
 
+  if (!(await consumeDailyCounter("lookups", MAX_LOOKUPS_PER_DAY))) {
+    fail(res, 429, "temporarily_unavailable", "Agent signups are at today's limit. Try again tomorrow.");
+    return;
+  }
+
   if ((await getActiveSuppressions([email])).length > 0) {
     fail(res, 400, "invalid_request", "This address can't receive email from exit1, so it can't be used to sign up.");
     return;
@@ -176,7 +194,10 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
     return;
   }
 
-  if (!(await consumeDailySignup())) {
+  if (
+    !(await consumeDailyCounter(`domain_${emailDomain(email)}`, MAX_SIGNUPS_PER_DOMAIN_PER_DAY)) ||
+    !(await consumeDailyCounter("signups", MAX_SIGNUPS_PER_DAY))
+  ) {
     fail(res, 429, "temporarily_unavailable", "Agent signups are at today's limit. Try again tomorrow.");
     return;
   }
@@ -191,26 +212,39 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
   });
   const uid = user.id;
 
-  const state: StoredAgentSignup = { status: "unclaimed", agentName, email, createdAt: now, clerkInstance: instance };
-  await firestore
-    .collection("users")
-    .doc(uid)
-    .set({ agentSignup: state, acquisitionOrigin: "agent_signup" }, { merge: true });
+  let tokens: { accessToken: string; refreshToken: string; expiresIn: number };
+  try {
+    const state: StoredAgentSignup = { status: "unclaimed", agentName, email, createdAt: now, clerkInstance: instance };
+    await firestore
+      .collection("users")
+      .doc(uid)
+      .set({ agentSignup: state, acquisitionOrigin: "agent_signup" }, { merge: true });
 
-  const tokens = await issueTokens({
-    userId: uid,
-    clientId: AGENT_SIGNUP_CLIENT_ID,
-    clientName: agentName,
-    scopes: [...DEFAULT_MCP_SCOPES],
-    provisional: true,
-  });
+    tokens = await issueTokens({
+      userId: uid,
+      clientId: AGENT_SIGNUP_CLIENT_ID,
+      clientName: agentName,
+      scopes: [...DEFAULT_MCP_SCOPES],
+      provisional: true,
+    });
+  } catch (error) {
+    // A Clerk user with no signup state would lock its real owner out (the
+    // app sends them to /claim, which finds nothing) and would block a retry
+    // with a 409. Undo it.
+    logger.error("Agent signup failed after creating the Clerk user, rolling back", { uid, error });
+    await clerk.users.deleteUser(uid).catch((e: unknown) => logger.error("Agent signup rollback failed", { uid, e }));
+    await firestore.collection("users").doc(uid).delete().catch(() => {});
+    throw error;
+  }
 
   // The ticket goes to the inbox only. Handing it to the agent would give it a
   // browser session on an address it hasn't proven it owns.
   let claimEmailSent = false;
   try {
     const ticket = await clerk.signInTokens.createSignInToken({ userId: uid, expiresInSeconds: CLAIM_TICKET_TTL_SECONDS });
-    const claimUrl = `${APP_ORIGIN}/claim?ticket=${encodeURIComponent(ticket.token)}`;
+    // In the fragment, so it never reaches a server log, and index.html moves
+    // it out of the URL before analytics loads.
+    const claimUrl = `${APP_ORIGIN}/claim#ticket=${encodeURIComponent(ticket.token)}`;
     const mail = buildClaimEmail({ agentName, email, claimUrl });
     await sendTransactionalEmail({
       to: email,
@@ -241,11 +275,53 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
     next_steps:
       `Tell the user to open the email sent to ${email} and claim the account. Until they do, checks run but ` +
       "no alerts are delivered and test alerts are refused. The token stops working if the user signs in without " +
-      "claiming. Unclaimed accounts are paused after 7 days and deleted after 30.",
+      "claiming, and when the account is paused. Unclaimed accounts are paused after 7 days and deleted after 30.",
   });
 }
 
+
 // ── Claim callables (the /claim page) ──
+
+/** Where alerts would go today: shown on /claim so nothing the agent set up is hidden. */
+async function describeAlertChannels(uid: string): Promise<{ emailRecipients: string[]; webhookHosts: string[] }> {
+  const [emailSnap, webhooksSnap] = await Promise.all([
+    firestore.collection("emailSettings").doc(uid).get(),
+    firestore.collection("webhooks").where("userId", "==", uid).get(),
+  ]);
+  const raw = emailSnap.exists ? emailSnap.data()?.recipients : undefined;
+  const emailRecipients = Array.isArray(raw) ? raw.filter((r): r is string => typeof r === "string") : [];
+  const webhookHosts = webhooksSnap.docs.map((d) => {
+    try {
+      return new URL(String(d.data().url)).host;
+    } catch {
+      return "webhook";
+    }
+  });
+  return { emailRecipients, webhookHosts };
+}
+
+/**
+ * A Clerk user that says "unclaimed" but has no Firestore state can only come
+ * from a half-finished signup. Clear the flag so the owner isn't stuck on
+ * /claim forever. Tries both instances, as the app may be on either.
+ */
+async function clearOrphanedClaimFlag(uid: string): Promise<void> {
+  for (const instance of ["prod", "dev"] as const) {
+    const clerk = clerkFor(instance);
+    if (!clerk) continue;
+    try {
+      const user = await clerk.users.getUser(uid);
+      const flag = (user.publicMetadata as { agentSignup?: { status?: string } }).agentSignup;
+      if (flag?.status === "unclaimed") {
+        await clerk.users.updateUserMetadata(uid, { publicMetadata: { agentSignup: null } });
+        logger.warn("Cleared orphaned agent-signup flag", { uid, instance });
+      }
+      return;
+    } catch {
+      // Not in this instance; try the other.
+    }
+  }
+}
 
 export const getAgentClaim = onCall(
   { cors: true, maxInstances: 10, secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
@@ -253,9 +329,15 @@ export const getAgentClaim = onCall(
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
     const state = await readState(uid);
-    if (!state) throw new HttpsError("not-found", "This account wasn't created by an agent");
+    if (!state) {
+      await clearOrphanedClaimFlag(uid);
+      return { success: true, data: { status: "none" } };
+    }
 
-    const count = await firestore.collection("checks").where("userId", "==", uid).count().get();
+    const [count, channels] = await Promise.all([
+      firestore.collection("checks").where("userId", "==", uid).count().get(),
+      describeAlertChannels(uid),
+    ]);
     return {
       success: true,
       data: {
@@ -264,6 +346,7 @@ export const getAgentClaim = onCall(
         email: state.email,
         checkCount: count.data().count,
         createdAt: state.createdAt,
+        ...channels,
       },
     };
   }
@@ -306,6 +389,19 @@ async function revokeAgentTokens(uid: string): Promise<void> {
   if (!snap.empty) await batch.commit();
 }
 
+/**
+ * Revoking the agent must also remove where it pointed alerts. Otherwise a
+ * webhook or recipient it added while unclaimed would keep receiving every
+ * alert for checks the owner adds later.
+ */
+async function removeAgentAlertChannels(uid: string): Promise<void> {
+  const webhooks = await firestore.collection("webhooks").where("userId", "==", uid).get();
+  const batch = firestore.batch();
+  webhooks.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(firestore.collection("emailSettings").doc(uid));
+  await batch.commit();
+}
+
 async function enableEmailAlertsTo(uid: string, email: string): Promise<void> {
   const ref = firestore.collection("emailSettings").doc(uid);
   const now = Date.now();
@@ -330,7 +426,6 @@ async function enableEmailAlertsTo(uid: string, email: string): Promise<void> {
       { merge: true }
     );
   });
-  await notifySettingsEdit(uid);
 }
 
 export const claimAgentAccount = onCall(
@@ -349,8 +444,8 @@ export const claimAgentAccount = onCall(
     if (!state) throw new HttpsError("not-found", "This account wasn't created by an agent");
     if (state.status === "claimed") return { success: true };
 
-    if (!keepAgentAccess) await revokeAgentTokens(uid);
-
+    // The decision is stored BEFORE tokens are revoked. checkAgentToken reads
+    // it, so a token minted by a refresh racing the revocation is dead anyway.
     const now = Date.now();
     await firestore
       .collection("users")
@@ -364,8 +459,14 @@ export const claimAgentAccount = onCall(
         { merge: true }
       );
 
-    const checks = await setChecksClaimed(uid);
+    if (!keepAgentAccess) {
+      await revokeAgentTokens(uid);
+      await removeAgentAlertChannels(uid);
+    }
     if (emailAlerts) await enableEmailAlertsTo(uid, state.email);
+    await notifySettingsEdit(uid);
+
+    const checks = await setChecksClaimed(uid);
 
     const clerk = clerkFor(state.clerkInstance);
     if (clerk) {
@@ -414,16 +515,27 @@ export async function runAgentSignupExpiry(): Promise<void> {
           batch.update(c.ref, { disabled: true, disabledReason: PAUSED_REASON, disabledAt: now });
           ids.push(c.id);
         }
+        // pausedAt also stops the agent's token (agentTokenAllowed), so it
+        // can't re-enable these or create new checks.
         batch.update(doc.ref, { "agentSignup.pausedAt": now });
         await batch.commit();
         await Promise.all(ids.map((id) => notifyCheckEdit(id, "modified")));
         paused++;
       } else if (action === "delete") {
-        await deleteAllUserData(doc.id);
+        // Clerk first: if it fails, the Firestore state survives and tomorrow's
+        // sweep retries. Deleting data first would orphan the Clerk user.
         const clerk = clerkFor(state.clerkInstance);
-        await clerk?.users.deleteUser(doc.id).catch((error: unknown) => {
-          logger.warn("Agent signup expiry: Clerk delete failed", { uid: doc.id, error });
-        });
+        if (!clerk) throw new Error(`No Clerk client for instance ${state.clerkInstance}`);
+        try {
+          await clerk.users.deleteUser(doc.id);
+        } catch (error) {
+          if ((error as { status?: number }).status !== 404) throw error;
+        }
+        const checkIds = (await firestore.collection("checks").where("userId", "==", doc.id).select().get()).docs.map(
+          (d) => d.id
+        );
+        await deleteAllUserData(doc.id);
+        await Promise.all(checkIds.map((id) => notifyCheckEdit(id, "removed")));
         deleted++;
       }
     } catch (error) {

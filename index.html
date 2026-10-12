@@ -2,7 +2,23 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    
+
+    <!-- The agent-signup claim email links to /claim#ticket=<one-time sign-in
+         ticket>. Move it into sessionStorage and out of the URL before any
+         analytics script can record the page location. src/pages/Claim.tsx
+         redeems it only when the person clicks, so a link scanner that opens
+         the page can't burn it. -->
+    <script>
+      (function () {
+        try {
+          if (location.pathname === '/claim' && location.hash.indexOf('#ticket=') === 0) {
+            sessionStorage.setItem('exit1_claim_ticket', decodeURIComponent(location.hash.slice(8)));
+            history.replaceState(null, '', '/claim');
+          }
+        } catch (e) {}
+      })();
+    </script>
+
     <!-- Google Analytics - preconnect for faster loading -->
     <link rel="preconnect" href="https://www.googletagmanager.com" />
     <link rel="preconnect" href="https://www.google-analytics.com" />

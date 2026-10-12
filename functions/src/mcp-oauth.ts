@@ -247,6 +247,7 @@ export interface ResolvedBearer {
 // revocation takes effect within a minute, which is the property that matters:
 // "revoke" has to actually mean revoked, not "revoked in five minutes".
 const BEARER_CACHE_TTL_MS = 60 * 1000;
+const PROVISIONAL_BEARER_CACHE_TTL_MS = 10 * 1000;
 const BEARER_CACHE_MAX = 5000;
 const bearerCache = new Map<string, { resolved: ResolvedBearer; expiresAt: number }>();
 
@@ -307,8 +308,11 @@ export async function resolveBearerToken(token: string): Promise<ResolvedBearer 
     accountUnclaimed,
   };
 
-  // Never cache past the token's own expiry.
-  const expiresAt = Math.min(Date.now() + BEARER_CACHE_TTL_MS, data.expiresAt);
+  // Never cache past the token's own expiry. Agent-signup tokens get a short
+  // TTL: a claim or sign-in that cuts the agent off can't reach this cache on
+  // other instances, so this bounds how long a cut-off agent keeps working.
+  const ttl = data.provisional ? PROVISIONAL_BEARER_CACHE_TTL_MS : BEARER_CACHE_TTL_MS;
+  const expiresAt = Math.min(Date.now() + ttl, data.expiresAt);
   if (expiresAt > Date.now()) {
     bearerCache.set(hash, { resolved, expiresAt });
     if (bearerCache.size > BEARER_CACHE_MAX) {
@@ -658,6 +662,12 @@ async function handleRefreshTokenGrant(
   }
   if (clientId && data.clientId !== clientId) {
     oauthError(res, 400, "invalid_grant", "Refresh token was issued to a different client");
+    return;
+  }
+
+  // An agent cut off from its account must not keep minting fresh pairs.
+  if (data.provisional && !(await checkAgentToken(data.userId)).allowed) {
+    oauthError(res, 400, "invalid_grant", "This agent no longer has access to the account");
     return;
   }
 

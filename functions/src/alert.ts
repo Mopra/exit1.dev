@@ -364,6 +364,9 @@ async function verifyAlertable(
     }
   } catch (error) {
     logger.warn(`Alertable verification read failed for ${website.id}, failing open:`, error);
+    // Failing open is for real alerts. A check the in-memory copy says is
+    // still held for an unclaimed account stays held.
+    if (website.agentUnclaimed) return 'account_unclaimed';
   }
   return null;
 }

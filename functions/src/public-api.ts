@@ -1835,13 +1835,16 @@ async function handleUpdateEmailAlerts(
   // Without a checkFilter the delivery gate (email-gate.ts, rule 5) sends
   // nothing, so settings made here looked configured and never alerted. Cover
   // every check, as the app's own "enable for all checks" does, unless the
-  // user has already scoped alerts to particular checks or folders.
+  // user has already scoped alerts to particular checks or folders. Only when
+  // the request is about who gets alerts or whether they're on: a format
+  // change must not quietly start mail the user never asked for.
   const existingData = existing.exists ? (existing.data() as EmailSettings) : null;
   const hasScoping =
     !!existingData?.checkFilter ||
     Object.keys(existingData?.perCheck ?? {}).length > 0 ||
     Object.keys(existingData?.perFolder ?? {}).length > 0;
-  if (!hasScoping) {
+  const asksForDelivery = !existing.exists || recipients !== undefined || enabled === true;
+  if (!hasScoping && asksForDelivery) {
     update.checkFilter = { mode: 'all' };
   }
 
