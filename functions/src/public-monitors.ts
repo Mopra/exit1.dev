@@ -2,6 +2,12 @@ import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
 import { firestore } from "./init";
+import {
+  WAF_BLOCK_ERROR_PREFIXES,
+  WAF_BLOCK_RECORDED_SINCE_MS,
+  buildPublicDay,
+  publicCurrentStatus,
+} from "./public-monitor-blocked";
 
 /**
  * Public monitors — powers the curated uptime landing pages on the marketing
@@ -18,6 +24,7 @@ import { firestore } from "./init";
 const bigquery = new BigQuery({ projectId: "exit1-dev" });
 const DATASET_ID = "checks";
 const DAILY_SUMMARY_TABLE_ID = "check_daily_summaries";
+const HISTORY_TABLE_ID = "check_history_new";
 
 const INDEX_DOC = "public_monitors/index";
 const PAGES_COLLECTION = "public_monitor_pages";
@@ -152,23 +159,74 @@ async function fetchDailyBatch(
     },
   });
 
+  const blocked = await fetchBlockedCounts(websiteIds, userId, startDate, endDate);
+
   for (const row of rows as DailyRow[]) {
     const id = String(row.website_id);
     const dayValue = typeof row.day === 'string' ? row.day : row.day?.value;
     if (!dayValue) continue;
     const dayMs = getDayStartUtc(new Date(`${dayValue}T00:00:00Z`).getTime());
-    const totalChecks = Number(row.total_checks) || 0;
-    const onlineChecks = Number(row.online_checks) || 0;
     const responseMs = row.avg_response_time != null ? Math.round(Number(row.avg_response_time)) : null;
-    const uptimePercentage = totalChecks > 0 ? Math.round((onlineChecks / totalChecks) * 10000) / 100 : null;
-    const status: HeartbeatDay['status'] =
-      totalChecks <= 0 ? 'unknown' : row.has_issues ? 'offline' : 'online';
+    const counts = {
+      totalChecks: Number(row.total_checks) || 0,
+      onlineChecks: Number(row.online_checks) || 0,
+      offlineChecks: Number(row.offline_checks) || 0,
+      hasIssues: Boolean(row.has_issues),
+    };
 
     const arr = result.get(id) ?? [];
-    arr.push({ day: dayMs, status, uptimePercentage, totalChecks, responseMs });
+    arr.push(buildPublicDay(dayMs, counts, responseMs, blocked.get(`${id}|${dayValue}`) ?? 0));
     result.set(id, arr);
   }
 
+  return result;
+}
+
+/**
+ * Count firewall-blocked observations per check per day, keyed `${id}|YYYY-MM-DD`.
+ * The daily summary table has no error column, so this reads the raw history,
+ * clustered on user_id/website_id and only from the day blocks started being
+ * recorded. A failure here is logged and treated as "nothing blocked".
+ */
+async function fetchBlockedCounts(
+  websiteIds: string[],
+  userId: string,
+  startDate: number,
+  endDate: number,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const since = Math.max(startDate, WAF_BLOCK_RECORDED_SINCE_MS);
+  if (since > endDate) return result;
+
+  const query = `
+    SELECT website_id, DATE(timestamp) AS day, COUNT(*) AS blocked
+    FROM \`${bigquery.projectId}.${DATASET_ID}.${HISTORY_TABLE_ID}\`
+    WHERE user_id = @userId
+      AND website_id IN UNNEST(@websiteIds)
+      AND timestamp >= @since
+      AND timestamp <= @endDate
+      AND status = 'offline'
+      AND (${WAF_BLOCK_ERROR_PREFIXES.map((_, i) => `STARTS_WITH(error, @prefix${i})`).join(' OR ')})
+    GROUP BY website_id, day
+  `;
+  const params: Record<string, unknown> = {
+    userId,
+    websiteIds,
+    since: new Date(since),
+    endDate: new Date(endDate),
+  };
+  WAF_BLOCK_ERROR_PREFIXES.forEach((p, i) => { params[`prefix${i}`] = p; });
+
+  try {
+    const [rows] = await bigquery.query({ query, params });
+    for (const row of rows as Array<{ website_id: string; day: { value: string } | string; blocked: number }>) {
+      const dayValue = typeof row.day === 'string' ? row.day : row.day?.value;
+      if (!dayValue) continue;
+      result.set(`${row.website_id}|${dayValue}`, Number(row.blocked) || 0);
+    }
+  } catch (err) {
+    logger.error('[public-monitors] blocked-count query failed:', err);
+  }
   return result;
 }
 
@@ -177,7 +235,7 @@ async function fetchDailyBatch(
  * Pure-ish: returns the artifacts so both the cron and the cold-start fallback
  * can persist them.
  */
-async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[]; pages: MonitorPage[] }> {
+export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[]; pages: MonitorPage[] }> {
   const snap = await firestore.collection('checks').where('public', '==', true).get();
 
   type CheckMeta = {
@@ -206,7 +264,7 @@ async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[]; page
       url,
       name: typeof d.name === 'string' && d.name.trim() ? d.name : hostFromUrl(url),
       type: typeof d.type === 'string' ? d.type : 'website',
-      status: typeof d.status === 'string' ? d.status : 'unknown',
+      status: publicCurrentStatus(typeof d.status === 'string' ? d.status : 'unknown', d.lastError),
       lastChecked: typeof d.lastChecked === 'number' ? d.lastChecked : 0,
       responseTime: typeof d.responseTime === 'number' ? d.responseTime : null,
       explicitSlug: typeof d.publicSlug === 'string' && d.publicSlug.trim() ? slugify(d.publicSlug) : null,

@@ -13,6 +13,7 @@ import {
   normalizeFollowerAlertState,
   type FollowerEvent,
 } from "./public-follow-policy";
+import { isWafBlockError } from "./public-monitor-blocked";
 
 /**
  * Followed services: any exit1 user can follow a public monitor (the curated
@@ -283,6 +284,10 @@ function buildEmail(website: Website, event: FollowerEvent, slug: string) {
  */
 export async function notifyPublicMonitorFollowers(website: Website, eventType: WebhookEvent): Promise<void> {
   if (eventType !== "website_down" && eventType !== "website_up") return;
+  // A bot firewall refusing our probe says nothing about the service. Never
+  // tell followers openai.com is down because Cloudflare challenged us. The
+  // matching recovery is then skipped as no_prior_down.
+  if (eventType === "website_down" && isWafBlockError(website.lastError)) return;
   try {
     const snap = await firestore.collection(FOLLOWS).where("checkId", "==", website.id).get();
     if (snap.empty) return;
