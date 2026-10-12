@@ -280,3 +280,46 @@ svg.lucide-ellipsis-vertical {
   from { stroke-dashoffset: 24; }
   to { stroke-dashoffset: 0; }
 }
+
+/* Logo (components/ui/Logo.tsx). The mark is a terminal prompt, so it acts
+   like one: the "e" hops as if just typed, then the "_" caret blinks twice.
+   Plays when the link around it is hovered or focused, when the mark itself
+   is hovered, and once on mount for `intro`. Lengths are in the 64-unit
+   viewBox, so -5px is about 2px at sidebar size. */
+.exit1-logo-e {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :is(a, button):is(:hover, :focus-visible) .exit1-logo,
+  .exit1-logo:hover {
+    & .exit1-logo-e {
+      animation: logo-type 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    & .exit1-logo-caret {
+      animation: logo-caret 1.1s step-end 0.25s;
+    }
+  }
+
+  /* Kept out of the hover list above: nesting wraps a selector list in :is(),
+     which takes its most specific member, and the hover selector's shorthand
+     would then wipe these delays. */
+  .exit1-logo-intro {
+    & .exit1-logo-e {
+      animation: logo-type 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.3s;
+    }
+    & .exit1-logo-caret {
+      animation: logo-caret 1.1s step-end 0.55s;
+    }
+  }
+}
+
+@keyframes logo-type {
+  30% { transform: translateY(-5px) scale(0.96, 1.06); }
+  65% { transform: translateY(0) scale(1.06, 0.94); }
+}
+@keyframes logo-caret {
+  0%, 50% { opacity: 0; }
+  25%, 75% { opacity: 1; }
+}

@@ -24,6 +24,7 @@ import { format } from 'date-fns';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useChecks } from '../hooks/useChecks';
 import { getFolderGroupClasses } from '../lib/folder-utils';
+import { Logo } from "@/components/ui/Logo"
 
 interface BadgeData {
   checkId: string;
@@ -1311,7 +1312,7 @@ const PublicStatus: React.FC = () => {
                   className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <span>Powered by exit1.dev</span>
-                  <img src="/e_.svg" alt="exit1.dev" className="size-6" />
+                  <Logo className="size-6" />
                 </a>
               )}
             </div>

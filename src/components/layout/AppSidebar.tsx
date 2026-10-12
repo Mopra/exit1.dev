@@ -53,6 +53,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { Logo } from "@/components/ui/Logo"
 
 // motion's animation features load after first paint, so the sidebar icons'
 // hover animations stay out of the bundle every page waits on.
@@ -269,7 +270,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" asChild>
                 <a href="/" className="cursor-pointer hover:!bg-transparent rounded-none group-data-[collapsible=icon]:!px-1">
-                  <img src="/e_.svg" alt="Exit1.dev Logo" className="size-6 shrink-0 rounded-none" />
+                  <Logo className="size-6!" />
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-medium">
                       exit1.dev

@@ -72,6 +72,7 @@ import {
   type OnboardingStepName,
   type SignUpMethod,
 } from '@/lib/analytics';
+import { Logo } from "@/components/ui/Logo"
 
 const PREFILL_WEBSITE_URL_KEY = 'exit1_website_url';
 
@@ -835,7 +836,7 @@ export default function Onboarding() {
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
           <div className="flex items-center justify-center gap-2 mb-3">
-            <img src="/e_.svg" alt="Exit1" className="size-8" />
+            <Logo className="size-8" intro />
           </div>
           <ProgressIndicator
             currentIndex={Math.max(0, steps.indexOf(step))}
