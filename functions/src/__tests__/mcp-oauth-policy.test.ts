@@ -263,7 +263,8 @@ test("documents with secrets, confidential auth or bad redirects are rejected", 
 });
 
 test("a document without client_name falls back to its host", () => {
-  const { client_name: _omit, ...doc } = claudeCodeDoc;
+  const doc: Record<string, unknown> = { ...claudeCodeDoc };
+  delete doc.client_name;
   const result = validateCimdDocument(doc, CIMD_URL);
   assert.notEqual(typeof result, "string");
   assert.equal((result as { clientName: string }).clientName, "claude.ai");
