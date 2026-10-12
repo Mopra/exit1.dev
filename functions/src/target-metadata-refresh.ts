@@ -1,4 +1,3 @@
-import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
@@ -229,70 +228,63 @@ const processWebsite = async (
   }
 };
 
-export const refreshTargetMetadata = onSchedule(
-  {
-    schedule: "every 24 hours",
-    timeoutSeconds: 540,
-    memory: "256MiB",
-  },
-  async () => {
-    const now = Date.now();
+export async function runTargetMetadataRefresh(): Promise<void> {
+  const now = Date.now();
 
-    // Reset state for this run
-    writeFailureCount = 0;
-    lookupFailureCount = 0;
-    successfulUpdateCount = 0;
-    skippedCount = 0;
-    isShuttingDown = false;
-    pendingUpdates.length = 0;
+  // Reset state for this run
+  writeFailureCount = 0;
+  lookupFailureCount = 0;
+  successfulUpdateCount = 0;
+  skippedCount = 0;
+  isShuttingDown = false;
+  pendingUpdates.length = 0;
 
-    if (isFlushing && currentFlushPromise) {
-      await currentFlushPromise;
-    }
-
-    try {
-      const snapshot = await firestore
-        .collection("checks")
-        .where("disabled", "!=", true)
-        .limit(MAX_WEBSITES)
-        .get();
-
-      if (snapshot.size >= MAX_WEBSITES) {
-        logger.warn(`Target metadata refresh hit MAX_WEBSITES limit (${MAX_WEBSITES})`);
-      }
-
-      // Filter to checks that need a metadata refresh
-      const staleDocs = snapshot.docs.filter((doc) => {
-        const website = doc.data() as Website;
-        return needsRefresh(website, now);
-      });
-      skippedCount = snapshot.size - staleDocs.length;
-
-      if (staleDocs.length === 0) {
-        logger.info(`Target metadata refresh: 0/${snapshot.size} checks need refresh, skipping.`);
-        return;
-      }
-
-      // Process with bounded concurrency
-      for (let i = 0; i < staleDocs.length; i += MAX_PARALLEL_LOOKUPS) {
-        const chunk = staleDocs.slice(i, i + MAX_PARALLEL_LOOKUPS);
-        await Promise.all(chunk.map((doc) => processWebsite(doc, now)));
-      }
-
-      await flushPendingUpdates();
-
-      logger.info(
-        `Target metadata refresh completed. Stale: ${staleDocs.length}, Updated: ${successfulUpdateCount}, Skipped: ${skippedCount}, Lookup failures: ${lookupFailureCount}, Write failures: ${writeFailureCount}`
-      );
-    } catch (error) {
-      logger.error("Fatal error in refreshTargetMetadata:", {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      await flushPendingUpdates();
-    }
+  if (isFlushing && currentFlushPromise) {
+    await currentFlushPromise;
   }
-);
+
+  try {
+    const snapshot = await firestore
+      .collection("checks")
+      .where("disabled", "!=", true)
+      .limit(MAX_WEBSITES)
+      .get();
+
+    if (snapshot.size >= MAX_WEBSITES) {
+      logger.warn(`Target metadata refresh hit MAX_WEBSITES limit (${MAX_WEBSITES})`);
+    }
+
+    // Filter to checks that need a metadata refresh
+    const staleDocs = snapshot.docs.filter((doc) => {
+      const website = doc.data() as Website;
+      return needsRefresh(website, now);
+    });
+    skippedCount = snapshot.size - staleDocs.length;
+
+    if (staleDocs.length === 0) {
+      logger.info(`Target metadata refresh: 0/${snapshot.size} checks need refresh, skipping.`);
+      return;
+    }
+
+    // Process with bounded concurrency
+    for (let i = 0; i < staleDocs.length; i += MAX_PARALLEL_LOOKUPS) {
+      const chunk = staleDocs.slice(i, i + MAX_PARALLEL_LOOKUPS);
+      await Promise.all(chunk.map((doc) => processWebsite(doc, now)));
+    }
+
+    await flushPendingUpdates();
+
+    logger.info(
+      `Target metadata refresh completed. Stale: ${staleDocs.length}, Updated: ${successfulUpdateCount}, Skipped: ${skippedCount}, Lookup failures: ${lookupFailureCount}, Write failures: ${writeFailureCount}`
+    );
+  } catch (error) {
+    logger.error("Fatal error in refreshTargetMetadata:", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    await flushPendingUpdates();
+  }
+}
 
 export const refreshCheckMetadata = onCall(async (request) => {
   const uid = await resolveAccountId(request, "write");

@@ -49,6 +49,7 @@ const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confir
 // @ts-expect-error: functions/lib/ has no .d.ts files; types are verified at the source level
 const { getMemberAccess } = await import('../../functions/lib/team-access.js');
 import { CheckSchedule } from './check-schedule.js';
+import { startCronHost } from './cron.js';
 import { attachWsServer, broadcastState, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
 import { LIVE_FIELD_NAMES, type ChartPoint, type CheckStateKind, type LiveCheck, type LiveFields, type StateSegment } from './ws-protocol.js';
 import { CheckTimeseries } from './check-timeseries.js';
@@ -1821,6 +1822,10 @@ runDay3Drain().catch((err: unknown) =>
   console.warn('Failed to drain Day3 webhook events on startup:', err)
 );
 
+// ── Scheduled jobs (formerly onSchedule Cloud Functions) ───────────────
+// See cron.ts: both regions run the host, one claims each slot.
+const stopCronHost = startCronHost(firestore, REGION);
+
 // ── Dispatcher ─────────────────────────────────────────────────────────
 // Runs every 500ms. For each due check, submits it to the semaphore-limited
 // worker pool. inFlight set prevents double-runs. No batching, no lock.
@@ -1965,6 +1970,7 @@ async function shutdown(signal: string) {
   clearInterval(resyncTimer);
   clearInterval(webhookRetryTimer);
   clearInterval(day3WebhookTimer);
+  stopCronHost();
   clearInterval(budgetFlushTimer);
   clearInterval(heartbeatFlushTimer);
   clearInterval(heartbeatDeferFlushTimer);

@@ -1,5 +1,4 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
 import { firestore } from "./init";
@@ -53,25 +52,17 @@ const computeStats = async (previousTotal: number): Promise<PublicChecksStats> =
   return { total, at: startOfUtcDay, ratePerSecond };
 };
 
-export const refreshPublicChecksStats = onSchedule(
-  {
-    schedule: "every 60 minutes",
-    timeZone: "UTC",
-    memory: "256MiB",
-    timeoutSeconds: 120,
-  },
-  async () => {
-    try {
-      const snap = await firestore.doc(STATS_DOC).get();
-      const previous = snap.exists ? (snap.data() as PublicChecksStats) : null;
-      const stats = await computeStats(previous?.total ?? 0);
-      await firestore.doc(STATS_DOC).set(stats);
-      logger.info("Public checks stats refreshed", stats);
-    } catch (error) {
-      logger.error("Failed to refresh public checks stats:", error);
-    }
+export async function runPublicChecksStatsRefresh(): Promise<void> {
+  try {
+    const snap = await firestore.doc(STATS_DOC).get();
+    const previous = snap.exists ? (snap.data() as PublicChecksStats) : null;
+    const stats = await computeStats(previous?.total ?? 0);
+    await firestore.doc(STATS_DOC).set(stats);
+    logger.info("Public checks stats refreshed", stats);
+  } catch (error) {
+    logger.error("Failed to refresh public checks stats:", error);
   }
-);
+}
 
 let memCache: { stats: PublicChecksStats; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 10 * 60 * 1000;

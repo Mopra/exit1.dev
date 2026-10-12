@@ -1,5 +1,4 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
 import { firestore } from "./init";
@@ -339,23 +338,15 @@ async function persistPublicMonitors(index: MonitorIndexEntry[], pages: MonitorP
   }
 }
 
-export const refreshPublicMonitors = onSchedule(
-  {
-    schedule: "every 60 minutes",
-    timeZone: "UTC",
-    memory: "512MiB",
-    timeoutSeconds: 540,
-  },
-  async () => {
-    try {
-      const { index, pages } = await buildPublicMonitors();
-      await persistPublicMonitors(index, pages);
-      logger.info(`[public-monitors] refreshed ${index.length} public monitors`);
-    } catch (error) {
-      logger.error("[public-monitors] refresh failed:", error);
-    }
+export async function runPublicMonitorsRefresh(): Promise<void> {
+  try {
+    const { index, pages } = await buildPublicMonitors();
+    await persistPublicMonitors(index, pages);
+    logger.info(`[public-monitors] refreshed ${index.length} public monitors`);
+  } catch (error) {
+    logger.error("[public-monitors] refresh failed:", error);
   }
-);
+}
 
 let indexMemCache: { data: MonitorIndexEntry[]; expiresAt: number } | null = null;
 

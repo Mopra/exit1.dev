@@ -41,11 +41,13 @@ export { exportChecksCsv } from './csv-export';
 // The logCheckDisabled Firestore trigger was removed to eliminate ~170K+ wasted invocations/day.
 // handleCheckDisabled is now called directly from checks.ts and toggleCheckStatus.
 
-// Scheduled security refresh
-export { refreshSecurityMetadata } from './security-refresh';
+// Scheduled jobs (security, target metadata, domain expiry, history purge and
+// aggregation, public stats and monitors, lifecycle sweep) run on the VPS, not
+// as Cloud Functions: see vps/src/cron.ts. That removes a cold start per run
+// and the Cloud Scheduler job fees.
 
-// Scheduled target metadata refresh (DNS + GeoIP)
-export { refreshTargetMetadata, refreshCheckMetadata } from './target-metadata-refresh';
+// On-demand target metadata refresh (DNS + GeoIP)
+export { refreshCheckMetadata } from './target-metadata-refresh';
 
 // System status function
 export { getSystemStatus } from './system';
@@ -99,8 +101,6 @@ export {
   getCheckReportMetrics,
   getCheckHistoryForStats,
   getCheckHistoryDailySummary,
-  purgeBigQueryHistory,
-  aggregateDailySummariesScheduled, // Pre-aggregate daily summaries for cost optimization
 } from './history';
 
 // Log notes
@@ -178,14 +178,10 @@ export {
 export { badge } from './badge';
 
 // Public marketing stats (total checks performed, for homepage counter)
-export {
-  refreshPublicChecksStats,
-  getPublicChecksStats,
-} from './public-stats';
+export { getPublicChecksStats } from './public-stats';
 
 // Public monitors (curated uptime landing pages on the marketing site)
 export {
-  refreshPublicMonitors,
   getPublicMonitors,
   getPublicMonitor,
 } from './public-monitors';
@@ -237,7 +233,6 @@ export { recomputeAllTiers } from './recompute-tiers';
 
 // Domain Intelligence (DI) - Domain Expiry Monitoring
 export {
-  checkDomainExpiry,          // Scheduled function (every 6 hours)
   enableDomainExpiry,         // Enable DI for a check (Nano only)
   disableDomainExpiry,        // Disable DI for a check
   updateDomainExpiry,         // Update DI settings (thresholds)
@@ -259,7 +254,6 @@ export {
 // the no-alert-channel notice, and keeps the activation contact properties current.
 // getAlertCoverageReport answers "how many users can actually be alerted?".
 export {
-  lifecycleSweep,
   runLifecycleSweep,
   notifyUsersWithoutAlertChannel,
   getAlertCoverageReport,

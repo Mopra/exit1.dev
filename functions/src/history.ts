@@ -1,5 +1,4 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
@@ -805,10 +804,7 @@ export const getCheckHistoryForStats = onCall(async (request) => {
   }
 });
 
-export const purgeBigQueryHistory = onSchedule({
-  schedule: "every 24 hours",
-  timeZone: "UTC",
-}, async () => {
+export async function runBigQueryHistoryPurge(): Promise<void> {
   try {
     // Collect users whose tier entitles them to longer-than-free retention.
     // Current lineup: Free = 60d, Indie = 60d, Nano = 60d, Pro = 1095d.
@@ -825,7 +821,7 @@ export const purgeBigQueryHistory = onSchedule({
   } catch (error) {
     logger.error("BigQuery retention purge failed:", error);
   }
-});
+}
 
 /**
  * Scheduled function to aggregate daily summaries.
@@ -833,12 +829,7 @@ export const purgeBigQueryHistory = onSchedule({
  * The MERGE query is idempotent (upsert), so re-running for the same day is safe.
  * Each run aggregates both yesterday (catch-up) and today (partial day).
  */
-export const aggregateDailySummariesScheduled = onSchedule({
-  schedule: "0 2,14 * * *", // 02:00 and 14:00 UTC
-  timeZone: "UTC",
-  memory: "256MiB",
-  timeoutSeconds: 540, // 9 minutes
-}, async () => {
+export async function runDailySummaryAggregation(): Promise<void> {
   try {
     const { aggregateDailySummaries } = await import('./bigquery.js');
 
@@ -854,5 +845,5 @@ export const aggregateDailySummariesScheduled = onSchedule({
   } catch (error) {
     logger.error("Daily summary aggregation failed:", error);
   }
-});
+}
 

@@ -7,7 +7,6 @@
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { FieldValue } from "firebase-admin/firestore";
 import { firestore, getUserTier, getUserTierLive } from "./init";
@@ -21,22 +20,13 @@ import {
   RdapDomainInfo
 } from "./rdap-client";
 import { triggerDomainAlert, triggerDomainRenewalAlert } from "./alert";
-import {
-  CLERK_SECRET_KEY_PROD,
-  CLERK_SECRET_KEY_DEV,
-  RESEND_API_KEY,
-  RESEND_FROM,
-  DAY3_API_KEY,
-  DAY3_FROM,
-} from "./env";
+import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 import { TIER_LIMITS } from "./config";
 import { resolveAccountId } from "./team-access";
 
 // Configuration
-const DI_SCHEDULER_MEMORY = "256MiB" as const;
-const DI_SCHEDULER_TIMEOUT_SECONDS = 540;
 const DI_MAX_BATCH_SIZE = 400; // Firestore batch limit is 500
-const DI_TIME_BUDGET_MS = 500 * 1000; // 8.3 min safety margin
+const DI_TIME_BUDGET_MS = 500 * 1000; // per run; the rest waits for the next run
 const DI_MANUAL_REFRESH_RATE_LIMIT_COLLECTION = 'domainRefreshRateLimits';
 const DI_MANUAL_REFRESH_LIMIT_PER_DAY = 50;
 
@@ -47,20 +37,7 @@ export const DEFAULT_ALERT_THRESHOLDS = [30, 14, 7, 1];
  * Scheduled function to check domain expiry for all enabled domains
  * Runs every 6 hours, processing only domains that are due for checking
  */
-export const checkDomainExpiry = onSchedule({
-  schedule: "every 6 hours",
-  region: "us-central1",
-  timeoutSeconds: DI_SCHEDULER_TIMEOUT_SECONDS,
-  memory: DI_SCHEDULER_MEMORY,
-  maxInstances: 1,
-  // This scheduler is the only caller of triggerDomainAlert /
-  // triggerDomainRenewalAlert, both of which send email. It ran with no
-  // secrets bound at all, so every domain-expiry and domain-renewal email
-  // died inside alert-domain.ts's catch as a logger.warn — silently, since
-  // that path never surfaced the failure. Binding the credentials is what
-  // makes those alerts actually send.
-  secrets: [RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM],
-}, async () => {
+export async function runDomainExpiryCheck(): Promise<void> {
   const now = Date.now();
   const startTime = now;
   
@@ -175,7 +152,7 @@ export const checkDomainExpiry = onSchedule({
     errors: errorCount,
     durationMs: Date.now() - startTime,
   });
-});
+}
 
 /**
  * Process RDAP result and compute update data

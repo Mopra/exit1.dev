@@ -1,4 +1,3 @@
-import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
@@ -256,14 +255,7 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
   }
 };
 
-export const refreshSecurityMetadata = onSchedule({
-  // Run every 6 hours so the URGENT tier (<=7 days to expiry) gets refreshed
-  // on its 6h cadence. Per-check filtering inside processWebsite enforces the
-  // adaptive 7-day / 1-day / 6-hour intervals based on daysUntilExpiry.
-  schedule: "every 6 hours",
-  timeoutSeconds: 540, // 9 minutes
-  memory: "512MiB",
-}, async () => {
+export async function runSecurityMetadataRefresh(): Promise<void> {
   logger.info("Starting security metadata refresh...");
 
   // Reset state for this run (critical: clear any stale data from previous runs)
@@ -315,7 +307,7 @@ export const refreshSecurityMetadata = onSchedule({
     // Attempt to flush any pending updates before failing
     await flushPendingUpdates();
   }
-});
+}
 
 
 

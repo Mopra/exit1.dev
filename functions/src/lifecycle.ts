@@ -27,7 +27,6 @@
  * overlap and double-fire.
  */
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import {
@@ -661,32 +660,13 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
   }
 }
 
-export const lifecycleSweep = onSchedule(
-  {
-    schedule: "every day 07:00",
-    timeZone: "UTC",
-    region: "us-central1",
-    timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
-    // Full-collection scans; see the note on notifyUsersWithoutAlertChannel.
-    memory: "512MiB",
-    maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
-    // RESEND_FROM and DAY3_FROM are here because the sweep now sends the
-    // no-channel notice itself. Without them getDay3EmailCredentials() falls back
-    // to a default from-address and firebase-functions logs "No value found for
-    // secret parameter", which is how this was spotted.
-    secrets: [
-      CLERK_SECRET_KEY_PROD,
-      CLERK_SECRET_KEY_DEV,
-      RESEND_API_KEY,
-      RESEND_FROM,
-      DAY3_API_KEY,
-      DAY3_FROM,
-    ],
-  },
-  async () => {
-    await runSweep({ dryRun: false, owner: "schedule" });
-  },
-);
+// The daily 07:00 UTC run, driven by the VPS cron host (vps/src/cron.ts). It
+// sends the no-channel notice, so the VPS env must carry RESEND_FROM and
+// DAY3_FROM; without them getDay3EmailCredentials() falls back to a default
+// from-address.
+export async function runScheduledLifecycleSweep(): Promise<void> {
+  await runSweep({ dryRun: false, owner: "schedule" });
+}
 
 /** Admin-only on-demand run. Defaults to a dry run, like the notifier. */
 export const runLifecycleSweep = onCall(
