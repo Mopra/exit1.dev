@@ -3,10 +3,11 @@ import { Button, ScrollArea, Sheet, SheetContent, SheetTitle, Tabs, TabsContent,
 import { Badge } from '../ui/Badge';
 // Removed unused Separator
 // Removed internal ScrollArea to avoid inner scrolling and overflow
-import { Copy, AlertCircle, CheckCircle, XCircle, PauseCircle, Pencil, Trash2, Check, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, XCircle, PauseCircle, Pencil, Trash2, Check, X } from 'lucide-react';
 import StatusBadge from '../ui/StatusBadge';
 import { formatResponseTime } from '../../utils/formatters';
 import { copyToClipboard, copyRowData } from '../../utils/clipboard';
+import { CopyGlyph, useCopiedKey } from '../ui/CopyGlyph';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/Tooltip";
 import { apiClient } from '../../api/client';
 import type { LogNote } from '../../api/types';
@@ -113,9 +114,11 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
     };
   }, [isOpen, logEntry]);
 
-  const handleCopy = async (text: string) => {
+  const [copiedKey, markCopied] = useCopiedKey();
+  const handleCopy = async (key: string, text: string) => {
     const ok = await copyToClipboard(text);
     if (ok) {
+      markCopied(key);
       toast.success('Copied to clipboard');
     } else {
       toast.error('Failed to copy');
@@ -349,10 +352,10 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                           variant="outline"
                           size="sm"
                           aria-label="Copy all details"
-                          onClick={() => handleCopy(copyRowData(logEntry))}
+                          onClick={() => handleCopy('c1', copyRowData(logEntry))}
                           className="h-8 px-2 cursor-pointer"
                         >
-                          <Copy className="w-4 h-4 mr-2" />
+                          <CopyGlyph copied={copiedKey === 'c1'} className="w-4 h-4 mr-2" />
                           Copy all
                         </Button>
                       </TooltipTrigger>
@@ -593,10 +596,10 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleCopy(logEntry.error!)}
+                              onClick={() => handleCopy('c2', logEntry.error!)}
                               className="h-8 px-2 cursor-pointer"
                             >
-                              <Copy className="w-4 h-4 mr-1" />
+                              <CopyGlyph copied={copiedKey === 'c2'} className="w-4 h-4 mr-1" />
                               Copy
                             </Button>
                           </div>
@@ -671,7 +674,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                                 variant="ghost"
                                 size="sm"
                                 onClick={() =>
-                                  handleCopy(
+                                  handleCopy('c3',
                                     JSON.stringify(
                                       {
                                         targetHostname: logEntry.targetHostname,
@@ -698,7 +701,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                                 }
                                 className="h-8 px-2 cursor-pointer"
                               >
-                                <Copy className="w-4 h-4 mr-1" />
+                                <CopyGlyph copied={copiedKey === 'c3'} className="w-4 h-4 mr-1" />
                                 Copy
                               </Button>
                             )}
@@ -761,10 +764,10 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                                       <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={() => handleCopy(logEntry.edgeHeadersJson!)}
+                                        onClick={() => handleCopy('c4', logEntry.edgeHeadersJson!)}
                                         className="w-full justify-center cursor-pointer"
                                       >
-                                        <Copy className="w-4 h-4 mr-2" />
+                                        <CopyGlyph copied={copiedKey === 'c4'} className="w-4 h-4 mr-2" />
                                         Copy edge headers
                                       </Button>
                                     </TooltipTrigger>
@@ -794,10 +797,10 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleCopy(logEntry.responseBodySample!)}
+                              onClick={() => handleCopy('c5', logEntry.responseBodySample!)}
                               className="h-8 px-2 cursor-pointer"
                             >
-                              <Copy className="w-4 h-4 mr-1" />
+                              <CopyGlyph copied={copiedKey === 'c5'} className="w-4 h-4 mr-1" />
                               Copy
                             </Button>
                           </div>
@@ -922,10 +925,10 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleCopy(copyRowData(logEntry))}
+                          onClick={() => handleCopy('c6', copyRowData(logEntry))}
                           className="h-8 px-2 cursor-pointer"
                         >
-                          <Copy className="w-4 h-4 mr-1" />
+                          <CopyGlyph copied={copiedKey === 'c6'} className="w-4 h-4 mr-1" />
                           Copy JSON
                         </Button>
                       </div>

@@ -4,7 +4,6 @@ import {
   BookOpen,
   Bot,
   ChevronDown,
-  Copy,
   Info,
   KeyRound,
   Plus,
@@ -70,6 +69,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui";
 import { copyToClipboard } from "@/utils/clipboard";
+import { CopyGlyph, useCopiedKey } from "@/components/ui/CopyGlyph"
 
 const dateFmt = (ts?: number | null) => (ts ? new Date(ts).toLocaleString() : "—");
 
@@ -194,9 +194,11 @@ export default function ApiKeys() {
     if (res.success) load();
   }
 
+  const [copiedWhat, markCopied] = useCopiedKey();
   async function copyCreatedKey() {
     if (!createdKey) return;
     const ok = await copyToClipboard(createdKey.key);
+    if (ok) markCopied("key");
     if (ok) toast.success("API key copied");
     else toast.error("Copy failed");
   }
@@ -221,6 +223,7 @@ export default function ApiKeys() {
   async function copyMcpConfig() {
     if (!mcpConfig) return;
     const ok = await copyToClipboard(mcpConfig);
+    if (ok) markCopied("mcp");
     if (ok) toast.success("MCP config copied");
     else toast.error("Copy failed");
   }
@@ -303,7 +306,7 @@ export default function ApiKeys() {
                     onClick={copyCreatedKey}
                     className="cursor-pointer shrink-0 gap-1.5"
                   >
-                    <Copy className="w-3 h-3" />
+                    <CopyGlyph copied={copiedWhat === "key"} className="w-3 h-3" />
                     Copy
                   </Button>
                 </div>
@@ -326,7 +329,7 @@ export default function ApiKeys() {
                       onClick={copyMcpConfig}
                       className="cursor-pointer gap-1.5"
                     >
-                      <Copy className="w-3 h-3" />
+                      <CopyGlyph copied={copiedWhat === "mcp"} className="w-3 h-3" />
                       Copy config
                     </Button>
                     <Button asChild size="sm" variant="ghost" className="cursor-pointer gap-1.5">

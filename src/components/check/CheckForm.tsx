@@ -73,6 +73,7 @@ import { LLM_PRESETS, getLlmPreset } from '../../lib/llm-presets';
 import { usePlan } from '../../hooks/usePlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import { getMinCheckIntervalSecondsForTier } from '../../lib/subscription';
+import { CopyGlyph } from "@/components/ui/CopyGlyph"
 
 // Common IANA timezones grouped by region for the notification timezone selector
 const TIMEZONE_OPTIONS = [
@@ -1094,7 +1095,7 @@ export default function CheckForm({
                           >
                             {copiedCheckId ? (
                               <span className="flex items-center gap-1">
-                                <Check className="w-3 h-3" />
+                                <CopyGlyph copied className="w-3 h-3" />
                                 Copied
                               </span>
                             ) : (
@@ -1265,7 +1266,7 @@ export default function CheckForm({
                           >
                             {copiedHeartbeatUrl ? (
                               <span className="flex items-center gap-1">
-                                <Check className="w-3 h-3" />
+                                <CopyGlyph copied className="w-3 h-3" />
                                 Copied
                               </span>
                             ) : (

@@ -85,3 +85,21 @@
 @keyframes row-leave {
   to { opacity: 0; transform: translateX(16px); }
 }
+
+/* ── Copy confirmed (CopyGlyph) ───────────────────────────────────────
+   The copy icon becomes a tick that pops in and draws itself. */
+@media (prefers-reduced-motion: no-preference) {
+  .copy-done { animation: copy-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+  .copy-done path {
+    stroke-dasharray: 24;
+    animation: copy-draw 0.35s ease-out;
+  }
+}
+@keyframes copy-pop {
+  0% { transform: scale(0.5) rotate(-15deg); }
+  60% { transform: scale(1.15); }
+}
+@keyframes copy-draw {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}

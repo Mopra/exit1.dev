@@ -31,9 +31,10 @@ import {
 } from '@/components/ui/chart';
 import GlowCard from '@/components/ui/glow-card';
 import { AlertCoveragePanel } from '@/components/admin/AlertCoveragePanel';
-import { Check, ClipboardList, Copy, RefreshCw, Shield, X } from 'lucide-react';
+import { ClipboardList, RefreshCw, Shield, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { copyToClipboard } from '@/utils/clipboard';
+import { CopyGlyph } from "@/components/ui/CopyGlyph"
 
 const SOURCE_LABELS: Record<string, string> = {
   google: 'Google',
@@ -103,7 +104,7 @@ const UserIdCell: React.FC<{ userId: string }> = ({ userId }) => {
         title={copied ? 'Copied' : 'Copy user ID'}
         aria-label="Copy user ID"
       >
-        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        <CopyGlyph copied={copied} className="h-3 w-3" />
       </button>
     </div>
   );

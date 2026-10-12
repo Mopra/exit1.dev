@@ -54,6 +54,7 @@ import { replayClass, useChangeCount } from '../../hooks/useChangeCount';
 import { TweenNumber } from '../ui/TweenNumber';
 import { CheckCountdown } from './CheckCountdown';
 import { SeverityBadge } from './SeverityBadge';
+import { CopyGlyph, useCopiedKey } from '../ui/CopyGlyph';
 
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => {
     return (
@@ -165,6 +166,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
     // A fresh probe result sweeps a band of the status colour across the card.
     const probes = useChangeCount(check.lastChecked);
     const sweep = check.lastChecked ? replayClass('live-sweep', probes) : '';
+    const [copied, markCopied] = useCopiedKey();
     const displayUrl = isDomainOnly
       ? (check.domainExpiry?.domain ?? check.url.replace(/^domain:\/\//, ''))
       : check.url;
@@ -578,13 +580,15 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <IconButton
-                                    icon={Copy}
+                                    icon={<CopyGlyph copied={copied === 'ping'} className="w-4 h-4" />}
                                     size="sm"
                                     variant="ghost"
                                     aria-label="Copy ping URL"
                                     onClick={(e: React.MouseEvent) => {
                                         e.stopPropagation();
-                                        navigator.clipboard.writeText(`https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`);
+                                        navigator.clipboard
+                                            .writeText(`https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`)
+                                            .then(() => markCopied('ping'), () => {});
                                     }}
                                 />
                             </TooltipTrigger>

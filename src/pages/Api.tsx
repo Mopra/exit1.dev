@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, BookOpen, Bot, Code, Copy, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, BookOpen, Bot, Code, KeyRound, ShieldCheck } from "lucide-react";
 
 import { PageContainer, PageHeader } from "@/components/layout";
 import {
@@ -34,6 +34,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/utils/clipboard";
+import { CopyGlyph } from "@/components/ui/CopyGlyph"
 
 const DEFAULT_PUBLIC_API_BASE_URL = "https://us-central1-exit1-dev.cloudfunctions.net/publicApi";
 
@@ -79,7 +80,7 @@ function CodeBlock({
           onClick={onCopy}
           className="h-7 gap-1 px-2 cursor-pointer"
         >
-          <Copy className="h-3.5 w-3.5" />
+          <CopyGlyph copied={copied} className="h-3.5 w-3.5" />
           {copied ? "Copied" : copyLabel}
         </Button>
       </div>

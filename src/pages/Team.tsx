@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Copy, LogOut, Mail, RefreshCw, Trash2, UserPlus, Users, ArrowRightLeft, Loader2 } from 'lucide-react';
+import { LogOut, Mail, RefreshCw, Trash2, UserPlus, Users, ArrowRightLeft, Loader2 } from 'lucide-react';
 import {
   Alert,
   AlertDescription,
@@ -28,6 +28,7 @@ import { usePlan } from '@/hooks/usePlan';
 import { useAuthReady } from '../AuthReadyProvider';
 import { teamAccountLabel, useAccount, type TeamRole } from '@/AccountProvider';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
+import { CopyGlyph, useCopiedKey } from "@/components/ui/CopyGlyph"
 
 interface TeamMember {
   memberUid: string;
@@ -231,9 +232,11 @@ const Team: React.FC = () => {
     }
   };
 
+  const [copiedLink, markCopied] = useCopiedKey();
   const copyLink = async (link: string) => {
     try {
       await navigator.clipboard.writeText(link);
+      markCopied(link);
       toast.success('Invite link copied');
     } catch {
       toast.error('Could not copy. Select the link and copy it manually.');
@@ -520,7 +523,7 @@ const Team: React.FC = () => {
                       </div>
                       <div className="flex flex-wrap gap-2 shrink-0">
                         <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => copyLink(invite.link)}>
-                          <Copy className="w-4 h-4 mr-2" />
+                          <CopyGlyph copied={copiedLink === invite.link} className="w-4 h-4 mr-2" />
                           Copy link
                         </Button>
                         <Button variant="outline" size="sm" className="cursor-pointer" disabled={!!busy} onClick={() => resendInvite(invite)}>

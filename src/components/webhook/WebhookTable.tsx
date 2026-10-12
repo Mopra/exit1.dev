@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { CheckCircle, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Pause, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, BulkActionsBar, Switch, Tooltip, TooltipContent, TooltipTrigger, GlowCard, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, glassClasses } from '../ui';
 import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
 import type { WebhookSettings, TestResult, WebhookEvent } from '../../api/types';
@@ -8,6 +8,7 @@ import ChecksTableShell from '../check/ChecksTableShell';
 import { useMobile } from '../../hooks/useMobile';
 import type { IntegrationScope } from '../../lib/integration-scope';
 import { labelsForScope } from '../../lib/integration-scope';
+import { CopyGlyph } from "@/components/ui/CopyGlyph"
 
 // --- Shared sub-components (used by both mobile and desktop views) ---
 
@@ -140,7 +141,7 @@ const WebhookActionsMenu: React.FC<{
         onClick={() => onCopyUrl(webhook.url, webhook.id)}
         className="cursor-pointer font-mono"
       >
-        {copiedUrl === webhook.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+        <CopyGlyph copied={copiedUrl === webhook.id} className="w-3 h-3" />
         <span className="ml-2">{copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}</span>
       </DropdownMenuItem>
       <DropdownMenuSeparator />

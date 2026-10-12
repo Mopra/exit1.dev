@@ -2,7 +2,6 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 import {
   Bot,
-  Copy,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -44,6 +43,7 @@ import {
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/utils/clipboard";
 import { trackEvent } from "@/lib/analytics";
+import { CopyGlyph } from "@/components/ui/CopyGlyph"
 
 // The hosted endpoint and npm package are the contract with MCP clients. Keep
 // these in sync with mcp/README.md and functions/src/mcp-oauth.ts.
@@ -141,7 +141,7 @@ function CodeBlock({
           aria-label={copied ? "Copied" : copyLabel}
           className="h-9 sm:h-7 gap-1 px-2.5 sm:px-2 cursor-pointer"
         >
-          <Copy className="h-3.5 w-3.5" />
+          <CopyGlyph copied={copied} className="h-3.5 w-3.5" />
           {copied ? "Copied" : copyLabel}
         </Button>
         <span aria-live="polite" className="sr-only">

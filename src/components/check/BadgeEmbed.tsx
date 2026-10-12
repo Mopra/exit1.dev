@@ -1,11 +1,12 @@
 // src/components/check/BadgeEmbed.tsx
 
 import { useState } from 'react';
-import { Copy, Check, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '../ui';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
+import { CopyGlyph } from "@/components/ui/CopyGlyph"
 
 type BadgeVariant = 'status' | 'uptime' | 'response';
 
@@ -167,7 +168,7 @@ export function BadgeEmbed({
           className="h-7 w-7 shrink-0 bg-muted hover:bg-muted/80"
           onClick={handleCopy}
         >
-          {copied ? <Check className="w-3.5 h-3.5 text-primary" /> : <Copy className="w-3.5 h-3.5" />}
+          <CopyGlyph copied={copied} className="w-3.5 h-3.5" />
         </Button>
       </div>
 
