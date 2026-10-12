@@ -40,7 +40,7 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import { usePlan } from '@/hooks/usePlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import type { Website } from '../types';
-import { ALL_NOTIFICATION_EVENTS, DEFAULT_NOTIFICATION_EVENTS } from '../lib/notification-shared';
+import { ALL_NOTIFICATION_EVENTS, SMS_DEFAULT_NOTIFICATION_EVENTS } from '../lib/notification-shared';
 import { useNotificationSettings } from '../hooks/useNotificationSettings';
 
 // Firebase callable references at module scope to avoid recreating on every render
@@ -87,8 +87,8 @@ const SmsCheckRow = memo(function SmsCheckRow({
   const effectiveEvents = perEvents && perEvents.length > 0
     ? perEvents
     : autoIncluded
-      ? (defaultEvents.length > 0 ? defaultEvents : DEFAULT_NOTIFICATION_EVENTS)
-      : (effectiveOn ? DEFAULT_NOTIFICATION_EVENTS : []);
+      ? (defaultEvents.length > 0 ? defaultEvents : SMS_DEFAULT_NOTIFICATION_EVENTS)
+      : (effectiveOn ? SMS_DEFAULT_NOTIFICATION_EVENTS : []);
   const folderLabel = (check.folder ?? '').trim();
 
   return (
@@ -334,6 +334,9 @@ export default function Sms() {
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>
+                    <p className="text-xs text-muted-foreground max-w-md">
+                      SMS works for numbers in the US, Canada, the EU and the UK. Elsewhere, use email, Pushover, Slack or Discord.
+                    </p>
                     <p className="text-[11px] text-muted-foreground/70 max-w-md leading-relaxed">
                       By adding your phone number, you agree to receive automated SMS text messages from Exit1.dev (Pradsgaard Labs) with website monitoring alerts for the checks you configure (e.g., site down, site up, SSL errors). Consent is not a condition of purchase. Message frequency varies based on your alert configuration. Msg &amp; data rates may apply. Reply HELP for help or STOP to opt out at any time. Your phone number will never be shared with third parties for marketing. See our{' '}
                       <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Privacy Policy</a>

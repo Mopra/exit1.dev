@@ -16,12 +16,16 @@ import {
 import { normalizeCheckFilter } from "./webhook-events";
 import { notifySettingsEdit } from "./check-helpers";
 import { resolveAccountId } from "./team-access";
+import { isSmsDestinationAllowed, SMS_ALLOWED_REGIONS_LABEL } from "./sms-countries";
 
 const normalizePhone = (raw: string): string => {
   const trimmed = raw.trim();
   const normalized = trimmed.replace(/[\s()-]/g, '');
   if (!/^\+\d{8,15}$/.test(normalized)) {
     throw new HttpsError('invalid-argument', 'Phone number must be in E.164 format (e.g., +15551234567)');
+  }
+  if (!isSmsDestinationAllowed(normalized)) {
+    throw new HttpsError('invalid-argument', `SMS alerts are only available for numbers in ${SMS_ALLOWED_REGIONS_LABEL}.`);
   }
   return normalized;
 };
@@ -306,7 +310,7 @@ export const updateSmsPerCheck = onCall({
       userId: uid,
       recipient: '',
       enabled: false,
-      events: ['website_down', 'website_up', 'website_error'],
+      events: ['website_down', 'website_error'], // no UP: recovery texts are opt-in (cost)
       perCheck: Object.keys(perCheckEntry).length ? { [checkId]: perCheckEntry } : {},
       createdAt: now,
       updatedAt: now,
@@ -394,7 +398,7 @@ export const bulkUpdateSmsPerCheck = onCall({
       userId: uid,
       recipient: '',
       enabled: false,
-      events: ['website_down', 'website_up', 'website_error'],
+      events: ['website_down', 'website_error'], // no UP: recovery texts are opt-in (cost)
       perCheck,
       createdAt: now,
       updatedAt: now,
@@ -485,13 +489,10 @@ export const getSmsUsage = onCall({
 
 // Helper to get recipients array from settings (supports both old and new format)
 function getSmsRecipients(settings: SmsSettings): string[] {
-  if (settings.recipients && settings.recipients.length > 0) {
-    return settings.recipients;
-  }
-  if (settings.recipient) {
-    return [settings.recipient];
-  }
-  return [];
+  const all = settings.recipients && settings.recipients.length > 0
+    ? settings.recipients
+    : settings.recipient ? [settings.recipient] : [];
+  return all.filter(isSmsDestinationAllowed);
 }
 
 // Send a test SMS to the configured recipients
@@ -511,7 +512,7 @@ export const sendTestSms = onCall({
     const recipients = getSmsRecipients(settings);
 
     if (recipients.length === 0) {
-      throw new HttpsError('failed-precondition', 'No recipient phone numbers configured');
+      throw new HttpsError('failed-precondition', `No phone numbers we can text. SMS is available in ${SMS_ALLOWED_REGIONS_LABEL}.`);
     }
 
     const body = 'Exit1 SMS test: your alerts are ready.\nReply STOP to opt out.';

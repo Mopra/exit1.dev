@@ -9,12 +9,14 @@ import { useLocalStorage } from './useLocalStorage';
 import { normalizeFolder } from '../lib/folder-utils';
 import {
   DEFAULT_NOTIFICATION_EVENTS,
+  SMS_DEFAULT_NOTIFICATION_EVENTS,
   type NotificationPendingOverride,
   type NotificationUsage,
 } from '../lib/notification-shared';
 import { toast } from 'sonner';
 
-const DEFAULT_EVENTS = DEFAULT_NOTIFICATION_EVENTS;
+export const defaultEventsFor = (collection: 'smsSettings' | 'emailSettings') =>
+  collection === 'smsSettings' ? SMS_DEFAULT_NOTIFICATION_EVENTS : DEFAULT_NOTIFICATION_EVENTS;
 const noop = () => {};
 
 // ---------------------------------------------------------------------------
@@ -74,6 +76,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     hasAccess,
     defaultRecipients = [],
   } = options;
+  // Fixed for the life of the hook: a page passes one collection and never swaps it.
+  const DEFAULT_EVENTS = defaultEventsFor(settingsCollection);
 
   // Stabilise object props via refs so callbacks don't depend on identity
   const callablesRef = useRef(options.callables);
@@ -320,7 +324,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
         saveAgainRef.current?.();
       }
     }
-  }, [hasAccess, userId]);
+  }, [hasAccess, userId, DEFAULT_EVENTS]);
 
   saveAgainRef.current = () => { void handleSaveSettings(false, false); };
 
@@ -427,7 +431,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     );
 
     return unsubscribe;
-  }, [hasAccess, userId, channel, settingsCollection]);
+  }, [hasAccess, userId, channel, settingsCollection, DEFAULT_EVENTS]);
 
   // -----------------------------------------------------------------------
   // Usage
@@ -638,7 +642,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       clearPendingOverride(checkId);
       markChecksPending([checkId], false);
     }
-  }, [queuePendingOverride, clearPendingOverride, markChecksPending]);
+  }, [queuePendingOverride, clearPendingOverride, markChecksPending, DEFAULT_EVENTS]);
 
   const handlePerCheckEvents = useCallback(async (checkId: string, newEvents: WebhookEvent[]) => {
     if (pendingCheckUpdatesRef.current.has(checkId)) return;
@@ -752,7 +756,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       });
       return next;
     });
-  }, [selectedChecks]);
+  }, [selectedChecks, DEFAULT_EVENTS]);
 
   const handleBulkSave = useCallback(async () => {
     if (pendingBulkChanges.size === 0) {
@@ -823,7 +827,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       });
       return next;
     });
-  }, [selectedChecks, pendingBulkChanges]);
+  }, [selectedChecks, pendingBulkChanges, DEFAULT_EVENTS]);
 
   // -----------------------------------------------------------------------
   // Pre-computed bulk state (P10 fix)
@@ -843,11 +847,11 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       });
     }
     return states;
-  }, [selectedChecks, pendingBulkChanges, settings?.perCheck]);
+  }, [selectedChecks, pendingBulkChanges, settings?.perCheck, DEFAULT_EVENTS]);
 
   const allEventsEnabled = useMemo(
     () => selectedChecks.size > 0 && DEFAULT_EVENTS.every((e) => bulkEventStates[e]),
-    [selectedChecks.size, bulkEventStates],
+    [selectedChecks.size, bulkEventStates, DEFAULT_EVENTS],
   );
 
   // -----------------------------------------------------------------------

@@ -17,6 +17,11 @@ export const DEFAULT_NOTIFICATION_EVENTS: WebhookEvent[] = [
   'domain_expiring', 'domain_expired', 'domain_renewed',
 ];
 
+// SMS leaves out recovery texts. Every text is paid for, and UP was half of all
+// sends; "it's back" can wait for email. Users can still tick Up themselves.
+export const SMS_DEFAULT_NOTIFICATION_EVENTS: WebhookEvent[] =
+  DEFAULT_NOTIFICATION_EVENTS.filter((e) => e !== 'website_up');
+
 export type NotificationPendingOverride = {
   enabled?: boolean | null;
   events?: WebhookEvent[] | null;

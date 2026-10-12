@@ -6,6 +6,7 @@ import { CONFIG } from './config';
 import { getResendCredentials } from './env';
 import { firestore } from './init';
 import { resolveFolderEntry, collectRecipients } from './email-gate';
+import { isSmsDestinationAllowed } from './sms-countries';
 import {
   SmsTier,
   decideSmsTier,
@@ -257,14 +258,13 @@ export function getEmailRecipients(settings: EmailSettings): string[] {
 }
 
 // Helper to get SMS recipients array from settings (supports both old and new format)
+// Numbers outside the SMS countries (see sms-countries.ts) are dropped here, so
+// an alert to only such numbers is never sent, budgeted or retried.
 export function getSmsRecipients(settings: SmsSettings): string[] {
-  if (settings.recipients && settings.recipients.length > 0) {
-    return settings.recipients;
-  }
-  if (settings.recipient) {
-    return [settings.recipient];
-  }
-  return [];
+  const all = settings.recipients && settings.recipients.length > 0
+    ? settings.recipients
+    : settings.recipient ? [settings.recipient] : [];
+  return all.filter(isSmsDestinationAllowed);
 }
 
 // Folder inheritance and recipient collection live in the pure, unit-tested
