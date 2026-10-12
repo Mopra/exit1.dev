@@ -214,6 +214,13 @@ lazy((): typeof import('./public-monitors') => require('./public-monitors'), [
   'getPublicMonitor',
 ]);
 
+// Followed services: users follow a public monitor and get its down/up emails
+lazy((): typeof import('./public-monitor-follows') => require('./public-monitor-follows'), [
+  'followPublicMonitor',
+  'unfollowPublicMonitor',
+  'listPublicMonitorFollows',
+]);
+
 // Admin functions
 lazy((): typeof import('./admin') => require('./admin'), [
   'getAdminStats',

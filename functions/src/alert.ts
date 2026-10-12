@@ -28,6 +28,7 @@ import { CONFIG } from './config';
 import { firestore } from './init';
 import { decideSSLAlertTransition, normalizeSSLAlertState, type SSLAlertState } from './ssl-alert-state';
 import { sendTransactionalEmail } from './email-send';
+import { notifyPublicMonitorFollowers } from './public-monitor-follows';
 
 // Re-exported so external consumers can `import { SSLAlertState } from './alert'`.
 export type { SSLAlertState } from './ssl-alert-state';
@@ -457,6 +458,13 @@ export async function triggerAlert(
     const suppression = await verifyAlertable(website);
     if (suppression) {
       return { delivered: false, reason: suppression };
+    }
+
+    // Public monitors (exit1.dev/status pages) also email the users who follow
+    // them. Fire-and-forget: it dedupes retries itself and must never delay or
+    // fail the owner's alert.
+    if (website.public === true) {
+      void notifyPublicMonitorFollowers(website, eventType);
     }
 
     const settings = await helpers.resolveAlertSettings(website.userId, context);
