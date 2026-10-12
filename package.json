@@ -69,6 +69,7 @@
     "jsonpath-plus": "^10.3.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.536.0",
+    "motion": "^12.43.0",
     "ogl": "1.0.11",
     "react": "^19.1.0",
     "react-day-picker": "^9.8.1",

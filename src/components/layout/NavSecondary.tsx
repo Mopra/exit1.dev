@@ -8,16 +8,19 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { isAnimatedIcon, useIconMotion, type AnimatedIcon } from "@/components/ui/animated-icons"
+
+type NavSecondaryItem = {
+  title: string
+  url: string
+  icon?: React.ComponentType<{ className?: string }> | AnimatedIcon
+}
 
 export function NavSecondary({
   items,
   ...props
 }: {
-  items: {
-    title: string
-    url: string
-    icon?: React.ComponentType<{ className?: string }>
-  }[]
+  items: NavSecondaryItem[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   const location = useLocation();
 
@@ -34,34 +37,57 @@ export function NavSecondary({
       <SidebarGroupContent>
         <SidebarMenu>
           {items.map((item) => (
-            <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton 
-                asChild 
-                size="sm"
-                tooltip={item.title}
-                isActive={!isExternalLink(item.url) && isActivePath(item.url)}
-              >
-                {isExternalLink(item.url) ? (
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="cursor-pointer"
-                  >
-                    {item.icon ? <item.icon className="text-sidebar-foreground" /> : null}
-                    <span>{item.title}</span>
-                  </a>
-                ) : (
-                  <Link to={item.url} className="cursor-pointer">
-                    {item.icon ? <item.icon className="text-sidebar-foreground" /> : null}
-                    <span>{item.title}</span>
-                  </Link>
-                )}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            <NavSecondaryRow
+              key={item.title}
+              item={item}
+              isActive={!isExternalLink(item.url) && isActivePath(item.url)}
+              isExternal={isExternalLink(item.url)}
+            />
           ))}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
+  )
+}
+
+function NavSecondaryRow({
+  item,
+  isActive,
+  isExternal,
+}: {
+  item: NavSecondaryItem
+  isActive: boolean
+  isExternal: boolean
+}) {
+  const [motion, motionHandlers] = useIconMotion()
+  const Icon = item.icon
+  const icon = Icon
+    ? isAnimatedIcon(Icon)
+      ? <Icon className="text-sidebar-foreground" motion={motion} />
+      : <Icon className="text-sidebar-foreground" />
+    : null
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild size="sm" tooltip={item.title} isActive={isActive}>
+        {isExternal ? (
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="cursor-pointer"
+            {...motionHandlers}
+          >
+            {icon}
+            <span>{item.title}</span>
+          </a>
+        ) : (
+          <Link to={item.url} className="cursor-pointer" {...motionHandlers}>
+            {icon}
+            <span>{item.title}</span>
+          </Link>
+        )}
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   )
 }

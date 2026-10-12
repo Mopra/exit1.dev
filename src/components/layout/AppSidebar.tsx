@@ -1,27 +1,35 @@
 import * as React from "react"
+import { LazyMotion } from "motion/react"
 import {
-  Globe,
-  BookOpen,
-  Database,
-  BarChart3,
-  Webhook,
-  Mail,
-  MessageSquare,
-  Code,
   Shield,
   Users,
   Bell,
   Activity,
-  FileBadge,
   ClipboardList,
-  Radio,
-  Plug,
-  Bot,
-  CreditCard,
   UsersRound,
   ChevronsUpDown,
   Check,
 } from "lucide-react"
+import {
+  ActivityIcon,
+  BookOpenIcon,
+  BotIcon,
+  ChartColumnIcon,
+  CodeIcon,
+  CreditCardIcon,
+  DatabaseIcon,
+  FileBadgeIcon,
+  GlobeIcon,
+  MailIcon,
+  MessageSquareIcon,
+  PlugIcon,
+  RadioIcon,
+  UsersRoundIcon,
+  WebhookIcon,
+} from "@/components/ui/animated-icons"
+
+const loadMotionFeatures = () =>
+  import("@/components/ui/motion-features").then((mod) => mod.default)
 
 function DiscordIcon({ className }: { className?: string }) {
   return (
@@ -75,38 +83,38 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
     {
       title: "Checks",
       url: "/checks",
-      icon: Globe,
+      icon: GlobeIcon,
     },
     {
       title: "Live",
       url: "/check",
-      icon: Radio,
+      icon: RadioIcon,
       activePaths: ["/checks/"],
     },
     {
       title: "Reports",
       url: "/reports",
-      icon: BarChart3,
+      icon: ChartColumnIcon,
     },
     {
       title: "Status",
       url: "/status",
-      icon: Activity,
+      icon: ActivityIcon,
     },
     {
       title: "Webhooks",
       url: "/webhooks",
-      icon: Webhook,
+      icon: WebhookIcon,
     },
     {
       title: "Integrations",
       url: "/integrations",
-      icon: Plug,
+      icon: PlugIcon,
     },
     {
       title: "Emails",
       url: "/emails",
-      icon: Mail,
+      icon: MailIcon,
     },
     // SMS is Pro-only (TIER_LIMITS.smsAlerts). This used to key off the `nano`
     // boolean, which showed Nano users a nav item they could not use.
@@ -114,28 +122,28 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
       {
         title: "SMS",
         url: "/sms",
-        icon: MessageSquare,
+        icon: MessageSquareIcon,
       },
     ] : []),
     {
       title: "Domain Intel",
       url: "/domain-intelligence",
-      icon: FileBadge,
+      icon: FileBadgeIcon,
     },
     {
       title: "Logs",
       url: "/logs",
-      icon: Database,
+      icon: DatabaseIcon,
     },
     {
       title: "API",
       url: "/api-keys",
-      icon: Code,
+      icon: CodeIcon,
     },
     {
       title: "MCP",
       url: "/mcp",
-      icon: Bot,
+      icon: BotIcon,
     },
   ],
   navAdmin: isAdmin ? [
@@ -174,19 +182,19 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
     {
       title: "Team",
       url: "/team",
-      icon: UsersRound,
+      icon: UsersRoundIcon,
     },
     // Billing used to be reachable only from the avatar menu, and people kept
     // asking how to upgrade or change their card. It sits here, always visible.
     {
       title: "Plans & billing",
       url: "/billing",
-      icon: CreditCard,
+      icon: CreditCardIcon,
     },
     {
       title: "Docs",
       url: "https://docs.exit1.dev",
-      icon: BookOpen,
+      icon: BookOpenIcon,
     },
     {
       title: "Discord community",
@@ -267,50 +275,52 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const data = getNavData(isAdmin, smsAlerts);
 
   return (
-    <Sidebar 
-      variant="sidebar" 
-      collapsible="icon"
-      {...props}
-    >
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <a href="/" className="cursor-pointer hover:!bg-transparent rounded-none group-data-[collapsible=icon]:!px-1">
-                <img src="/e_.svg" alt="Exit1.dev Logo" className="size-6 shrink-0 rounded-none" />
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">
-                    exit1.dev
-                  </span>
-                </div>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <AccountSwitcher />
-        </SidebarMenu>
-      </SidebarHeader>
-      <SidebarContent>
-        <NavMain items={data.navMain} tier={tier} isFounders={isFounders} />
-        {isAdmin && data.navAdmin.length > 0 && (
-          <NavMain
-            items={data.navAdmin}
-            tier={tier}
-            isFounders={isFounders}
-            className="mt-4 border-t border-sidebar-border pt-4"
-          />
-        )}
-        {isAdmin && (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <DeployModeToggle />
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
-      </SidebarContent>
-      <SidebarFooter>
-        <NavUser user={userData} tier={tier} isFounders={isFounders} />
-      </SidebarFooter>
+    <LazyMotion features={loadMotionFeatures}>
+      <Sidebar
+        variant="sidebar"
+        collapsible="icon"
+        {...props}
+      >
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton size="lg" asChild>
+                <a href="/" className="cursor-pointer hover:!bg-transparent rounded-none group-data-[collapsible=icon]:!px-1">
+                  <img src="/e_.svg" alt="Exit1.dev Logo" className="size-6 shrink-0 rounded-none" />
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-medium">
+                      exit1.dev
+                    </span>
+                  </div>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <AccountSwitcher />
+          </SidebarMenu>
+        </SidebarHeader>
+        <SidebarContent>
+          <NavMain items={data.navMain} tier={tier} isFounders={isFounders} />
+          {isAdmin && data.navAdmin.length > 0 && (
+            <NavMain
+              items={data.navAdmin}
+              tier={tier}
+              isFounders={isFounders}
+              className="mt-4 border-t border-sidebar-border pt-4"
+            />
+          )}
+          {isAdmin && (
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <DeployModeToggle />
+              </SidebarGroupContent>
+            </SidebarGroup>
+          )}
+          <NavSecondary items={data.navSecondary} className="mt-auto" />
+        </SidebarContent>
+        <SidebarFooter>
+          <NavUser user={userData} tier={tier} isFounders={isFounders} />
+        </SidebarFooter>
       </Sidebar>
+    </LazyMotion>
   )
 }
