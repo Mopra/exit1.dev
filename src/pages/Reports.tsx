@@ -797,8 +797,12 @@ const Reports: React.FC = () => {
               </GlowCard>
             ))
           ) : (
-            metrics.map((m) => (
-              <GlowCard key={m.key} className="relative overflow-hidden p-0">
+            metrics.map((m, i) => (
+              <GlowCard
+                key={m.key}
+                className="relative overflow-hidden p-0 animate-in fade-in-0 slide-in-from-bottom-2 [animation-duration:300ms] [animation-fill-mode:backwards]"
+                style={{ animationDelay: `${i * 50}ms` }}
+              >
                 <div className="m-1">
                   <CardHeader className="space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">{m.label}</CardTitle>
