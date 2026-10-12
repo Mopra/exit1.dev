@@ -7,6 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
+- 2026-10-13 Round (human left): nothing to do. MCP registry now lists exit1-mcp 0.4.0 as latest, so that Open item is closed. Only the cold-start re-measure waits on its timer (2026-10-19); no aim open.
 - 2026-10-12 Round (hourly): nothing to do. Only the cold-start re-measure waits on its own timer (2026-10-19); no aim open.
 - 2026-10-12 Woken: log stalled, only the cold-start re-measure waits on its timer (2026-10-19). Lazy-load rollout quest is [x]; npm now has exit1-mcp 0.4.0. No aim open, nothing to do.
 - 2026-10-12 Woken for the lazy-load quest: pilot cut badge startup 3390 to 1368 ms, full deploy:changed --all running since 21:12Z; session just waits on it, not blocked. Noted, left it. Woken a second time (batch 1 of 13, session counts 128 functions): same, noted the count to check. Third wake (batch 7 of 13): same, noted. Fourth wake (batch 11 of 13, 1 to 10 clean): same, noted.
@@ -30,5 +31,4 @@
 - 2026-10-10 Woken for "Deploy JSON assertions": not blocked, its session waits on its own background deploy:changed. Noted that "Deploy list-endpoint include=uptime (57abb82)" is likely covered by the same deploy.
 
 ## Open
-- exit1-mcp 0.4.0 is on npm (seen 2026-10-12); MCP registry last seen at 0.2.0, the human publishes it there. Check the registry search.
 - Cold-start re-measure quest unblocks itself 2026-10-19T09:00Z; nothing to do before then.
