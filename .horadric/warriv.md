@@ -7,6 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
+- 2026-10-12 Round (human left, again): nothing to do. Lazy-load pilot on its timer (2026-10-13 ~02:52Z); npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-12 Round (human left): nothing to do. Lazy-load pilot still on its timer (2026-10-13 ~02:52Z); npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-12 Round (hourly): nothing to do. Lazy-load pilot waits on its timer (2026-10-13 ~02:52Z); npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-12 Round (human left): nothing to do. Lazy-load pilot quest is [!] on its own timer until 2026-10-13 02:52Z, then its session compares cold starts and rolls out; npm publish of exit1-mcp 0.3.1 still waits on the human; no aim open.
