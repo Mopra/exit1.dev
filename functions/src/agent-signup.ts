@@ -24,6 +24,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { firestore, getClerkClient } from "./init";
 import { FixedWindowRateLimiter, getClientIp } from "./rate-limit";
 import { DEFAULT_MCP_SCOPES } from "./mcp-oauth-policy";
+import { PUBLIC_API_BASE } from "./mcp-tools";
 import type { ApiScope } from "./api-scopes";
 import {
   agentSignupExpiryAction,
@@ -271,7 +272,7 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
     scope: DEFAULT_MCP_SCOPES.join(" "),
     account: { email, status: "unclaimed", claim_email_sent: claimEmailSent },
     mcp_url: `${APP_ORIGIN}/mcp/v1`,
-    api_base: `${APP_ORIGIN}/v1/public`,
+    api_base: PUBLIC_API_BASE,
     next_steps:
       `Tell the user to open the email sent to ${email} and claim the account. Until they do, checks run but ` +
       "no alerts are delivered and test alerts are refused. The token stops working if the user signs in without " +
