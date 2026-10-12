@@ -61,6 +61,8 @@ import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_I
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
+import { replayClass, useChangeCount } from '../../hooks/useChangeCount';
+import { TweenNumber } from '../ui/TweenNumber';
 import { CheckCountdown } from './CheckCountdown';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useLazyRow } from '../../hooks/useLazyRow';
@@ -324,7 +326,10 @@ const CheckTableRow = React.memo(function CheckTableRow({
 }: CheckTableRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const domainOnly = isDomainOnlyCheck(check);
-  const rowClassName = `hover:bg-muted/50 transition-colors group cursor-pointer ${isOptimistic && !isFolderUpdating ? 'animate-pulse bg-accent' : ''}`;
+  // A fresh probe result sweeps a band of the status colour across the row.
+  const probes = useChangeCount(check.lastChecked);
+  const sweep = check.lastChecked ? replayClass('live-sweep', probes) : '';
+  const rowClassName = `hover:bg-muted/50 transition-colors group cursor-pointer ${sweep} ${sweep && check.status === 'offline' ? 'live-sweep-down' : ''} ${isOptimistic && !isFolderUpdating ? 'animate-pulse bg-accent' : ''}`;
 
   // Rows far from the viewport keep their <tr> (dnd-kit registration and
   // table layout stay intact) but render one fixed-height placeholder cell
@@ -477,7 +482,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
       {columnVisibility.responseTime && (
         <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
           <div className="text-sm font-mono text-muted-foreground">
-            {domainOnly ? '—' : formatResponseTime(check.responseTime)}
+            {domainOnly ? '—' : <TweenNumber value={check.responseTime} format={formatResponseTime} />}
           </div>
         </TableCell>
       )}
@@ -512,7 +517,8 @@ const CheckTableRow = React.memo(function CheckTableRow({
           ) : (
             <CheckCountdown
               lastChecked={check.lastChecked}
-              nextCheckAt={check.nextCheckAt}
+              // Paused checks have no next run, so no countdown or "Checking…".
+              nextCheckAt={check.disabled ? undefined : check.nextCheckAt}
               stale={isStale}
             />
           )}

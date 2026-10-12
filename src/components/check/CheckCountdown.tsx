@@ -123,7 +123,9 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
   const remainingMs = nextCheckAt - now;
   const progress = Math.min(1, Math.max(0, elapsedMs / totalMs));
   const due = remainingMs <= 0;
-  const nextText = due ? 'In Queue' : `Next ${formatRemaining(remainingMs)}`;
+  // Due means the probe is running or about to: say so, and let a highlight
+  // run along the full bar until the result lands and resets it.
+  const nextText = due ? 'Checking…' : `Next ${formatRemaining(remainingMs)}`;
 
   return (
     <div className="flex flex-col gap-1">
@@ -164,7 +166,7 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
           <div
             className={
               'h-full w-full origin-left transition-transform duration-1000 ease-linear ' +
-              (due ? 'bg-primary animate-pulse' : 'bg-primary/50')
+              (due ? 'bg-primary countdown-due' : 'bg-primary/50')
             }
             style={{ transform: `scaleX(${progress})` }}
           />

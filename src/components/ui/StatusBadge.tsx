@@ -4,6 +4,7 @@ import { CheckCircle, XCircle, HelpCircle, AlertTriangle, PauseCircle, Wrench } 
 import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 import { glass } from './glass';
 import { formatDistanceToNow } from 'date-fns';
+import { replayClass, useChangeCount } from '../../hooks/useChangeCount';
 
 type Status = 'online' | 'offline' | 'degraded' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DEGRADED' | 'DOWN' | 'disabled' | 'maintenance';
 
@@ -93,11 +94,13 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
   };
 
   const config = getStatusConfig(status);
+  // Pops when the status changes while on screen, never on mount.
+  const changes = useChangeCount(config.text);
 
   const badgeEl = (
     <Badge
       variant={config.variant}
-      className={`${config.className} ${className} flex items-center gap-1.5 px-2 py-1 text-xs font-medium cursor-pointer`}
+      className={`${config.className} ${className} ${replayClass('status-pop', changes)} flex items-center gap-1.5 px-2 py-1 text-xs font-medium cursor-pointer`}
     >
       <config.icon className="w-3 h-3" />
       {config.text}

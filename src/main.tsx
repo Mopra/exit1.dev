@@ -6,6 +6,7 @@ import Clarity from '@microsoft/clarity';
 import App from './App.tsx';
 import './style.css';
 import './icon-motion.css';
+import './motion.css';
 
 Clarity.init('wd31lyfz9z');
 

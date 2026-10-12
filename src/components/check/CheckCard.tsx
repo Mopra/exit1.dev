@@ -50,6 +50,8 @@ import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, for
 import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
 import { getFolderBadgeClasses } from '../../lib/folder-utils';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
+import { replayClass, useChangeCount } from '../../hooks/useChangeCount';
+import { TweenNumber } from '../ui/TweenNumber';
 import { CheckCountdown } from './CheckCountdown';
 import { SeverityBadge } from './SeverityBadge';
 
@@ -160,6 +162,9 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
     const regionLabel = getRegionLabel(check.checkRegion);
     const isOffline = check.status === 'offline';
     const isDomainOnly = isDomainOnlyCheck(check);
+    // A fresh probe result sweeps a band of the status colour across the card.
+    const probes = useChangeCount(check.lastChecked);
+    const sweep = check.lastChecked ? replayClass('live-sweep', probes) : '';
     const displayUrl = isDomainOnly
       ? (check.domainExpiry?.domain ?? check.url.replace(/^domain:\/\//, ''))
       : check.url;
@@ -172,6 +177,8 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                 check.maintenanceMode && "ring-1 ring-warning/30 border-l-2 border-l-warning",
                 isOffline && !check.maintenanceMode && "ring-1 ring-destructive/20",
                 isOptimisticallyUpdating && !isFolderUpdating && "animate-pulse bg-primary/5",
+                sweep,
+                sweep && isOffline && "live-sweep-down",
                 draggable && "cursor-grab active:cursor-grabbing",
                 className
             )}
@@ -520,7 +527,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
 
                 {/* Response Time */}
                 <div className="font-mono text-muted-foreground text-right flex justify-end">
-                    {isDomainOnly ? '—' : formatResponseTime(check.responseTime)}
+                    {isDomainOnly ? '—' : <TweenNumber value={check.responseTime} format={formatResponseTime} />}
                 </div>
 
                 {/* Last Checked. Domain-only checks keep the static formatter
@@ -539,7 +546,8 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                     ) : (
                         <CheckCountdown
                             lastChecked={check.lastChecked}
-                            nextCheckAt={check.nextCheckAt}
+                            // Paused checks have no next run, so no countdown or "Checking…".
+                            nextCheckAt={check.disabled ? undefined : check.nextCheckAt}
                             fullWidthBar
                             stale={isStale}
                         />

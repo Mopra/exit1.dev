@@ -1,0 +1,61 @@
+/* App motion that is not about icons (those are in icon-motion.css).
+   Rule of thumb: things move when something changes, never on their own,
+   and nothing moves under prefers-reduced-motion. */
+
+/* ── Live check activity ──────────────────────────────────────────────
+   "Just checked": when a fresh probe result lands, a soft band of the
+   status colour sweeps across the row or card once. Classes come in -a/-b
+   pairs (see useChangeCount's replayClass) so each new result replays it. */
+.live-sweep-a,
+.live-sweep-b {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--sweep-color, var(--primary)) 18%, transparent),
+    transparent
+  );
+  background-size: 60% 100%;
+  background-repeat: no-repeat;
+  background-position: -100% 0;
+}
+.live-sweep-down {
+  --sweep-color: var(--destructive);
+}
+
+/* "Being checked": the check is due and its result is on the way. The
+   countdown bar, full by now, carries a highlight that runs along it. */
+.countdown-due {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--primary-foreground, white) 55%, transparent),
+    transparent
+  );
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  background-position: -100% 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .live-sweep-a { animation: live-sweep-a 1.1s cubic-bezier(0.4, 0, 0.2, 1); }
+  .live-sweep-b { animation: live-sweep-b 1.1s cubic-bezier(0.4, 0, 0.2, 1); }
+  .status-pop-a { animation: status-pop-a 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
+  .status-pop-b { animation: status-pop-b 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
+  .countdown-due { animation: countdown-due 1.4s linear infinite; }
+}
+
+@keyframes live-sweep-a { to { background-position: 200% 0; } }
+@keyframes live-sweep-b { to { background-position: 200% 0; } }
+/* Status changed (first result for a new check, resumed, went down, came
+   back): the badge pops with a ring so the change is noticed. */
+@keyframes status-pop-a {
+  0% { transform: scale(0.85); box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent); }
+  45% { transform: scale(1.08); }
+  100% { transform: scale(1); box-shadow: 0 0 0 6px transparent; }
+}
+@keyframes status-pop-b {
+  0% { transform: scale(0.85); box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent); }
+  45% { transform: scale(1.08); }
+  100% { transform: scale(1); box-shadow: 0 0 0 6px transparent; }
+}
+@keyframes countdown-due { to { background-position: 250% 0; } }
