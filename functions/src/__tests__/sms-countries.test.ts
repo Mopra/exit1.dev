@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 
 import { isSmsDestinationAllowed } from "../sms-countries";
 
-test("allows US, Canada and Europe", () => {
-  for (const n of ["+16505550122", "+16475550112", "+4520123456", "+48691234520", "+447700900123", "+33612345678", "+41791234567"]) {
+test("allows US, Canada, Europe and Japan", () => {
+  for (const n of ["+16505550122", "+16475550112", "+4520123456", "+48691234520", "+447700900123", "+33612345678", "+41791234567", "+81701234509"]) {
     assert.equal(isSmsDestinationAllowed(n), true, n);
   }
 });
 
 test("blocks costly destinations", () => {
-  for (const n of ["+27821234525", "+81701234509", "+61412345678", "+919812345678", "+5511912345678"]) {
+  for (const n of ["+27821234525", "+61412345678", "+919812345678", "+5511912345678"]) {
     assert.equal(isSmsDestinationAllowed(n), false, n);
   }
 });

@@ -335,7 +335,7 @@ export default function Sms() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground max-w-md">
-                      SMS works for numbers in the US, Canada, the EU and the UK. Elsewhere, use email, Pushover, Slack or Discord.
+                      SMS works for numbers in the US, Canada, the EU, the UK and Japan. Elsewhere, use email, Pushover, Slack or Discord.
                     </p>
                     <p className="text-[11px] text-muted-foreground/70 max-w-md leading-relaxed">
                       By adding your phone number, you agree to receive automated SMS text messages from Exit1.dev (Pradsgaard Labs) with website monitoring alerts for the checks you configure (e.g., site down, site up, SSL errors). Consent is not a condition of purchase. Message frequency varies based on your alert configuration. Msg &amp; data rates may apply. Reply HELP for help or STOP to opt out at any time. Your phone number will never be shared with third parties for marketing. See our{' '}
