@@ -120,7 +120,9 @@ export interface StateSegment {
 }
 
 export type ClientMessage =
-  | { type: 'auth'; token: string; since?: number }
+  // accountId: stream a team account the signed-in person belongs to
+  // (the owner's uid). Omitted = the person's own account.
+  | { type: 'auth'; token: string; since?: number; accountId?: string }
   | { type: 'subscribe_history'; checkId: string; windowMs: number };
 
 export type ServerMessage =

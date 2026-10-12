@@ -84,6 +84,13 @@ export type VerifyIdToken = (token: string) => Promise<VerifiedToken>;
  */
 export type GetChecksForUser = (userId: string) => LiveCheck[];
 
+/**
+ * May `actorUid` (the token's user) watch `accountId` (a team owner's uid)?
+ * True only for a current member of a Pro owner's team. Same decision the
+ * Firestore rules and the public API make (functions/src/team-access.ts).
+ */
+export type CanAccessAccount = (actorUid: string, accountId: string) => Promise<boolean>;
+
 /** O(1) ownership check used by the `subscribe_history` handler. */
 export type UserOwnsCheck = (userId: string, checkId: string) => boolean;
 
@@ -106,6 +113,7 @@ export type GetTimeseriesStoreStats = () => Record<string, unknown>;
 
 export interface AttachOptions {
   verifyIdToken: VerifyIdToken;
+  canAccessAccount: CanAccessAccount;
   getChecksForUser: GetChecksForUser;
   userOwnsCheck: UserOwnsCheck;
   getTimeseriesWindow: GetTimeseriesWindow;
@@ -124,7 +132,15 @@ interface Conn {
   ws: WebSocket;
   ip: string;
   state: ConnState;
+  /**
+   * The account this socket streams: the owner uid every check is keyed by.
+   * Equals actorUid except for a teammate watching a team account.
+   */
   uid: string | null;
+  /** The person the token belongs to. */
+  actorUid: string | null;
+  /** Re-checks a teammate's membership so removal closes the stream. */
+  accessTimer: NodeJS.Timeout | null;
   /** Token expiry in ms (epoch). 0 until authed. */
   tokenExpMs: number;
   /** Timer that fires on AUTH_DEADLINE_MS without an `auth` message. */
@@ -266,6 +282,10 @@ function clearTimers(conn: Conn): void {
     clearTimeout(conn.expiryTimer);
     conn.expiryTimer = null;
   }
+  if (conn.accessTimer) {
+    clearInterval(conn.accessTimer);
+    conn.accessTimer = null;
+  }
 }
 
 function closeConn(conn: Conn, code: number, reason: string): void {
@@ -309,10 +329,15 @@ function scheduleTokenLifecycle(conn: Conn): void {
   }, expiryDelay);
 }
 
+// How often a teammate's socket re-confirms they still belong to the team.
+// Removal or the owner leaving Pro closes the stream within this window.
+const ACCOUNT_ACCESS_RECHECK_MS = 5 * 60 * 1000;
+
 async function handleAuthMessage(
   conn: Conn,
-  msg: { token: string; since?: number },
+  msg: { token: string; since?: number; accountId?: string },
   verifyIdToken: VerifyIdToken,
+  canAccessAccount: CanAccessAccount,
   getChecksForUser: GetChecksForUser,
 ): Promise<void> {
   let verified: VerifiedToken;
@@ -340,16 +365,41 @@ async function handleAuthMessage(
   // uid must match the originally authed uid. A different uid arriving
   // mid-connection is a protocol violation — we don't allow re-binding
   // the socket to a new user.
-  if (conn.uid && conn.uid !== verified.uid) {
+  if (conn.actorUid && conn.actorUid !== verified.uid) {
     totalAuthFailed++;
     send(conn.ws, { type: 'error', code: 'uid_mismatch' });
     closeConn(conn, 4401, 'uid-mismatch');
     return;
   }
 
+  // Which account to stream. A teammate names the team's owner; anyone else
+  // streams their own. Checked on every auth, including token refreshes.
+  const requested = typeof msg.accountId === 'string' && msg.accountId.trim() ? msg.accountId.trim() : null;
+  const accountId = requested && requested !== verified.uid ? requested : verified.uid;
+  if (conn.uid && conn.uid !== accountId) {
+    totalAuthFailed++;
+    send(conn.ws, { type: 'error', code: 'uid_mismatch' });
+    closeConn(conn, 4401, 'account-mismatch');
+    return;
+  }
+  if (accountId !== verified.uid) {
+    let allowed = false;
+    try {
+      allowed = await canAccessAccount(verified.uid, accountId);
+    } catch (err) {
+      console.error('[ws] canAccessAccount threw:', err);
+    }
+    if (!allowed) {
+      totalAuthFailed++;
+      send(conn.ws, { type: 'error', code: 'no_account_access' });
+      closeConn(conn, 4403, 'no-account-access');
+      return;
+    }
+  }
+
   // First-time auth: enforce per-user cap before registering.
   if (!conn.uid) {
-    const existing = userConnections.get(verified.uid);
+    const existing = userConnections.get(accountId);
     if (existing && existing.size >= MAX_CONNS_PER_USER) {
       totalUserCapHits++;
       send(conn.ws, { type: 'error', code: 'user_cap' });
@@ -375,34 +425,49 @@ async function handleAuthMessage(
   }
 
   const isFirstAuth = !conn.uid;
-  conn.uid = verified.uid;
+  conn.uid = accountId;
+  conn.actorUid = verified.uid;
   conn.tokenExpMs = expMs;
   conn.state = 'authed';
 
   if (isFirstAuth) {
     totalAuthed++;
-    let set = userConnections.get(verified.uid);
+    let set = userConnections.get(accountId);
     if (!set) {
       set = new Set<Conn>();
-      userConnections.set(verified.uid, set);
+      userConnections.set(accountId, set);
     }
     set.add(conn);
+
+    if (accountId !== verified.uid) {
+      const actorUid = verified.uid;
+      conn.accessTimer = setInterval(() => {
+        if (conn.state !== 'authed') return;
+        canAccessAccount(actorUid, accountId).then((ok) => {
+          if (!ok && conn.state === 'authed') {
+            send(conn.ws, { type: 'error', code: 'no_account_access' });
+            closeConn(conn, 4403, 'account-access-revoked');
+          }
+        }).catch(() => { /* keep the stream on a lookup hiccup; the next tick retries */ });
+      }, ACCOUNT_ACCESS_RECHECK_MS);
+      conn.accessTimer.unref?.();
+    }
   }
 
   scheduleTokenLifecycle(conn);
-  send(conn.ws, { type: 'auth-ok', uid: verified.uid, expMs });
+  send(conn.ws, { type: 'auth-ok', uid: accountId, expMs });
 
   // First-auth: send a snapshot of the user's checks so the client renders
   // immediately without a Firestore round-trip. Re-auth (token refresh) does
   // NOT re-send the snapshot — the client already has fresh state from the
   // running stream, and a duplicate snapshot would just churn the UI.
   if (isFirstAuth) {
-    sendSnapshot(conn, verified.uid, getChecksForUser);
+    sendSnapshot(conn, accountId, getChecksForUser);
     // Replay catches the gap between the client's `since` and now. The
     // snapshot above is authoritative for current state; replay is purely
     // for surfacing transitions that happened while disconnected.
     if (typeof msg.since === 'number' && msg.since > 0) {
-      sendReplay(conn, verified.uid, msg.since, getChecksForUser);
+      sendReplay(conn, accountId, msg.since, getChecksForUser);
     }
   }
 }
@@ -494,6 +559,7 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
   if (wss) return;
   const {
     verifyIdToken,
+    canAccessAccount,
     getChecksForUser,
     userOwnsCheck,
     getTimeseriesWindow,
@@ -543,6 +609,8 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
       ip,
       state: 'awaiting-auth',
       uid: null,
+      actorUid: null,
+      accessTimer: null,
       tokenExpMs: 0,
       authDeadlineTimer: null,
       refreshTimer: null,
@@ -591,7 +659,8 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
         // spamming auth gets caught by the per-IP rate limit at upgrade
         // time and the per-message length cap.
         const since = typeof parsed.since === 'number' && parsed.since > 0 ? parsed.since : undefined;
-        handleAuthMessage(conn, { token: parsed.token, since }, verifyIdToken, getChecksForUser).catch((err) => {
+        const accountId = typeof parsed.accountId === 'string' ? parsed.accountId.slice(0, 128) : undefined;
+        handleAuthMessage(conn, { token: parsed.token, since, accountId }, verifyIdToken, canAccessAccount, getChecksForUser).catch((err) => {
           console.error('[ws] handleAuthMessage threw:', err);
           closeConn(conn, 1011, 'internal-error');
         });

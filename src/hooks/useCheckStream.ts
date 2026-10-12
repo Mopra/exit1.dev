@@ -29,6 +29,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { auth } from '../firebase';
+import { getTeamAccountId } from '../lib/active-account';
 import type { Website } from '../types';
 import {
   LIVE_FIELD_NAMES,
@@ -183,6 +184,15 @@ export interface UseCheckStreamResult {
    * navigations.
    */
   unsubscribeHistory: (checkId: string) => void;
+}
+
+/**
+ * Inside a team account, ask the server to stream the team's checks. It
+ * verifies the membership (vps/src/ws-server.ts) and closes 4403 if not.
+ */
+function withAccount<T extends { type: 'auth'; token: string }>(msg: T): T & { accountId?: string } {
+  const accountId = getTeamAccountId();
+  return accountId ? { ...msg, accountId } : msg;
 }
 
 export function useCheckStream(
@@ -400,7 +410,7 @@ export function useCheckStream(
         const user = auth.currentUser;
         if (!user) return;
         const token = await user.getIdToken(true);
-        conn.ws.send(JSON.stringify({ type: 'auth', token }));
+        conn.ws.send(JSON.stringify(withAccount({ type: 'auth' as const, token })));
       } catch (err) {
         console.warn(`[useCheckStream] ${conn.region}: refreshAuthInPlace failed`, err);
         try { conn.ws?.close(4401, 'refresh-failed'); } catch { /* ignore */ }
@@ -595,7 +605,7 @@ export function useCheckStream(
           ? { type: 'auth' as const, token, since: conn.lastEventAt }
           : { type: 'auth' as const, token };
         try {
-          ws.send(JSON.stringify(authMsg));
+          ws.send(JSON.stringify(withAccount(authMsg)));
         } catch (err) {
           console.warn(`[useCheckStream] ${conn.region}: send(auth) failed`, err);
         }

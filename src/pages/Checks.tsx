@@ -43,8 +43,7 @@ const CheckMapView = lazy(() => import("../components/check/CheckMapView"));
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
-  const account = useAccount();
-  const { accountId, canWrite } = account;
+  const { accountId, canWrite } = useAccount();
   const authReady = useAuthReady();
   const { websiteUrl, isValidUrl, hasProcessed, clearWebsiteUrl } = useWebsiteUrl();
   const [formLoading, setFormLoading] = useState(false);
@@ -137,12 +136,7 @@ const Checks: React.FC = () => {
     regions: wsRegions,
     aggregateState: wsAggregateState,
     fallbackRegion: wsFallbackRegion,
-  } = useCheckStream(firestoreChecks, {
-    // The live stream authenticates as the signed-in person and streams their
-    // own checks. Inside a team account it would have nothing to overlay, so
-    // render straight from Firestore until the VPS can stream an account.
-    enabled: !account.isMember,
-  });
+  } = useCheckStream(firestoreChecks);
 
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)

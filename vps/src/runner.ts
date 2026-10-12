@@ -44,6 +44,10 @@ const { invalidateEmailProviderCache, peekEmailProviderSettings } = await import
 const { drainDay3WebhookEvents, getDay3QueueDepth } = await import('../../functions/lib/day3-webhook-queue.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confirm.js');
+// Team accounts: the same membership check the API uses, so a teammate can
+// stream the team's checks over the live socket.
+// @ts-expect-error: functions/lib/ has no .d.ts files; types are verified at the source level
+const { getMemberAccess } = await import('../../functions/lib/team-access.js');
 import { CheckSchedule } from './check-schedule.js';
 import { attachWsServer, broadcastState, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
 import { LIVE_FIELD_NAMES, type ChartPoint, type CheckStateKind, type LiveCheck, type LiveFields, type StateSegment } from './ws-protocol.js';
@@ -1155,6 +1159,8 @@ attachWsServer(server, {
   verifyIdToken: (token: string) =>
     (auth as { verifyIdToken: (t: string, c?: boolean) => Promise<VerifiedTokenLike> })
       .verifyIdToken(token, false),
+  canAccessAccount: async (actorUid: string, accountId: string) =>
+    ((await getMemberAccess(accountId, actorUid)) as { active: boolean }).active,
   getChecksForUser: (userId: string) =>
     (schedule.getChecksForUser(userId) as Array<Record<string, unknown> & { id: string }>)
       .map(toLiveCheck),

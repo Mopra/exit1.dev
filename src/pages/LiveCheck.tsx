@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { useAccount, useAccountId } from '@/AccountProvider';
+import { useAccountId } from '@/AccountProvider';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Radio, ArrowLeft, ExternalLink } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
@@ -65,7 +65,6 @@ function formatWindow(ms: number): string {
 
 const LiveCheck: React.FC = () => {
   const accountId = useAccountId();
-  const account = useAccount();
   const { checkId = '' } = useParams<{ checkId: string }>();
   const navigate = useNavigate();
   // The Live page is deliberately available on every plan, Free included.
@@ -86,12 +85,7 @@ const LiveCheck: React.FC = () => {
     segmentsByCheckId,
     subscribeHistory,
     unsubscribeHistory,
-  } = useCheckStream(firestoreChecks, {
-    // The live stream authenticates as the signed-in person and streams their
-    // own checks. Inside a team account it would have nothing to overlay, so
-    // render straight from Firestore until the VPS can stream an account.
-    enabled: !account.isMember,
-  });
+  } = useCheckStream(firestoreChecks);
 
   const check = useMemo<Website | undefined>(
     () => effectiveChecks.find((c) => c.id === checkId),
