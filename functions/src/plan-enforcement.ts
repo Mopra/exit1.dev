@@ -4,6 +4,7 @@ import { firestore } from "./init";
 import type { UserTier } from "./init";
 import { CONFIG } from "./config";
 import { FieldValue } from "firebase-admin/firestore";
+import { notifySettingsEdit } from "./check-helpers";
 
 /**
  * Shard a check falls back to when its tier does not include region pinning.
@@ -433,6 +434,10 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
     totalBatches,
   };
 
+  // Webhooks and SMS settings may have just been disabled; tell the VPS
+  // runner to drop its cached alert settings for this user.
+  if (webhooksDisabled > 0 || smsDisabled) await notifySettingsEdit(userId);
+
   logger.info(`[plan-enforcement] Downgrade enforcement complete for ${userId}`, result);
   return result;
 }
@@ -583,6 +588,7 @@ export async function enforceTierCeiling(userId: string, newTier: UserTier): Pro
     checksClamped, checksPruned, webhooksPruned, statusPagesPruned,
     apiKeysDisabled, smsDisabled, brandingStripped, regionsReset,
   };
+  if (webhooksPruned > 0 || smsDisabled) await notifySettingsEdit(userId);
   logger.info(`[plan-enforcement] ${newTier} ceiling enforcement complete for ${userId}`, result);
   return result;
 }

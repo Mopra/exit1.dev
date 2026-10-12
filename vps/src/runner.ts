@@ -29,7 +29,7 @@ const { processOneCheck } = await import('../../functions/lib/checks.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint } = await import('../../functions/lib/check-utils.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { firestore, getUserTier, auth } = await import('../../functions/lib/init.js');
+const { firestore, getUserTierDetailed, auth } = await import('../../functions/lib/init.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates, statusUpdateBuffer, markShuttingDown: markStatusBufferShuttingDown, setHeartbeatDeferEnabled, flushDeferredHeartbeats, getHeartbeatDeferStats } = await import('../../functions/lib/status-buffer.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
@@ -690,7 +690,7 @@ function nsToMs1dp(ns: number): number {
 
 // ── Shared ProcessOneCheck context ─────────────────────────────────────
 // Caches live for the process lifetime. TTL-based eviction prevents
-// unbounded growth. getUserTier is memoized per-user with 5-min TTL.
+// unbounded growth. The user's tier is memoized per-user for an hour.
 
 // Both per-user caches below memoize the in-flight PROMISE, not the resolved
 // value, so concurrent probes for the same user share one Firestore read. That
@@ -708,18 +708,25 @@ function nsToMs1dp(ns: number): number {
 // every affected check burning a full invocation timeout.
 const USER_READ_TIMEOUT_MS = Number(process.env.USER_READ_TIMEOUT_MS) || 15_000;
 
-const TIER_CACHE_TTL_MS = 5 * 60 * 1000;
-// getUserTier fails open to 'free' on any Firestore/Clerk error, so a 'free'
-// result may be a transient blip rather than the user's real tier — and
-// processOneCheck persists it onto the check doc. Cache 'free' for a shorter
-// window so a paying user isn't pinned to free-tier behavior for 5 minutes.
-const TIER_FREE_TTL_MS = 2 * 60 * 1000;
+// An hour, because the probe-time read is only a drift backstop. Tier changes
+// already reach the checks through persistTierAndSyncChecks and the plan
+// webhooks (which rewrite `userTier` on every check, picked up via
+// check_edits), and the users doc itself only re-validates against Clerk every
+// 2h. A 5-minute TTL against a ~50-minute average check interval meant nearly
+// every non-Pro probe paid a users-doc read: the largest line on the
+// Firestore bill (2026-10 cost review).
+const TIER_CACHE_TTL_MS = Number(process.env.TIER_CACHE_TTL_MS) || 60 * 60 * 1000;
+// getUserTier fails open to 'free' on any Firestore/Clerk error, and
+// processOneCheck persists that onto the check doc. Keep such a fallback
+// briefly so a paying user isn't pinned to free-tier behavior for the full
+// TTL. A real 'free' answer is cached like any other tier.
+const TIER_FAILED_OPEN_TTL_MS = 2 * 60 * 1000;
 const tierCache = new Map<string, { value: Promise<unknown>; expiresAt: number }>();
 
 function getEffectiveTierForUser(uid: string): Promise<unknown> {
   const cached = tierCache.get(uid);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
-  const raw = withTimeout(getUserTier(uid), USER_READ_TIMEOUT_MS, `getUserTier(${uid})`);
+  const raw = withTimeout(getUserTierDetailed(uid), USER_READ_TIMEOUT_MS, `getUserTier(${uid})`) as Promise<{ tier: unknown; failedOpen: boolean }>;
   // getUserTier's contract is fail-open — 'free' on any Firestore/Clerk
   // error — and the timeout must honor it, not break it. The tier lookup runs
   // AFTER a successful probe (checks.ts, denormalised-tier fallthrough), so a
@@ -727,17 +734,17 @@ function getEffectiveTierForUser(uid: string): Promise<unknown> {
   // check failure for an endpoint that just answered fine. Serve 'free' to
   // whoever is already waiting; the rejection handler below still evicts the
   // entry so the next probe retries the real read.
-  const p = raw.catch(() => 'free' as unknown);
+  const p = raw.then((r) => r.tier as unknown, () => 'free' as unknown);
   const entry = { value: p, expiresAt: Date.now() + TIER_CACHE_TTL_MS };
   tierCache.set(uid, entry);
   raw.then(
-    (tier: unknown) => {
-      if (tier === 'free' && tierCache.get(uid) === entry) {
-        entry.expiresAt = Math.min(entry.expiresAt, Date.now() + TIER_FREE_TTL_MS);
+    (r) => {
+      if (r.failedOpen && tierCache.get(uid) === entry) {
+        entry.expiresAt = Math.min(entry.expiresAt, Date.now() + TIER_FAILED_OPEN_TTL_MS);
       }
     },
-    // Timeout (or a future rejecting getUserTier): a memoized dead read must
-    // not poison every probe of this user until the TTL.
+    // Timeout: a memoized dead read must not poison every probe of this user
+    // until the TTL.
     () => {
       if (tierCache.get(uid) === entry) tierCache.delete(uid);
     },
@@ -745,7 +752,13 @@ function getEffectiveTierForUser(uid: string): Promise<unknown> {
   return p;
 }
 
-const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
+// Settings edits evict this cache immediately (setSettingsEditCallback below,
+// fed by notifySettingsEdit from every user-facing settings mutation and from
+// plan-downgrade enforcement), so the TTL is only a backstop for a lost
+// notification. It was 5 minutes, which meant a settings read (two lookups,
+// usually one of them a billed NOT_FOUND, plus a webhooks query) for most
+// probes.
+const SETTINGS_CACHE_TTL_MS = Number(process.env.SETTINGS_CACHE_TTL_MS) || 30 * 60 * 1000;
 const settingsCache = new Map<string, { value: Promise<unknown>; expiresAt: number }>();
 
 function getUserSettings(uid: string): Promise<unknown> {
@@ -1409,6 +1422,9 @@ const budgetFlushTimer = setInterval(() => {
 // after each check execution (synchronous callback, no async overhead).
 setStatusUpdateHook((checkId: string, data: {
   nextCheckAt?: number;
+  responseTime?: number | null;
+  lastStatusCode?: number;
+  userTier?: string;
   disabled?: boolean;
   status?: string;
   detailedStatus?: string;
@@ -1460,6 +1476,14 @@ setStatusUpdateHook((checkId: string, data: {
   if (data.disabled != null) patch.disabled = data.disabled;
   if (data.status != null) patch.status = data.status;
   if (data.detailedStatus != null) patch.detailedStatus = data.detailedStatus;
+  // processOneCheck's `hasChanges` compares the probe against these. Left at
+  // their load-time values, any check whose latency drifted >100ms (or whose
+  // status code changed once) looked "changed" on every probe until the 12h
+  // resync, taking the path that re-reads alert settings from Firestore.
+  // Undefined is skipped, as the Firestore write skips it.
+  if (data.responseTime !== undefined) patch.responseTime = data.responseTime;
+  if (data.lastStatusCode !== undefined) patch.lastStatusCode = data.lastStatusCode;
+  if (data.userTier !== undefined) patch.userTier = data.userTier;
   if (data.consecutiveFailures != null) patch.consecutiveFailures = data.consecutiveFailures;
   if (data.consecutiveSuccesses != null) patch.consecutiveSuccesses = data.consecutiveSuccesses;
   // lastChecked must be propagated so the post-deploy baseline rule can tell

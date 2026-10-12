@@ -329,7 +329,18 @@ const persistTierAndSyncChecks = async (
 };
 
 // Helper function to get user tier (cached in Firestore, falls back safely to free)
-export const getUserTier = async (uid: string): Promise<UserTier> => {
+export const getUserTier = async (uid: string): Promise<UserTier> =>
+  (await getUserTierDetailed(uid)).tier;
+
+/**
+ * getUserTier plus whether the answer is real. `failedOpen` is true when
+ * Firestore or Clerk failed and 'free' is only the safe default, so callers
+ * that cache the result (the VPS runner) can keep that answer briefly and
+ * cache a real one for much longer.
+ */
+export const getUserTierDetailed = async (
+  uid: string,
+): Promise<{ tier: UserTier; failedOpen: boolean }> => {
   const userRef = firestore.collection('users').doc(uid);
 
   try {
@@ -340,7 +351,7 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
       const cachedAt = Number((data as { tierUpdatedAt?: unknown }).tierUpdatedAt || 0);
 
       if (cachedTier && cachedAt > Date.now() - USER_TIER_CACHE_MS) {
-        return cachedTier;
+        return { tier: cachedTier, failedOpen: false };
       }
 
       // If we have any cached tier at all, keep it as a safe fallback if Clerk is unavailable.
@@ -348,10 +359,10 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
         try {
           const fresh = await fetchTierFromClerk(uid);
           await persistTierAndSyncChecks(userRef, uid, fresh, cachedTier);
-          return fresh.tier;
+          return { tier: fresh.tier, failedOpen: false };
         } catch (e) {
           logger.warn(`Tier refresh failed for ${uid}, using cached tier: ${cachedTier}`, e);
-          return cachedTier;
+          return { tier: cachedTier, failedOpen: false };
         }
       }
     }
@@ -361,10 +372,10 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
     // idempotent (docs already holding the value are skipped), and this is the
     // path a user takes at most once.
     await persistTierAndSyncChecks(userRef, uid, fresh, null);
-    return fresh.tier;
+    return { tier: fresh.tier, failedOpen: false };
   } catch (error) {
     logger.warn(`Error getting user tier for ${uid}, defaulting to free:`, error);
-    return 'free';
+    return { tier: 'free', failedOpen: true };
   }
 };
 
