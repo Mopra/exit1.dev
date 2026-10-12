@@ -1,6 +1,6 @@
 "use client"
 
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button } from './Button';
 import { DeleteButton } from './DeleteButton';
 import { glassClasses } from './glass';
@@ -25,19 +25,47 @@ interface BulkActionsBarProps {
   itemLabel?: string; // e.g., "check", "webhook", "email"
 }
 
+// How long the bar takes to slide away after the selection is cleared.
+const EXIT_MS = 200;
+
 export function BulkActionsBar({
-  selectedCount,
+  selectedCount: liveCount,
   totalCount,
   onClearSelection,
   actions,
   itemLabel = 'item',
 }: BulkActionsBarProps) {
-  if (selectedCount === 0) return null;
+  // The bar slides up when something is selected and back down when the
+  // selection clears. While sliding away it keeps showing the last count
+  // (not "0 selected") and ignores clicks.
+  const [present, setPresent] = useState(liveCount > 0);
+  const lastCount = useRef(liveCount);
+  if (liveCount > 0) lastCount.current = liveCount;
+  const leaving = liveCount === 0;
 
+  useEffect(() => {
+    if (liveCount > 0) {
+      setPresent(true);
+      return;
+    }
+    const t = setTimeout(() => setPresent(false), EXIT_MS);
+    return () => clearTimeout(t);
+  }, [liveCount]);
+
+  if (!present && leaving) return null;
+
+  const selectedCount = lastCount.current;
   const percentage = Math.round((selectedCount / totalCount) * 100);
 
   return (
-    <div className={`fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t`}>
+    <div
+      className={cn(
+        `fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t [animation-duration:200ms] [animation-timing-function:cubic-bezier(0.22,1,0.36,1)]`,
+        leaving
+          ? 'animate-out fade-out-0 slide-out-to-bottom [animation-fill-mode:forwards] pointer-events-none'
+          : 'animate-in fade-in-0 slide-in-from-bottom',
+      )}
+    >
       <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
         {/* Mobile Layout - Stacked */}
         <div className="sm:hidden space-y-4">

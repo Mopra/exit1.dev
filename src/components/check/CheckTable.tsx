@@ -358,7 +358,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
   ) : (
     <>
       {!isMobile && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''}`}>
           <div className="flex items-center justify-center">
             <button
               onClick={(e) => {
@@ -379,7 +379,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
         <CheckRowDragHandle checkId={check.id} canDrag={draggable} disabled={check.disabled} />
       )}
       {columnVisibility.status && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''}`}>
           <div className="flex items-center gap-2">
             {domainOnly ? (
               (() => {
@@ -419,7 +419,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
         </TableCell>
       )}
       {columnVisibility.nameUrl && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''}`}>
           {(() => {
             const regionLabel = getRegionLabel(check.checkRegion);
             const displayUrl = getDisplayUrl(check);
@@ -488,7 +488,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
         </TableCell>
       )}
       {columnVisibility.type && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''}`}>
           <div className="flex items-center gap-2">
             {getTypeIcon(check.type, 'w-5 h-5 text-primary')}
             <span className="text-sm font-mono text-muted-foreground">{getTypeLabel(check.type)}</span>
@@ -496,14 +496,14 @@ const CheckTableRow = React.memo(function CheckTableRow({
         </TableCell>
       )}
       {columnVisibility.responseTime && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''}`}>
           <div className="text-sm font-mono text-muted-foreground">
             {domainOnly ? '—' : <TweenNumber value={check.responseTime} format={formatResponseTime} />}
           </div>
         </TableCell>
       )}
       {columnVisibility.lastChecked && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
           {domainOnly ? (
             <div className="flex items-center gap-2">
               <Clock className="w-3 h-3 text-muted-foreground" />
@@ -541,7 +541,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
         </TableCell>
       )}
       {columnVisibility.checkInterval && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''}`}>
           <div className="flex items-center gap-2">
             <Clock className="w-3 h-3 text-muted-foreground" />
             <span className="text-sm font-mono text-muted-foreground">
@@ -553,7 +553,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
         </TableCell>
       )}
       {columnVisibility.quickActions && (
-        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+        <TableCell className={`px-4 py-4 transition-opacity duration-300 ${check.disabled ? 'opacity-50' : ''}`}>
           <div className="flex items-center justify-center gap-1.5">
             <Tooltip>
               <TooltipTrigger asChild>
