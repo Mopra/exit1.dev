@@ -7,6 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
+- 2026-10-12 Round (human left): nothing to do. Lazy-load pilot quest is [!] on its own timer until 2026-10-13 02:52Z, then its session compares cold starts and rolls out; npm publish of exit1-mcp 0.3.1 still waits on the human; no aim open.
 - 2026-10-12 Round (human left again): nothing to do. Only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-12 Round (hourly): nothing to do. Team-members commits (5ef01ce, 4d8d206) are the human's own work, not a quest; only the [!] npm publish of exit1-mcp 0.3.1 waits on the human; no aim open.
 - 2026-10-12 Woken for the [!] JSON docs quest again: nothing new, already with the human (publish exit1-mcp 0.3.1 only). Left it.
@@ -26,3 +27,4 @@
 
 ## Open
 - exit1-mcp 0.3.1 publish (npm + MCP registry) waits on the human's npm login (JSON docs quest is [!]); 0.3.0 is skipped.
+- Lazy-load functions pilot (1b40d27): its session wakes 2026-10-13 ~02:52Z to compare cold starts and run deploy:changed --all. Next round after that, check it landed or note why not.
