@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GlowCard, ScrollArea } from '../ui';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 
 interface ChecksTableShellProps {
   table: React.ReactNode;
@@ -23,6 +24,13 @@ const ChecksTableShell: React.FC<ChecksTableShellProps> = ({
 }) => {
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
   const hasMobile = mobile !== undefined;
+  // Mount only the layout that is shown. Both used to render with one hidden
+  // by CSS, so on desktop every mobile card (with its 1Hz countdown) stayed
+  // mounted offscreen: ~400 hidden cards ticking for a 400-check account.
+  // Matches Tailwind's `sm` breakpoint used by the classes below.
+  const isSmUp = useMediaQuery('(min-width: 640px)');
+  const showMobile = hasMobile && !isSmUp;
+  const showTable = !hasMobile || isSmUp;
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
 
@@ -45,11 +53,12 @@ const ChecksTableShell: React.FC<ChecksTableShellProps> = ({
     const inner = viewport.firstElementChild as HTMLElement | null;
     if (inner) ro.observe(inner);
     return () => ro.disconnect();
-  }, []);
+  }, [showTable]);
 
   return (
     <>
-      {hasMobile ? <div className="block sm:hidden">{mobile}</div> : null}
+      {showMobile ? <div className="block sm:hidden">{mobile}</div> : null}
+      {showTable ? (
       <div className={`${hasMobile ? 'hidden sm:block' : 'block'} w-full min-w-0`}>
         <GlowCard className={`w-full min-w-0 overflow-hidden ${containerClassName}`}>
           {toolbar ? (
@@ -67,6 +76,7 @@ const ChecksTableShell: React.FC<ChecksTableShellProps> = ({
           ) : null}
         </GlowCard>
       </div>
+      ) : null}
     </>
   );
 };
