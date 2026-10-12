@@ -7,6 +7,7 @@
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
 
 ## Lately
+- 2026-10-12 Woken: log stalled, only the cold-start re-measure waits on its timer (2026-10-19). Lazy-load rollout quest is [x]; npm now has exit1-mcp 0.4.0. No aim open, nothing to do.
 - 2026-10-12 Woken for the lazy-load quest: pilot cut badge startup 3390 to 1368 ms, full deploy:changed --all running since 21:12Z; session just waits on it, not blocked. Noted, left it. Woken a second time (batch 1 of 13, session counts 128 functions): same, noted the count to check. Third wake (batch 7 of 13): same, noted. Fourth wake (batch 11 of 13, 1 to 10 clean): same, noted.
 - 2026-10-12 Woken for the [!] JSON docs quest: found npm at 0.3.1 (human published), MCP registry still 0.2.0, repo at 0.4.0. Noted: human publishes 0.4.0 to npm and the registry.
 - 2026-10-12 Rounds (hourly and human-left, many, latest a human-left round at 49c9510): nothing to do. Lazy-load pilot is [!] on its own timer until 2026-10-13 ~02:52Z, then its session compares cold starts and rolls out; npm publish of exit1-mcp 0.3.1 waits on the human; no aim open. Folded six identical lines into this one.
@@ -28,5 +29,5 @@
 - 2026-10-10 Woken for "Deploy JSON assertions": not blocked, its session waits on its own background deploy:changed. Noted that "Deploy list-endpoint include=uptime (57abb82)" is likely covered by the same deploy.
 
 ## Open
-- exit1-mcp 0.4.0 publish (npm, then MCP registry) waits on the human (JSON docs quest is [!]); npm has 0.3.1, registry 0.2.0. Check with `npm view exit1-mcp version` and the registry search.
-- Lazy-load functions rollout (deploy:changed --all from beb2bbe, started 2026-10-12 21:12Z): next round, check the quest is [x] and all 126 deployed, or note why not.
+- exit1-mcp 0.4.0 is on npm (seen 2026-10-12); MCP registry last seen at 0.2.0, the human publishes it there. Check the registry search.
+- Cold-start re-measure quest unblocks itself 2026-10-19T09:00Z; nothing to do before then.
