@@ -213,6 +213,12 @@ export default function Authorize() {
               <CardTitle className="text-xl">
                 Connect {request.clientName} to exit1
               </CardTitle>
+              {request.clientHost && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Published by{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 text-xs">{request.clientHost}</code>
+                </div>
+              )}
               <CardDescription>
                 {account.activeTeam
                   ? <>It will act on <strong>{teamAccountLabel(account.activeTeam)}</strong>'s team account on your behalf{account.role === "viewer" ? ", read only" : ""}. To connect your own account instead, switch to it in the app first.</>

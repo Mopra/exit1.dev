@@ -584,6 +584,11 @@ export interface CreateApiKeyResponse {
 /** A pending OAuth authorization from an MCP client, as shown on the consent screen. */
 export interface McpAuthorizationRequest {
   clientName: string;
+  /**
+   * Domain that published the client's metadata document (CIMD), e.g. "claude.ai".
+   * Null for dynamically registered clients, whose name is self-asserted.
+   */
+  clientHost: string | null;
   scopes: string[];
   /** Host of the callback URL, e.g. "localhost:33418" — shown so the user can sanity-check it. */
   redirectHost: string;

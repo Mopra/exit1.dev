@@ -12,10 +12,13 @@
  * Endpoints (served through Firebase Hosting rewrites on app.exit1.dev):
  *   GET  /.well-known/oauth-authorization-server   RFC 8414
  *   GET  /.well-known/oauth-protected-resource     RFC 9728
- *   POST /oauth/register                           RFC 7591 dynamic registration
+ *   POST /oauth/register                           RFC 7591 dynamic registration (deprecated by MCP)
  *   GET  /oauth/authorize                          → 302 to the SPA consent page
  *   POST /oauth/token                              authorization_code + refresh_token
  *   POST /oauth/revoke                             RFC 7009
+ *
+ * Clients identify themselves either with a `mcpc_` id from dynamic registration
+ * or with an https URL pointing at a Client ID Metadata Document (mcp-cimd.ts).
  */
 
 import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
@@ -29,9 +32,12 @@ import {
   DEFAULT_MCP_SCOPES,
   appendQuery,
   isAllowedRedirectUri,
+  isCimdClientId,
   parseScopes,
+  redirectUriMatches,
   verifyPkce,
 } from "./mcp-oauth-policy";
+import { CimdError, resolveCimdClient } from "./mcp-cimd";
 
 // ── Constants ──
 
@@ -57,9 +63,12 @@ const REFRESH_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
 const MAX_REDIRECT_URIS = 10;
 const MAX_CLIENTS_PER_IP_PER_HOUR = 20;
+// Counted per CIMD authorize. A cache miss makes us fetch a URL of the caller's choosing.
+const MAX_CIMD_AUTHORIZES_PER_IP_PER_HOUR = 30;
 
 const registrationLimiter = new FixedWindowRateLimiter({ windowMs: 60 * 60 * 1000, maxKeys: 10_000 });
 const tokenLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
+const cimdLimiter = new FixedWindowRateLimiter({ windowMs: 60 * 60 * 1000, maxKeys: 10_000 });
 
 // ── Types ──
 
@@ -74,6 +83,8 @@ interface OAuthClientDoc {
 interface AuthRequestDoc {
   clientId: string;
   clientName: string;
+  /** Domain that published the client's metadata document; null for registered clients. */
+  clientHost?: string | null;
   redirectUri: string;
   codeChallenge: string;
   scopes: ApiScope[];
@@ -87,6 +98,8 @@ interface AuthRequestDoc {
 interface AuthCodeDoc {
   codeHash: string;
   clientId: string;
+  /** Carried from the request so CIMD clients need no lookup at the token endpoint. */
+  clientName?: string;
   userId: string;
   /** Team member who consented inside the owner's account (userId), if any. */
   memberUid?: string | null;
@@ -370,6 +383,37 @@ async function handleRegister(
 type OAuthRequest = Parameters<Parameters<typeof onRequest>[0]>[0];
 type OAuthResponse = Parameters<Parameters<typeof onRequest>[0]>[1];
 
+/** A client as the authorize endpoint sees it, however it identified itself. */
+interface ResolvedClient {
+  clientName: string;
+  redirectUris: string[];
+  clientHost: string | null;
+}
+
+async function resolveClient(clientId: string, ip: string): Promise<ResolvedClient | { error: string }> {
+  if (isCimdClientId(clientId)) {
+    if (!cimdLimiter.consume(`cimd:${ip}`, MAX_CIMD_AUTHORIZES_PER_IP_PER_HOUR).allowed) {
+      return { error: "Too many authorization attempts. Try again later." };
+    }
+    try {
+      const client = await resolveCimdClient(clientId);
+      return { ...client, clientHost: new URL(clientId).hostname };
+    } catch (error) {
+      const message = error instanceof CimdError ? error.message : "Could not load the client metadata document";
+      logger.warn("MCP OAuth CIMD client rejected", { clientId, message });
+      return { error: message };
+    }
+  }
+
+  // Registered ids are Firestore doc ids. One containing a slash would be read
+  // as a nested path and throw, so anything off-pattern stops here.
+  if (!/^mcpc_[a-f0-9]+$/.test(clientId)) return { error: "Unknown client_id" };
+  const snap = await firestore.collection(CLIENTS_COLLECTION).doc(clientId).get();
+  if (!snap.exists) return { error: "Unknown client_id" };
+  const data = snap.data() as OAuthClientDoc;
+  return { clientName: data.clientName, redirectUris: data.redirectUris, clientHost: null };
+}
+
 async function handleAuthorize(req: OAuthRequest, res: OAuthResponse): Promise<void> {
   const q = req.query || {};
   const clientId = typeof q.client_id === "string" ? q.client_id : "";
@@ -385,23 +429,22 @@ async function handleAuthorize(req: OAuthRequest, res: OAuthResponse): Promise<v
     return;
   }
 
-  const clientSnap = await firestore.collection(CLIENTS_COLLECTION).doc(clientId).get();
-  if (!clientSnap.exists) {
-    oauthError(res, 400, "invalid_client", "Unknown client_id");
+  const client = await resolveClient(clientId, getClientIp(req));
+  if ("error" in client) {
+    oauthError(res, 400, "invalid_client", client.error);
     return;
   }
-  const client = clientSnap.data() as OAuthClientDoc;
 
-  // Redirect URI must match exactly. Everything below this point may redirect
-  // errors back to the client; above it we must render them, since an unvalidated
-  // redirect_uri is attacker-controlled.
-  if (!redirectUri || !client.redirectUris.includes(redirectUri)) {
+  // Redirect URI must match a registered one (exactly, bar the loopback port).
+  // Everything below this point may redirect errors back to the client; above
+  // it we must render them, since an unvalidated redirect_uri is attacker-controlled.
+  if (!redirectUri || !redirectUriMatches(client.redirectUris, redirectUri)) {
     oauthError(res, 400, "invalid_request", "redirect_uri does not match a registered URI for this client");
     return;
   }
 
   if (responseType !== "code") {
-    res.redirect(appendQuery(redirectUri, { error: "unsupported_response_type", state }));
+    res.redirect(appendQuery(redirectUri, { error: "unsupported_response_type", state, iss: ISSUER }));
     return;
   }
   if (!codeChallenge || codeChallengeMethod !== "S256") {
@@ -410,6 +453,7 @@ async function handleAuthorize(req: OAuthRequest, res: OAuthResponse): Promise<v
         error: "invalid_request",
         error_description: "PKCE with code_challenge_method=S256 is required",
         state,
+        iss: ISSUER,
       })
     );
     return;
@@ -421,6 +465,7 @@ async function handleAuthorize(req: OAuthRequest, res: OAuthResponse): Promise<v
   const requestRef = await firestore.collection(REQUESTS_COLLECTION).add({
     clientId,
     clientName: client.clientName,
+    clientHost: client.clientHost,
     redirectUri,
     codeChallenge,
     scopes,
@@ -522,18 +567,24 @@ async function handleAuthorizationCodeGrant(
 
   await codeDoc.ref.update({ usedAt: Date.now() });
 
-  const clientSnap = await firestore.collection(CLIENTS_COLLECTION).doc(clientId).get();
-  const clientName = clientSnap.exists ? (clientSnap.data() as OAuthClientDoc).clientName : "MCP client";
+  let clientName = codeData.clientName;
+  if (!clientName && !isCimdClientId(clientId)) {
+    // Codes minted before clientName was carried on them.
+    const clientSnap = await firestore.collection(CLIENTS_COLLECTION).doc(clientId).get();
+    clientName = clientSnap.exists ? (clientSnap.data() as OAuthClientDoc).clientName : undefined;
+  }
 
   const tokens = await issueTokenPair({
     userId: codeData.userId,
     memberUid: codeData.memberUid ?? null,
     clientId,
-    clientName,
+    clientName: clientName || "MCP client",
     scopes: codeData.scopes,
   });
 
-  await firestore.collection(CLIENTS_COLLECTION).doc(clientId).update({ lastUsedAt: Date.now() }).catch(() => {});
+  if (!isCimdClientId(clientId)) {
+    await firestore.collection(CLIENTS_COLLECTION).doc(clientId).update({ lastUsedAt: Date.now() }).catch(() => {});
+  }
 
   sendJson(res, 200, {
     access_token: tokens.accessToken,
@@ -680,6 +731,8 @@ function authorizationServerMetadata() {
     token_endpoint: `${ISSUER}/oauth/token`,
     registration_endpoint: `${ISSUER}/oauth/register`,
     revocation_endpoint: `${ISSUER}/oauth/revoke`,
+    client_id_metadata_document_supported: true,
+    authorization_response_iss_parameter_supported: true,
     scopes_supported: ADVERTISED_SCOPES,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
@@ -781,6 +834,7 @@ export const getMcpAuthorizationRequest = onCall({ cors: true, maxInstances: 10 
     success: true,
     data: {
       clientName: data.clientName,
+      clientHost: data.clientHost ?? null,
       scopes: data.scopes,
       redirectHost,
       expiresAt: data.expiresAt,
@@ -819,7 +873,7 @@ export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, 
   if (!approved) {
     return {
       success: true,
-      redirectTo: appendQuery(data.redirectUri, { error: "access_denied", state: data.state }),
+      redirectTo: appendQuery(data.redirectUri, { error: "access_denied", state: data.state, iss: ISSUER }),
     };
   }
 
@@ -829,6 +883,7 @@ export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, 
   await firestore.collection(CODES_COLLECTION).add({
     codeHash: hashToken(code),
     clientId: data.clientId,
+    clientName: data.clientName,
     userId: uid,
     memberUid,
     redirectUri: data.redirectUri,
@@ -858,7 +913,7 @@ export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, 
 
   return {
     success: true,
-    redirectTo: appendQuery(data.redirectUri, { code, state: data.state }),
+    redirectTo: appendQuery(data.redirectUri, { code, state: data.state, iss: ISSUER }),
   };
 });
 

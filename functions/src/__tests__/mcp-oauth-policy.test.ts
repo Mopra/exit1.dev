@@ -6,6 +6,11 @@ import {
   DEFAULT_MCP_SCOPES,
   appendQuery,
   base64UrlSha256,
+  cimdCacheTtlMs,
+  isCimdClientId,
+  isSpecialUseAddress,
+  redirectUriMatches,
+  validateCimdDocument,
   isAllowedRedirectUri,
   parseScopes,
   verifyPkce,
@@ -175,4 +180,112 @@ test("appendQuery encodes values rather than letting them inject parameters", ()
   assert.equal(url.searchParams.get("code"), "a&admin=1");
   assert.equal(url.searchParams.get("state"), "x y");
   assert.equal(url.searchParams.has("admin"), false);
+});
+
+// ── Loopback redirect matching (RFC 8252 §7.3) ──
+
+test("a port-less loopback registration matches any port, as Claude Code's CIMD needs", () => {
+  const registered = ["http://localhost/callback", "http://127.0.0.1/callback"];
+  assert.equal(redirectUriMatches(registered, "http://localhost:53682/callback"), true);
+  assert.equal(redirectUriMatches(registered, "http://127.0.0.1:8976/callback"), true);
+  assert.equal(redirectUriMatches(registered, "http://localhost/callback"), true);
+});
+
+test("loopback matching still pins host, path and query", () => {
+  const registered = ["http://localhost/callback"];
+  assert.equal(redirectUriMatches(registered, "http://localhost:1234/other"), false);
+  assert.equal(redirectUriMatches(registered, "http://127.0.0.1:1234/callback"), false);
+  assert.equal(redirectUriMatches(registered, "http://localhost:1234/callback?x=1"), false);
+  assert.equal(redirectUriMatches(registered, "https://localhost:1234/callback"), false);
+});
+
+test("non-loopback redirect URIs must match exactly", () => {
+  const registered = ["https://claude.ai/api/mcp/auth_callback"];
+  assert.equal(redirectUriMatches(registered, "https://claude.ai/api/mcp/auth_callback"), true);
+  assert.equal(redirectUriMatches(registered, "https://claude.ai:8443/api/mcp/auth_callback"), false);
+  assert.equal(redirectUriMatches(registered, "https://claude.ai/api/mcp/auth_callback/"), false);
+});
+
+// ── Client ID Metadata Documents ──
+
+test("CIMD client ids must be https URLs with a path", () => {
+  assert.equal(isCimdClientId("https://claude.ai/oauth/claude-code-client-metadata"), true);
+  assert.equal(isCimdClientId("https://example.com/client.json"), true);
+  assert.equal(isCimdClientId("https://example.com/"), false);
+  assert.equal(isCimdClientId("https://example.com"), false);
+  assert.equal(isCimdClientId("http://example.com/client.json"), false);
+  assert.equal(isCimdClientId("mcpc_0123abcd"), false);
+});
+
+test("CIMD client ids reject userinfo, fragments and dot segments", () => {
+  assert.equal(isCimdClientId("https://user:pw@example.com/client.json"), false);
+  assert.equal(isCimdClientId("https://example.com/client.json#x"), false);
+  assert.equal(isCimdClientId("https://example.com/a/../client.json"), false);
+  assert.equal(isCimdClientId("https://example.com/./client.json"), false);
+});
+
+const CIMD_URL = "https://claude.ai/oauth/claude-code-client-metadata";
+const claudeCodeDoc = {
+  client_id: CIMD_URL,
+  client_name: "Claude Code",
+  client_uri: "https://claude.ai",
+  redirect_uris: ["http://localhost/callback", "http://127.0.0.1/callback"],
+  grant_types: ["authorization_code", "refresh_token"],
+  response_types: ["code"],
+  token_endpoint_auth_method: "none",
+};
+
+test("Claude Code's real metadata document validates", () => {
+  assert.deepEqual(validateCimdDocument(claudeCodeDoc, CIMD_URL), {
+    clientName: "Claude Code",
+    redirectUris: ["http://localhost/callback", "http://127.0.0.1/callback"],
+  });
+});
+
+test("a document whose client_id differs from its URL is rejected", () => {
+  // Otherwise anyone could host a copy of claude.ai's document and borrow its name.
+  const result = validateCimdDocument(claudeCodeDoc, "https://evil.example/claude-code-client-metadata");
+  assert.equal(typeof result, "string");
+});
+
+test("documents with secrets, confidential auth or bad redirects are rejected", () => {
+  assert.equal(typeof validateCimdDocument({ ...claudeCodeDoc, client_secret: "x" }, CIMD_URL), "string");
+  assert.equal(
+    typeof validateCimdDocument({ ...claudeCodeDoc, token_endpoint_auth_method: "private_key_jwt" }, CIMD_URL),
+    "string"
+  );
+  assert.equal(
+    typeof validateCimdDocument({ ...claudeCodeDoc, redirect_uris: ["http://evil.example/cb"] }, CIMD_URL),
+    "string"
+  );
+  assert.equal(typeof validateCimdDocument({ ...claudeCodeDoc, redirect_uris: [] }, CIMD_URL), "string");
+  assert.equal(typeof validateCimdDocument([claudeCodeDoc], CIMD_URL), "string");
+});
+
+test("a document without client_name falls back to its host", () => {
+  const { client_name: _omit, ...doc } = claudeCodeDoc;
+  const result = validateCimdDocument(doc, CIMD_URL);
+  assert.notEqual(typeof result, "string");
+  assert.equal((result as { clientName: string }).clientName, "claude.ai");
+});
+
+test("special-use addresses are refused for metadata fetches", () => {
+  for (const ip of [
+    "127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254",
+    "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "::", "fd00::1", "fe80::1", "::ffff:10.0.0.1",
+    "::ffff:127.0.0.1", "64:ff9b::a00:1",
+  ]) {
+    assert.equal(isSpecialUseAddress(ip), true, ip);
+  }
+  for (const ip of ["160.79.104.10", "8.8.8.8", "172.32.0.1", "2607:6bc0::10", "::ffff:8.8.8.8"]) {
+    assert.equal(isSpecialUseAddress(ip), false, ip);
+  }
+});
+
+test("metadata cache TTL honours Cache-Control within bounds", () => {
+  assert.equal(cimdCacheTtlMs(undefined), 60 * 60 * 1000);
+  assert.equal(cimdCacheTtlMs("no-store"), 0);
+  assert.equal(cimdCacheTtlMs("max-age=10"), 5 * 60 * 1000);
+  assert.equal(cimdCacheTtlMs("public, max-age=7200"), 2 * 60 * 60 * 1000);
+  assert.equal(cimdCacheTtlMs("max-age=31536000"), 24 * 60 * 60 * 1000);
 });
