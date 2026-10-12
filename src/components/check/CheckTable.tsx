@@ -63,6 +63,7 @@ import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { replayClass, useChangeCount } from '../../hooks/useChangeCount';
 import { TweenNumber } from '../ui/TweenNumber';
+import { useRowMotion } from './useRowMotion';
 import { CheckCountdown } from './CheckCountdown';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useLazyRow } from '../../hooks/useLazyRow';
@@ -79,11 +80,12 @@ import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 const DragHandleContext = createContext<{ listeners?: SyntheticListenerMap; attributes?: Record<string, any> }>({});
 
 // Wraps a table row to make it sortable via @dnd-kit
-function SortableCheckRow({ id, disabled, children, className, rowRef, ...rest }: {
+function SortableCheckRow({ id, disabled, children, className, rowRef, style, ...rest }: {
   id: string;
   disabled?: boolean;
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
   onClick?: () => void;
   /** Extra ref for the <tr> (lazy-render viewport tracking), composed with dnd-kit's node ref. */
   rowRef?: (el: Element | null) => void;
@@ -99,6 +101,7 @@ function SortableCheckRow({ id, disabled, children, className, rowRef, ...rest }
         ref={setRefs}
         className={`${className ?? ''} ${isDragging ? 'opacity-30 shadow-lg relative z-10' : ''}`}
         style={{
+          ...style,
           transform: CSS.Translate.toString(transform),
           transition,
         }}
@@ -279,7 +282,17 @@ interface CheckTableRowProps {
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
   onViewDetails: (id: string) => void;
   onOpenNewFolder: (check: Website) => void;
+  /**
+   * One-off row motion: `enter` for a check that was just added, `land` for
+   * one that was just dropped after a drag, `reveal` for rows of a folder
+   * that was just expanded (staggered by `revealIndex`), `leave` while a
+   * deleted row fades out before it is removed.
+   */
+  motion?: RowMotion;
+  revealIndex?: number;
 }
+
+type RowMotion = 'enter' | 'land' | 'reveal' | 'leave';
 
 /**
  * One check row, memoized. Every prop is either a primitive or a stable
@@ -323,13 +336,16 @@ const CheckTableRow = React.memo(function CheckTableRow({
   onSetFolder,
   onViewDetails,
   onOpenNewFolder,
+  motion,
+  revealIndex = 0,
 }: CheckTableRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const domainOnly = isDomainOnlyCheck(check);
   // A fresh probe result sweeps a band of the status colour across the row.
   const probes = useChangeCount(check.lastChecked);
   const sweep = check.lastChecked ? replayClass('live-sweep', probes) : '';
-  const rowClassName = `hover:bg-muted/50 transition-colors group cursor-pointer ${sweep} ${sweep && check.status === 'offline' ? 'live-sweep-down' : ''} ${isOptimistic && !isFolderUpdating ? 'animate-pulse bg-accent' : ''}`;
+  const rowStyle = motion === 'reveal' ? { animationDelay: `${Math.min(revealIndex, 12) * 30}ms` } : undefined;
+  const rowClassName = `hover:bg-muted/50 transition-colors group cursor-pointer ${motion ? `row-${motion}` : ''} ${sweep} ${sweep && check.status === 'offline' ? 'live-sweep-down' : ''} ${isOptimistic && !isFolderUpdating ? 'animate-pulse bg-accent' : ''}`;
 
   // Rows far from the viewport keep their <tr> (dnd-kit registration and
   // table layout stay intact) but render one fixed-height placeholder cell
@@ -679,12 +695,12 @@ const CheckTableRow = React.memo(function CheckTableRow({
 
   if (draggable) {
     return (
-      <SortableCheckRow id={check.id} disabled={false} className={rowClassName} rowRef={rowRef}>
+      <SortableCheckRow id={check.id} disabled={false} className={rowClassName} rowRef={rowRef} style={rowStyle}>
         {cells}
       </SortableCheckRow>
     );
   }
-  return <TableRow ref={rowRef} className={rowClassName}>{cells}</TableRow>;
+  return <TableRow ref={rowRef} className={rowClassName} style={rowStyle}>{cells}</TableRow>;
 });
 
 const CheckTable: React.FC<CheckTableProps> = ({
@@ -728,6 +744,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const sortBy = (sortByProp as SortOption) || 'custom';
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
+  const rowMotion = useRowMotion(checks);
+  const { leaveThen, land, reveal } = rowMotion;
 
   // Multi-select state
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
@@ -944,6 +962,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
     // From here: active is a check row.
     const activeCheck = checks.find(c => c.id === active.id);
     if (!activeCheck) return;
+    land(activeCheck.id);
 
     // Drop onto a folder header (droppable)
     if (overData?.type === 'folder' && overData.folderKey) {
@@ -967,7 +986,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
       }
     }
     onReorderAndCommit?.(active.id as string, over.id as string);
-  }, [checks, groupBy, onReorderAndCommit, onSetFolder, setFolderOrder]);
+  }, [checks, groupBy, onReorderAndCommit, onSetFolder, setFolderOrder, land]);
 
   const handleDragCancel = useCallback(() => {
     setActiveDragId(null);
@@ -1033,13 +1052,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
     : null;
 
   const toggleFolderCollapsed = useCallback((folderKey: string) => {
+    // Opening a folder lets its rows cascade in rather than appear at once.
+    if (collapsedSet.has(folderKey)) {
+      const group = groupedByFolderRef.current?.find((g) => g.key === folderKey);
+      if (group) reveal(group.checks.map((c) => c.id));
+    }
     setCollapsedFolders((prev) => {
       const set = new Set(prev);
       if (set.has(folderKey)) set.delete(folderKey);
       else set.add(folderKey);
       return Array.from(set);
     });
-  }, [setCollapsedFolders]);
+  }, [setCollapsedFolders, collapsedSet, reveal]);
 
   const normalizeFolderName = useCallback((name: string) => {
     return name.trim().replace(/\s+/g, ' ');
@@ -1076,8 +1100,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const handleDeleteConfirm = () => {
     if (deletingCheck) {
-      onDelete(deletingCheck.id);
+      const id = deletingCheck.id;
       setDeletingCheck(null);
+      rowMotion.leaveThen([id], () => onDelete(id));
     }
   };
 
@@ -1141,11 +1166,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
   }, []);
 
   const handleBulkDeleteConfirm = useCallback(() => {
-    onBulkDelete(Array.from(selectedChecks));
+    const ids = Array.from(selectedChecks);
     setSelectedChecks(new Set());
     setSelectAll(false);
     setBulkDeleteModal(false);
-  }, [onBulkDelete, selectedChecks]);
+    leaveThen(ids, () => onBulkDelete(ids));
+  }, [onBulkDelete, selectedChecks, leaveThen]);
 
   const handleBulkDeleteCancel = useCallback(() => {
     setBulkDeleteModal(false);
@@ -1259,6 +1285,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
       onSetFolder={onSetFolder}
       onViewDetails={handleViewDetails}
       onOpenNewFolder={openNewFolderDialog}
+      motion={rowMotion.motionFor(check.id)}
+      revealIndex={rowMotion.revealIndexFor(check.id)}
     />
   );
 
@@ -1649,7 +1677,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         containerClassName={`transition-all duration-300 ${activeDragId ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}
       />
 
-      <DragOverlay dropAnimation={null}>
+      <DragOverlay dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }}>
         {activeCheck && (
           <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-background/95 backdrop-blur shadow-xl border border-primary/30 ring-2 ring-primary/20 max-w-md">
             <GripVertical className="w-4 h-4 text-primary shrink-0" />

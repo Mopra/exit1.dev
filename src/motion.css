@@ -59,3 +59,29 @@
   100% { transform: scale(1); box-shadow: 0 0 0 6px transparent; }
 }
 @keyframes countdown-due { to { background-position: 250% 0; } }
+
+/* ── Rows arriving and leaving (useRowMotion) ─────────────────────────
+   enter:  a new check slides in and glows briefly so you can find it.
+   land:   a dragged row glows where it was dropped.
+   reveal: rows of a folder that was just opened cascade in.
+   leave:  a deleted row slides out before it is removed. */
+@media (prefers-reduced-motion: no-preference) {
+  .row-enter { animation: row-enter 1.5s cubic-bezier(0.22, 1, 0.36, 1); }
+  .row-land { animation: row-glow 1.1s ease-out; }
+  .row-reveal { animation: row-reveal 0.35s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+  .row-leave { animation: row-leave 0.22s ease-in forwards; pointer-events: none; }
+}
+
+@keyframes row-enter {
+  0% { opacity: 0; transform: translateY(-6px); background-color: color-mix(in oklab, var(--primary) 16%, transparent); }
+  20% { opacity: 1; transform: none; background-color: color-mix(in oklab, var(--primary) 16%, transparent); }
+}
+@keyframes row-glow {
+  0% { background-color: color-mix(in oklab, var(--primary) 16%, transparent); }
+}
+@keyframes row-reveal {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+@keyframes row-leave {
+  to { opacity: 0; transform: translateX(16px); }
+}
