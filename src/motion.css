@@ -3,20 +3,32 @@
    and nothing moves under prefers-reduced-motion. */
 
 /* ── Live check activity ──────────────────────────────────────────────
-   "Just checked": when a fresh probe result lands, a soft band of the
-   status colour sweeps across the row or card once. Classes come in -a/-b
-   pairs (see useChangeCount's replayClass) so each new result replays it. */
+   "Just checked": when a fresh probe result lands, a faint band of the
+   status colour glides across the row or card once. Classes come in -a/-b
+   pairs (see useChangeCount's replayClass) so each new result replays it.
+
+   Kept faint on purpose: with hundreds of 15-second checks several rows are
+   sweeping at any moment, and it should read as a calm pulse of activity,
+   not a light show.
+
+   The band must start and end fully off the row, or it pops in and snaps
+   away. With a band 50% of the row wide, background-position p% puts its
+   left edge at p * 0.5 of the row width, so -100% is just off the left and
+   200% just off the right. The extra 10% each way is margin for the soft
+   edges. */
 .live-sweep-a,
 .live-sweep-b {
   background-image: linear-gradient(
     90deg,
     transparent,
-    color-mix(in oklab, var(--sweep-color, var(--primary)) 18%, transparent),
+    color-mix(in oklab, var(--sweep-color, var(--primary)) 4%, transparent) 25%,
+    color-mix(in oklab, var(--sweep-color, var(--primary)) 9%, transparent) 50%,
+    color-mix(in oklab, var(--sweep-color, var(--primary)) 4%, transparent) 75%,
     transparent
   );
-  background-size: 60% 100%;
+  background-size: 50% 100%;
   background-repeat: no-repeat;
-  background-position: -100% 0;
+  background-position: -110% 0;
 }
 .live-sweep-down {
   --sweep-color: var(--destructive);
@@ -37,15 +49,15 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .live-sweep-a { animation: live-sweep-a 1.1s cubic-bezier(0.4, 0, 0.2, 1); }
-  .live-sweep-b { animation: live-sweep-b 1.1s cubic-bezier(0.4, 0, 0.2, 1); }
+  .live-sweep-a { animation: live-sweep-a 1.8s cubic-bezier(0.45, 0, 0.55, 1); }
+  .live-sweep-b { animation: live-sweep-b 1.8s cubic-bezier(0.45, 0, 0.55, 1); }
   .status-pop-a { animation: status-pop-a 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
   .status-pop-b { animation: status-pop-b 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
   .countdown-due { animation: countdown-due 1.4s linear infinite; }
 }
 
-@keyframes live-sweep-a { to { background-position: 200% 0; } }
-@keyframes live-sweep-b { to { background-position: 200% 0; } }
+@keyframes live-sweep-a { to { background-position: 210% 0; } }
+@keyframes live-sweep-b { to { background-position: 210% 0; } }
 /* Status changed (first result for a new check, resumed, went down, came
    back): the badge pops with a ring so the change is noticed. */
 @keyframes status-pop-a {
