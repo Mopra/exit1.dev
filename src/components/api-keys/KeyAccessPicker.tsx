@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useAuth } from "@clerk/clerk-react";
+import { useAccountId } from "@/AccountProvider";
 import { Folder } from "lucide-react";
 
 import { useChecks } from "@/hooks/useChecks";
@@ -21,8 +21,8 @@ interface KeyAccessPickerProps {
  * fetch doesn't run for everyone who opens the API Keys page.
  */
 export default function KeyAccessPicker({ value, onChange }: KeyAccessPickerProps) {
-  const { userId } = useAuth();
-  const { checks, loading } = useChecks(userId ?? null, noopLog, { realtime: false });
+  const accountId = useAccountId();
+  const { checks, loading } = useChecks(accountId, noopLog, { realtime: false });
   const [search, setSearch] = React.useState("");
 
   const folders = React.useMemo(() => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAccountId } from '@/AccountProvider';
 import { type DateRange } from "react-day-picker"
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
@@ -438,12 +438,12 @@ const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility
 LogRow.displayName = 'LogRow';
 
 const LogsBigQuery: React.FC = () => {
-  const { userId } = useAuth();
+  const accountId = useAccountId();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   
   // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
-  const { checks, loading: checksLoading } = useChecks(userId ?? null, noop, { realtime: false });
+  const { checks, loading: checksLoading } = useChecks(accountId, noop, { realtime: false });
   // The 60-day window is a paid-tier feature, not a Nano-or-better one — every
   // paid tier (Indie included) retains 60 days of history.
   const { tier, pro, retentionDays } = usePlan();

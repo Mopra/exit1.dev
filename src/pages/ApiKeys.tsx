@@ -18,6 +18,7 @@ import type { ApiKey, ApiKeyAccess, CreateApiKeyResponse } from "@/api/types";
 import KeyAccessPicker from "@/components/api-keys/KeyAccessPicker";
 import { PageContainer, PageHeader } from "@/components/layout";
 import { usePlan } from "@/hooks/usePlan";
+import { useAccount } from "@/AccountProvider";
 import { nextTierWithMore } from "@/lib/subscription";
 import { DowngradeBanner, FeatureGate, UpgradeBanner } from "@/components/ui";
 import ChecksTableShell from "@/components/check/ChecksTableShell";
@@ -112,6 +113,7 @@ export default function ApiKeys() {
   // Free mints one. Read `apiAccess`/`maxApiKeys` off the tier row rather than
   // `paid`, which used to stand in for this and locked Free out entirely.
   const { tier, apiAccess: hasApiAccess, maxApiKeys, isLoading: nanoLoading } = usePlan();
+  const { actorUid } = useAccount();
   const [keys, setKeys] = React.useState<ApiKey[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -473,7 +475,14 @@ export default function ApiKeys() {
                     <TableBody>
                       {keys.map((k) => (
                         <TableRow key={k.id}>
-                          <TableCell className="px-4 py-3 font-medium">{k.name || "—"}</TableCell>
+                          <TableCell className="px-4 py-3 font-medium">
+                            {k.name || "Unnamed"}
+                            {k.createdByUid && k.createdByUid !== actorUid && (
+                              <div className="mt-0.5 text-[11px] font-normal text-muted-foreground whitespace-nowrap">
+                                Created by a teammate
+                              </div>
+                            )}
+                          </TableCell>
                           <TableCell className="px-4 py-3">
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -547,7 +556,7 @@ export default function ApiKeys() {
                             )}
                           </TableCell>
                           <TableCell className="px-4 py-3 text-right">
-                            {k.enabled ? (
+                            {!k.canManage ? null : k.enabled ? (
                               <Button
                                 variant="ghost"
                                 size="sm"

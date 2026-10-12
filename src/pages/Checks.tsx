@@ -12,12 +12,13 @@ import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { useMobile } from '../hooks/useMobile';
 import { useAlertCoverage } from '../hooks/useAlertCoverage';
 import { NoAlertChannelBanner } from '../components/check/NoAlertChannelBanner';
-import { httpsCallable } from "firebase/functions";
+import { httpsCallable } from "@/lib/callable";
 import { functions } from '../firebase';
 import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import { LayoutGrid, List, Plus, Globe, Map, Upload, Download } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
+import { useAccount } from '@/AccountProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
@@ -42,6 +43,8 @@ const CheckMapView = lazy(() => import("../components/check/CheckMapView"));
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
+  const account = useAccount();
+  const { accountId, canWrite } = account;
   const authReady = useAuthReady();
   const { websiteUrl, isValidUrl, hasProcessed, clearWebsiteUrl } = useWebsiteUrl();
   const [formLoading, setFormLoading] = useState(false);
@@ -120,7 +123,7 @@ const Checks: React.FC = () => {
     optimisticUpdates,
     folderUpdates,
     manualChecksInProgress
-  } = useChecks(userId ?? null, () => {});
+  } = useChecks(accountId, () => {});
 
   // Phase 5: WS is authoritative for live fields. `effectiveChecks` merges
   // Firestore config-fields with the WS overlay's live-fields per region.
@@ -134,7 +137,12 @@ const Checks: React.FC = () => {
     regions: wsRegions,
     aggregateState: wsAggregateState,
     fallbackRegion: wsFallbackRegion,
-  } = useCheckStream(firestoreChecks);
+  } = useCheckStream(firestoreChecks, {
+    // The live stream authenticates as the signed-in person and streams their
+    // own checks. Inside a team account it would have nothing to overlay, so
+    // render straight from Firestore until the VPS can stream an account.
+    enabled: !account.isMember,
+  });
 
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)
@@ -144,7 +152,7 @@ const Checks: React.FC = () => {
   // delivery gate, not "is there an address saved", because those are very
   // different questions: most saved settings documents are in 'Selected only' mode
   // and deliver nothing.
-  const alertCoverage = useAlertCoverage(userId, checks, smsAlerts);
+  const alertCoverage = useAlertCoverage(accountId, checks, smsAlerts);
 
   // Per-user check cap, from usePlan() — mirrors TIER_LIMITS[tier].maxChecks
   // (Free 50, Indie 100, Nano 250, Pro 1000). Must not be a paid/free boolean:
@@ -619,8 +627,8 @@ const Checks: React.FC = () => {
               variant="outline"
               onClick={() => setShowBulkImport(true)}
               className="gap-2 cursor-pointer hidden sm:inline-flex"
-              title={atCheckLimit ? "Upgrade to Nano to add more checks" : "Import multiple checks at once"}
-              disabled={atCheckLimit}
+              title={!canWrite ? "Viewers can't make changes" : atCheckLimit ? "Upgrade to Nano to add more checks" : "Import multiple checks at once"}
+              disabled={!canWrite || atCheckLimit}
             >
               <Upload className="w-4 h-4" />
               <span className="hidden sm:inline">Bulk Import</span>
@@ -642,8 +650,8 @@ const Checks: React.FC = () => {
                 setShowForm(true);
               }}
               className="gap-2 cursor-pointer"
-              title={atCheckLimit ? "Upgrade to Nano to add more checks" : undefined}
-              disabled={atCheckLimit}
+              title={!canWrite ? "Viewers can't make changes" : atCheckLimit ? "Upgrade to Nano to add more checks" : undefined}
+              disabled={!canWrite || atCheckLimit}
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">Add Check</span>

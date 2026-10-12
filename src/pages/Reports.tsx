@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAccountId } from '@/AccountProvider';
 import { useNavigate } from 'react-router-dom';
 import { type DateRange } from 'react-day-picker';
 // removed metric icons
@@ -61,11 +61,11 @@ type ChartDataPoint = {
 };
 
 const Reports: React.FC = () => {
-  const { userId } = useAuth();
+  const accountId = useAccountId();
   const navigate = useNavigate();
   const log = React.useCallback((_msg: string) => {}, []);
   // Use non-realtime mode to reduce Firestore reads - Reports page only needs the check list for the dropdown
-  const { checks, loading: checksLoading } = useChecks(userId ?? null, log, { realtime: false });
+  const { checks, loading: checksLoading } = useChecks(accountId, log, { realtime: false });
   const hasNoChecks = !checksLoading && (!checks || checks.length === 0);
   // The 60-day window is a paid-tier feature, not a Nano-or-better one — every
   // paid tier (Indie included) retains 60 days of history.
@@ -202,7 +202,7 @@ const Reports: React.FC = () => {
     const isStale = () => requestId !== requestIdRef.current;
 
     const run = async () => {
-      if (!userId) return;
+      if (!accountId) return;
       
       // Don't fetch anything until the user selects a website (or All Websites).
       if (!websiteFilter || selectedCheckIds.length === 0) {
@@ -476,7 +476,7 @@ const Reports: React.FC = () => {
 
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, selectedCheckIdsKey, timeRange, calendarDateRange, getStartEnd]);
+  }, [accountId, selectedCheckIdsKey, timeRange, calendarDateRange, getStartEnd]);
 
   // Metrics: uptime wired to real data; others stay placeholders for now
   const metrics: Metric[] = React.useMemo(

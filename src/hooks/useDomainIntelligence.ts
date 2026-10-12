@@ -93,7 +93,7 @@ export function useDomainIntelligence(
     try {
       const q = query(
         collection(db, 'checks'),
-        where('userId', '==', firebaseUid),
+        where('userId', '==', userId),
         where('domainExpiry.enabled', '==', true)
       );
       

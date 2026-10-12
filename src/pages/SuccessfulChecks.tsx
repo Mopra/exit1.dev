@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '@clerk/clerk-react';
+import { useAccountId } from '@/AccountProvider';
 import { CheckCircle, X, ArrowLeft } from 'lucide-react';
 
 import { Button, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, StatusBadge, GlowCard, ScrollArea } from '../components/ui';
@@ -28,11 +28,11 @@ const SuccessfulChecks: React.FC = () => {
     timestamp: string; 
   }>();
   const navigate = useNavigate();
-  const { userId } = useAuth();
+  const accountId = useAccountId();
   
   const log = React.useCallback((_msg: string) => {}, []);
   
-  const { checks } = useChecks(userId ?? null, log);
+  const { checks } = useChecks(accountId, log);
   
   const [website, setWebsite] = useState<Website | null>(null);
   const [successfulChecks, setSuccessfulChecks] = useState<SuccessfulCheckData[]>([]);

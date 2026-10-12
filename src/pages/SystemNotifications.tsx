@@ -4,7 +4,8 @@ import { PageHeader, PageContainer } from '@/components/layout';
 import { NotificationManager } from '@/components/admin/NotificationManager';
 import { Bell, Shield, Plus } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, RichTextEditor } from '@/components/ui';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getFunctions } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import { toast } from 'sonner';
 
 const SystemNotifications: React.FC = () => {

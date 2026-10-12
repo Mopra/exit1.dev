@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, Fragment, memo } from 'react';
-import { useAuth } from '@clerk/clerk-react';
-import { httpsCallable, getFunctions } from 'firebase/functions';
+import { useAccountId } from '@/AccountProvider';
+import { getFunctions } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import {
   Button,
   Input,
@@ -185,7 +186,7 @@ const SmsCheckRow = memo(function SmsCheckRow({
 // ---------------------------------------------------------------------------
 
 export default function Sms() {
-  const { userId } = useAuth();
+  const accountId = useAccountId();
   const { tier, pro } = usePlan();
   const { isAdmin } = useAdmin();
   // SMS is Pro+ per plan §3 (tightened from Nano in Phase B1).
@@ -208,7 +209,7 @@ export default function Sms() {
   const n = useNotificationSettings({
     channel: 'sms',
     settingsCollection: 'smsSettings',
-    userId: userId ?? null,
+    userId: accountId,
     hasAccess: !!hasAccess,
     callables,
   });

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { httpsCallable } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import { functions } from '../firebase';
 import type { PlatformUser, SortOption } from '../components/admin/UserTable';
 

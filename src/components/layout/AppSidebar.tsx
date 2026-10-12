@@ -18,6 +18,9 @@ import {
   Plug,
   Bot,
   CreditCard,
+  UsersRound,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react"
 
 function DiscordIcon({ className }: { className?: string }) {
@@ -41,6 +44,15 @@ function DiscordIcon({ className }: { className?: string }) {
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
 import { usePlan } from "@/hooks/usePlan"
+import { teamAccountLabel, useAccount } from "@/AccountProvider"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
@@ -159,6 +171,11 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
     },
   ] : [],
   navSecondary: [
+    {
+      title: "Team",
+      url: "/team",
+      icon: UsersRound,
+    },
     // Billing used to be reachable only from the avatar menu, and people kept
     // asking how to upgrade or change their card. It sits here, always visible.
     {
@@ -178,6 +195,58 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
     },
   ],
 })
+
+/**
+ * Switch between your own account and the teams you belong to. Hidden for the
+ * many people who are in no team, so the sidebar doesn't grow a control they
+ * can't use.
+ */
+function AccountSwitcher() {
+  const account = useAccount()
+  const activeTeams = account.teams.filter((t) => t.active)
+  if (activeTeams.length === 0) return null
+
+  const currentLabel = account.activeTeam ? teamAccountLabel(account.activeTeam) : "My account"
+
+  return (
+    <SidebarMenuItem>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuButton
+            size="sm"
+            className="cursor-pointer border border-sidebar-border data-[state=open]:bg-sidebar-accent"
+            tooltip={`Account: ${currentLabel}`}
+          >
+            <UsersRound className="size-4 shrink-0" />
+            <span className="truncate">{currentLabel}</span>
+            <ChevronsUpDown className="ml-auto size-4 shrink-0 opacity-60" />
+          </SidebarMenuButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-64">
+          <DropdownMenuLabel className="text-xs text-muted-foreground">Switch account</DropdownMenuLabel>
+          <DropdownMenuItem className="cursor-pointer" onSelect={() => account.switchAccount(null)}>
+            <span className="truncate">My account</span>
+            {!account.isMember && <Check className="ml-auto size-4" />}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {activeTeams.map((team) => (
+            <DropdownMenuItem
+              key={team.accountId}
+              className="cursor-pointer"
+              onSelect={() => account.switchAccount(team.accountId)}
+            >
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate">{teamAccountLabel(team)}</span>
+                <span className="text-xs text-muted-foreground">{team.role === "editor" ? "Editor" : "Viewer"}</span>
+              </div>
+              {account.accountId === team.accountId && <Check className="ml-auto size-4" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </SidebarMenuItem>
+  )
+}
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { isSignedIn } = useAuth();
@@ -217,6 +286,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          <AccountSwitcher />
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>

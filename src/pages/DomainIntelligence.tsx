@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import { useAccount } from '@/AccountProvider';
 import { PageHeader, PageContainer } from '../components/layout';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { Button, Input, SearchInput, FeatureGate } from '../components/ui';
@@ -52,6 +53,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const DomainIntelligence: React.FC = () => {
   const { userId } = useAuth();
+  const { accountId, canWrite } = useAccount();
   const { tier, domainIntel, isLoading: tierLoading } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,7 +74,7 @@ const DomainIntelligence: React.FC = () => {
     bulkDisableDomainExpiry,
     bulkRefreshDomainExpiry,
     refreshInProgress
-  } = useDomainIntelligence(userId ?? null);
+  } = useDomainIntelligence(accountId);
 
   const enabledCheckIds = useMemo(() => new Set(domains.map(d => d.checkId)), [domains]);
 
@@ -232,7 +234,7 @@ const DomainIntelligence: React.FC = () => {
         {showEnableModal && (
           <EnableDomainModal
             onClose={() => setShowEnableModal(false)}
-            userId={userId!}
+            userId={accountId!}
             enabledCheckIds={enabledCheckIds}
             bulkEnableDomainExpiry={bulkEnableDomainExpiry}
           />
@@ -249,11 +251,22 @@ const DomainIntelligence: React.FC = () => {
         icon={FileBadge}
         actions={
           <div className="flex items-center gap-2">
-            <Button onClick={() => setShowEnableModal(true)} size="sm" variant="outline">
+            <Button
+              onClick={() => setShowEnableModal(true)}
+              size="sm"
+              variant="outline"
+              disabled={!canWrite}
+              title={!canWrite ? "Viewers can't make changes" : undefined}
+            >
               <Plus className="w-4 h-4 mr-2" />
               Enable for checks
             </Button>
-            <Button onClick={() => setShowAddDomainModal(true)} size="sm">
+            <Button
+              onClick={() => setShowAddDomainModal(true)}
+              size="sm"
+              disabled={!canWrite}
+              title={!canWrite ? "Viewers can't make changes" : undefined}
+            >
               <Plus className="w-4 h-4 mr-2" />
               Add domain
             </Button>
@@ -343,7 +356,7 @@ const DomainIntelligence: React.FC = () => {
       {showEnableModal && (
         <EnableDomainModal
           onClose={() => setShowEnableModal(false)}
-          userId={userId!}
+          userId={accountId!}
           enabledCheckIds={enabledCheckIds}
           bulkEnableDomainExpiry={bulkEnableDomainExpiry}
         />

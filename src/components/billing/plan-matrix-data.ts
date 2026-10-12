@@ -115,7 +115,7 @@ export const PLAN_MATRIX: PlanMatrixEntry[] = [
       { label: "Extra email recipients (per-check & per-folder)" },
       { label: "Region choice (US / EU / Asia)" },
       { label: "3-year data retention" },
-      { label: "Team members & roles", comingSoon: true },
+      { label: "Up to 10 team members, editor or viewer" },
       { label: "Custom status page domain", comingSoon: true },
       { label: "SLA reporting", comingSoon: true },
     ],

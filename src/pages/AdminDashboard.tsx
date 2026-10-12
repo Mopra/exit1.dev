@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { httpsCallable } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import { functions } from '@/firebase';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminStats } from '@/hooks/useAdminStats';

@@ -4,6 +4,7 @@ import { AlertTriangle, Bell, Bot, Check, ListChecks, Loader2, PenLine, ShieldCh
 
 import { apiClient } from "@/api/client";
 import { trackEvent } from "@/lib/analytics";
+import { teamAccountLabel, useAccount } from "@/AccountProvider";
 import type { McpAuthorizationRequest } from "@/api/types";
 import {
   Alert,
@@ -82,6 +83,7 @@ function describeScope(scope: string): ScopeCopy {
 
 export default function Authorize() {
   const { requestId = "" } = useParams<{ requestId: string }>();
+  const account = useAccount();
 
   const [request, setRequest] = React.useState<McpAuthorizationRequest | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -212,7 +214,9 @@ export default function Authorize() {
                 Connect {request.clientName} to exit1
               </CardTitle>
               <CardDescription>
-                It will be able to act on your monitors on your behalf.
+                {account.activeTeam
+                  ? <>It will act on <strong>{teamAccountLabel(account.activeTeam)}</strong>'s team account on your behalf{account.role === "viewer" ? ", read only" : ""}. To connect your own account instead, switch to it in the app first.</>
+                  : "It will be able to act on your monitors on your behalf."}
               </CardDescription>
             </div>
           </div>

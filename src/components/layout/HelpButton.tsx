@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { httpsCallable } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import { ArrowUpRight } from 'lucide-react';
 import { functions } from '@/firebase';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';

@@ -8,6 +8,7 @@ import CustomSignUp from './components/auth/CustomSignUp';
 import Layout from './components/layout/Layout';
 import AuthGuard from './components/auth/AuthGuard';
 import { createContext } from "react";
+import { AccountProvider } from './AccountProvider';
 import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -35,6 +36,7 @@ const Integrations = lazy(() => import('./pages/Integrations'));
 const Emails = lazy(() => import('./pages/Emails'));
 const Sms = lazy(() => import('./pages/Sms'));
 const Profile = lazy(() => import('./pages/Profile'));
+const Team = lazy(() => import('./pages/Team'));
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const Reports = lazy(() => import('./pages/Reports'));
@@ -124,6 +126,7 @@ function App() {
 
   return (
     <AuthReadyProvider>
+      <AccountProvider>
       <TooltipProvider>
         <Router>
           <ErrorBoundary>
@@ -253,6 +256,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Mcp />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/team"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Team />
                     </AuthGuard>
                   </Layout>
                 }
@@ -435,6 +448,7 @@ function App() {
         </Router>
         <Toaster />
       </TooltipProvider>
+      </AccountProvider>
     </AuthReadyProvider>
   );
 }

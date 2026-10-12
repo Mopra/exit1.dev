@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
+import { useOptionalAccount } from '@/AccountProvider';
 import { Bell, BellOff, CheckCircle, Download, Edit, ExternalLink, Maximize, Minimize, RefreshCw, Share2, Shield, XCircle } from 'lucide-react';
 import {
   Badge,
@@ -281,6 +282,10 @@ const getStatusLayoutConfig = (layout?: StatusPageLayout) => {
 const PublicStatus: React.FC = () => {
   const { checkId } = useParams<{ checkId: string }>();
   const { userId, isSignedIn } = useAuth();
+  // A teammate acting inside the owner's account counts as the owner here.
+  const account = useOptionalAccount();
+  const accountId = account?.accountId ?? userId ?? null;
+  const canWrite = account?.canWrite ?? true;
   const [mode, setMode] = useState<'status' | 'certificate' | null>(null);
   const [statusPage, setStatusPage] = useState<StatusPage | null>(null);
   const [statusPageError, setStatusPageError] = useState<string | null>(null);
@@ -306,11 +311,11 @@ const PublicStatus: React.FC = () => {
 
   // Owner detection for custom layout editing
   const isOwner = useMemo(() => {
-    if (!isSignedIn || !userId || !statusPage) return false;
-    return statusPage.userId === userId;
-  }, [isSignedIn, userId, statusPage]);
+    if (!isSignedIn || !accountId || !statusPage) return false;
+    return statusPage.userId === accountId;
+  }, [isSignedIn, accountId, statusPage]);
 
-  const canEdit = isOwner && statusPage?.layout === 'custom';
+  const canEdit = isOwner && canWrite && statusPage?.layout === 'custom';
 
   // History window the viewer is looking at (7 / 30 / 90 days). Defaults to a
   // shorter span on small screens so the bars stay legible.
@@ -322,7 +327,7 @@ const PublicStatus: React.FC = () => {
 
   // Fetch full check data for owners (needed for map widget with geo data)
   const ownerLog = React.useCallback(() => {}, []);
-  const { checks: ownerChecks } = useChecks(isOwner && userId ? userId : null, ownerLog);
+  const { checks: ownerChecks } = useChecks(isOwner && accountId ? accountId : null, ownerLog);
 
   // Filter owner checks to only those in this status page and convert to Website[] for map widget
   // Include checks matched by explicit checkIds AND by folderPaths (via statusChecks from backend).
@@ -826,7 +831,7 @@ const PublicStatus: React.FC = () => {
   }, [loadStatuses]);
 
   const handleSaveCustomLayout = React.useCallback(async (newLayout: CustomLayoutConfig) => {
-    if (!statusPage || !isOwner) return;
+    if (!statusPage || !isOwner || !canWrite) return;
 
     try {
       await updateDoc(doc(db, 'status_pages', statusPage.id), {
@@ -840,7 +845,7 @@ const PublicStatus: React.FC = () => {
       toast.error('Failed to save layout');
       throw error;
     }
-  }, [statusPage, isOwner]);
+  }, [statusPage, isOwner, canWrite]);
 
   if (statusDocLoading && mode === null) {
     return (

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { AppSidebar } from './AppSidebar';
 import { SystemAlert } from './SystemAlert';
 import { PastDueBanner } from './PastDueBanner';
+import { TeamAccountBanner } from './TeamAccountBanner';
 import { DeployModeBanner } from './DeployModeBanner';
 import NotificationBell from './NotificationBell';
 import HelpButton from './HelpButton';
@@ -14,6 +15,7 @@ import { useAuth } from "@clerk/clerk-react";
 import { usePlan } from "@/hooks/usePlan";
 import { useAdmin } from "@/hooks/useAdmin";
 import { useChecks } from "@/hooks/useChecks";
+import { useAccountId } from "@/AccountProvider";
 import { useTierSync } from "@/hooks/useTierSync"
 import { getTierVisual } from "@/lib/tier-visual"
 import { cn } from "@/lib/utils"
@@ -26,10 +28,11 @@ import { Button } from "@/components/ui/Button"
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   useTierSync()
-  const { isSignedIn, userId } = useAuth();
+  const { isSignedIn } = useAuth();
+  const accountId = useAccountId();
   const { tier, isFounders, smsAlerts, isLoading } = usePlan();
   const { isAdmin } = useAdmin();
-  const { checks } = useChecks(userId ?? null, () => {}, { realtime: true });
+  const { checks } = useChecks(accountId, () => {}, { realtime: true });
   const tierVisual = getTierVisual(tier, isFounders);
 
   return (
@@ -114,6 +117,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="flex flex-1 flex-col pt-16 pb-6 px-1 sm:px-4 md:px-6 lg:px-12">
               <SystemAlert />
               {isSignedIn && <PastDueBanner />}
+              {isSignedIn && <TeamAccountBanner />}
               {children}
             </div>
             <Footer />

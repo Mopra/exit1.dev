@@ -3,6 +3,7 @@ import { useSubscription } from "@clerk/clerk-react/experimental";
 import { useUser } from "@clerk/clerk-react";
 import { getTierLimits, resolvePlanKey } from "@/lib/subscription";
 import { useAdminTierPreview } from "./useAdminTierPreview";
+import { useOptionalAccount } from "@/AccountProvider";
 
 export type Tier = "free" | "indie" | "nano" | "pro";
 
@@ -93,12 +94,19 @@ export function usePlan() {
     return tierFromPlanKey(subscribedPlanKey);
   }, [lifetimeNano, subscribedPlanKey]);
 
-  // Effective tier — admins default to 'pro' entitlements but can preview
-  // any tier via the admin preview. Non-admins always use their real tier.
+  // Inside a team account the entitlements are the account's, not the
+  // person's: a team account is only reachable while its owner is on Pro.
+  const account = useOptionalAccount();
+  const inTeamAccount = !!account?.isMember;
+
+  // Effective tier. Admins default to 'pro' entitlements but can preview any
+  // tier via the admin preview. Non-admins use their real tier, or the team
+  // account's Pro while working inside one.
   const tier = useMemo<Tier>(() => {
+    if (inTeamAccount) return "pro";
     if (isAdmin) return normalizePreviewTier(previewTier);
     return realTier;
-  }, [isAdmin, previewTier, realTier]);
+  }, [inTeamAccount, isAdmin, previewTier, realTier]);
 
   /**
    * The full limit row for the effective tier. Every entitlement below is

@@ -550,6 +550,10 @@ export interface ApiKey {
   expiresAt?: number | null;
   /** null = every check. */
   access?: ApiKeyAccess | null;
+  /** Who created the key; null on keys made before team accounts. */
+  createdByUid: string | null;
+  /** False when the caller may not revoke or delete this key. */
+  canManage: boolean;
 }
 
 /** Checks and folders (subfolders included) a restricted key may use. */

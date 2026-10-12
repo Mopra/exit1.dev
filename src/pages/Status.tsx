@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import { useAccount } from '@/AccountProvider';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -121,11 +122,12 @@ const validateImageDimensions = async (file: File, kind: BrandAssetKind) => {
 
 const Status: React.FC = () => {
   const { userId } = useAuth();
+  const { accountId, canWrite } = useAccount();
   const log = useCallback((msg: string) => {
     void msg;
   }, []);
   const { tier, statusPageBuilder } = usePlan();
-  const { checks: rawChecks, loading: checksLoading } = useChecks(userId ?? null, log);
+  const { checks: rawChecks, loading: checksLoading } = useChecks(accountId, log);
   // Domain-only checks have no uptime data — they make no sense on a status page.
   const checks = useMemo(() => rawChecks.filter((c) => c.type !== 'domain'), [rawChecks]);
 
@@ -178,7 +180,7 @@ const Status: React.FC = () => {
   const hasDowngradedPages = statusPages.some((p) => p.disabledReason === 'plan_downgrade');
 
   useEffect(() => {
-    if (!userId) {
+    if (!accountId) {
       setStatusPages([]);
       setLoading(false);
       return;
@@ -187,7 +189,7 @@ const Status: React.FC = () => {
     setLoading(true);
     const q = query(
       collection(db, 'status_pages'),
-      where('userId', '==', userId),
+      where('userId', '==', accountId),
       orderBy('createdAt', 'desc')
     );
 
@@ -209,7 +211,7 @@ const Status: React.FC = () => {
     );
 
     return () => unsubscribe();
-  }, [userId]);
+  }, [accountId]);
 
   const sortedChecks = useMemo(() => {
     return [...checks].sort((a: Website, b: Website) => a.name.localeCompare(b.name));
@@ -374,7 +376,7 @@ const Status: React.FC = () => {
   }, [checks]);
 
   const handleSave = async () => {
-    if (!userId) {
+    if (!accountId) {
       toast.error('You must be signed in to save status pages.');
       return;
     }
@@ -457,7 +459,7 @@ const Status: React.FC = () => {
       } else {
         await addDoc(collection(db, 'status_pages'), {
           ...payload,
-          userId,
+          userId: accountId,
           createdAt: now,
         });
         toast.success('Status page created.');
@@ -660,8 +662,8 @@ const Status: React.FC = () => {
             <Button
               onClick={openCreate}
               className="gap-2 cursor-pointer"
-              disabled={!canCreateStatusPage}
-              title={!canCreateStatusPage ? statusPageUpsell : undefined}
+              disabled={!canWrite || !canCreateStatusPage}
+              title={!canWrite ? "Viewers can't make changes" : !canCreateStatusPage ? statusPageUpsell : undefined}
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">New Status Page</span>

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Bell, X } from 'lucide-react';
-import { httpsCallable } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import { functions } from '@/firebase';
 import { useUserNotifications } from '@/hooks/useUserNotifications';
 import { useNotifications } from '@/hooks/useNotifications';

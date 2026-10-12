@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { httpsCallable, getFunctions } from 'firebase/functions';
+import { getFunctions } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import { AlertTriangle } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription, Button } from '../ui';
 import { toast } from 'sonner';

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAccount, useAccountId } from '@/AccountProvider';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Radio, ArrowLeft, ExternalLink } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
@@ -64,7 +64,8 @@ function formatWindow(ms: number): string {
 }
 
 const LiveCheck: React.FC = () => {
-  const { userId } = useAuth();
+  const accountId = useAccountId();
+  const account = useAccount();
   const { checkId = '' } = useParams<{ checkId: string }>();
   const navigate = useNavigate();
   // The Live page is deliberately available on every plan, Free included.
@@ -75,7 +76,7 @@ const LiveCheck: React.FC = () => {
   // becomes the right call.
   const gated = false;
 
-  const { checks: firestoreChecks } = useChecks(userId ?? null, () => {});
+  const { checks: firestoreChecks } = useChecks(accountId, () => {});
   const {
     effectiveChecks,
     regions,
@@ -85,7 +86,12 @@ const LiveCheck: React.FC = () => {
     segmentsByCheckId,
     subscribeHistory,
     unsubscribeHistory,
-  } = useCheckStream(firestoreChecks);
+  } = useCheckStream(firestoreChecks, {
+    // The live stream authenticates as the signed-in person and streams their
+    // own checks. Inside a team account it would have nothing to overlay, so
+    // render straight from Firestore until the VPS can stream an account.
+    enabled: !account.isMember,
+  });
 
   const check = useMemo<Website | undefined>(
     () => effectiveChecks.find((c) => c.id === checkId),

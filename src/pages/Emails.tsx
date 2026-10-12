@@ -1,6 +1,8 @@
 import { useMemo, useState, useCallback, useRef } from 'react';
-import { useAuth, useUser } from '@clerk/clerk-react';
-import { httpsCallable, getFunctions } from 'firebase/functions';
+import { useUser } from '@clerk/clerk-react';
+import { useAccountId } from '@/AccountProvider';
+import { getFunctions } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import {
   BulkActionsBar,
   type BulkAction,
@@ -40,7 +42,7 @@ const sendTestEmailFn = httpsCallable(functions, 'sendTestEmail');
 // ---------------------------------------------------------------------------
 
 export default function Emails() {
-  const { userId } = useAuth();
+  const accountId = useAccountId();
   const { user } = useUser();
   const { pro } = usePlan();
   const isMobile = useMobile(640);
@@ -65,7 +67,7 @@ export default function Emails() {
   const n = useNotificationSettings({
     channel: 'email',
     settingsCollection: 'emailSettings',
-    userId: userId ?? null,
+    userId: accountId,
     hasAccess: true,
     callables,
     defaultRecipients: userEmail ? [userEmail] : [],

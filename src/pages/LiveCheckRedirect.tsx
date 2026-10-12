@@ -1,6 +1,6 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAuth } from '@clerk/clerk-react';
+import { useAccountId } from '@/AccountProvider';
 import { Activity } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import { useChecks } from '../hooks/useChecks';
@@ -8,8 +8,8 @@ import { useChecks } from '../hooks/useChecks';
 const LAST_CHECK_ID_STORAGE_KEY = 'exit1_last_check_id';
 
 const LiveCheckRedirect: React.FC = () => {
-  const { userId } = useAuth();
-  const { checks, loading } = useChecks(userId ?? null, () => {}, { realtime: false });
+  const accountId = useAccountId();
+  const { checks, loading } = useChecks(accountId, () => {}, { realtime: false });
 
   if (loading) {
     return (

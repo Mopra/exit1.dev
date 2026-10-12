@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { useAccount } from '@/AccountProvider';
+import { getFunctions } from 'firebase/functions';
+import { httpsCallable } from '@/lib/callable';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -41,6 +43,7 @@ interface WebhooksContentProps {
 
 const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   const { userId } = useAuth();
+  const { accountId, canWrite } = useAccount();
   const { tier } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const labels = labelsForScope(scope);
@@ -80,7 +83,7 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
 
   const log = useCallback((_msg: string) => {}, []);
   // Use non-realtime mode to reduce Firestore reads - checks are only needed for the form dropdown
-  const { checks } = useChecks(userId ?? null, log, { realtime: false });
+  const { checks } = useChecks(accountId, log, { realtime: false });
 
   // Snapshot data with optimistic patches applied — what the UI renders.
   const patchedWebhooks = useMemo(
@@ -110,12 +113,12 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   const unsubscribeRef = useRef<any>(null);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!accountId) return;
 
     const subscribe = () => {
       const q = query(
         collection(db, 'webhooks'),
-        where('userId', '==', userId),
+        where('userId', '==', accountId),
         orderBy('createdAt', 'desc')
       );
       return onSnapshot(q, (snapshot) => {
@@ -165,7 +168,7 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [userId]);
+  }, [accountId]);
 
   const handleFormSubmit = async (data: {
     name: string;
@@ -176,7 +179,7 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
     headers?: { [key: string]: string };
     webhookType?: WebhookPlatformType;
   }) => {
-    if (!userId) return;
+    if (!accountId) return;
 
     try {
       setFormLoading(true);
@@ -409,8 +412,8 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
             <Button
               onClick={() => setShowForm(true)}
               className="gap-2 cursor-pointer"
-              title={atWebhookLimit ? `Your plan includes ${maxWebhooks} ${maxWebhooks === 1 ? labels.titleSingular : labels.titlePlural}` : undefined}
-              disabled={atWebhookLimit}
+              title={!canWrite ? "Viewers can't make changes" : atWebhookLimit ? `Your plan includes ${maxWebhooks} ${maxWebhooks === 1 ? labels.titleSingular : labels.titlePlural}` : undefined}
+              disabled={!canWrite || atWebhookLimit}
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">{labels.addButton}</span>

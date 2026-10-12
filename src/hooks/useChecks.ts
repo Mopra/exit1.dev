@@ -97,7 +97,9 @@ export function useChecks(
 
   // Fetch checks once (non-realtime mode)
   const fetchChecksOnce = useCallback(async () => {
-    const uid = firebaseUid;
+    // Query by the account id the caller passed (the owner's uid while a
+    // teammate is inside a team account), once Firebase auth is ready.
+    const uid = firebaseUid ? userId : null;
     if (!uid) {
       setChecks([]);
       setLoading(false);
@@ -125,13 +127,13 @@ export function useChecks(
       logRef.current('Failed to fetch checks: ' + (error as Error).message);
       setLoading(false);
     }
-  }, [firebaseUid]);
+  }, [firebaseUid, userId]);
 
   // Real-time subscription to checks using Firestore onSnapshot
   const subscribeToChecks = useCallback(() => {
-    // Use Firebase auth UID instead of Clerk userId for Firestore queries
-    // This ensures Firebase auth is ready before subscribing
-    const uid = firebaseUid;
+    // Wait for Firebase auth before subscribing, then query by the account id
+    // the caller passed (the owner's uid while inside a team account).
+    const uid = firebaseUid ? userId : null;
     if (!uid) {
       setChecks([]);
       setLoading(false);
@@ -202,7 +204,7 @@ export function useChecks(
       logRef.current('Failed to subscribe to checks: ' + (error as Error).message);
       setLoading(false);
     }
-  }, [firebaseUid]);
+  }, [firebaseUid, userId]);
 
   useEffect(() => {
     if (!userId) {

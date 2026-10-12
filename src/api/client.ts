@@ -1,4 +1,4 @@
-import { httpsCallable } from "firebase/functions";
+import { httpsCallable } from "@/lib/callable";
 import { functions } from '../firebase';
 import { statsCache, historyCache, reportMetricsCache, cacheKeys } from '../utils/cache';
 import type {
