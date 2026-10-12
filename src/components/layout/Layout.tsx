@@ -10,6 +10,7 @@ import HelpButton from './HelpButton';
 import { DocsLink } from './DocsLink';
 import { GlobalSearch } from './GlobalSearch';
 import { UsageWidget } from './UsageWidget';
+import { WhatsNewDialog } from './WhatsNewDialog';
 import Footer from './Footer';
 import { useAuth } from "@clerk/clerk-react";
 import { usePlan } from "@/hooks/usePlan";
@@ -123,6 +124,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             <Footer />
           </main>
           {isSignedIn && <UsageWidget />}
+          {isSignedIn && <WhatsNewDialog />}
         </SidebarInset>
       </div>
     </SidebarProvider>
