@@ -25,6 +25,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { resolveBearerToken, buildWwwAuthenticate } from "./mcp-oauth";
+import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 import { MCP_ALLOWED_METHODS, isMcpTransportMethod } from "./mcp-http-policy";
 import {
   MCP_TOOLS,
@@ -152,6 +153,9 @@ export const mcpServer = onRequest(
     timeoutSeconds: 120,
     memory: "512MiB",
     maxInstances: 20,
+    // resolveBearerToken asks Clerk whether an agent-signup account has been
+    // signed into; without the key those tokens fail closed.
+    secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
   },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");

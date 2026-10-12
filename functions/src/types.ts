@@ -177,6 +177,11 @@ export interface Website {
   pendingDownWebhooks?: boolean;
   pendingUpWebhooks?: boolean;
 
+  // Set on checks an AI agent created before the account's owner claimed it
+  // (agent-signup.ts). Probes run, but no alert is delivered until the claim
+  // clears it: the address on the account is not yet proven to be the owner's.
+  agentUnclaimed?: boolean;
+
   // Maintenance mode
   maintenanceMode?: boolean;
   maintenanceStartedAt?: number;

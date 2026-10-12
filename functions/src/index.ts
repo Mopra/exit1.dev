@@ -199,6 +199,8 @@ lazy((): typeof import('./mcp-oauth') => require('./mcp-oauth'), [
   'listMcpConnections',
   'revokeMcpConnection',
 ]);
+// Claim page callables for accounts an agent created (agent-signup.ts).
+lazy((): typeof import('./agent-signup') => require('./agent-signup'), ['getAgentClaim', 'claimAgentAccount']);
 
 // Badge endpoint (public, no auth)
 lazy((): typeof import('./badge') => require('./badge'), ['badge']);

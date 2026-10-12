@@ -78,6 +78,8 @@ export function markOnboardingCompleteLocally(userId: string) {
  */
 const ONBOARDING_BYPASS_PATTERNS: RegExp[] = [
   /^\/authorize\/[A-Za-z0-9_-]{1,128}$/,
+  // An agent-created account is claimed instead of onboarded.
+  /^\/claim$/,
 ];
 
 // Auth handlers run before `useAuth().userId` updates, so they can't consult

@@ -23,7 +23,7 @@ import type { AlertResult } from './alert';
 export type AlertReason =
   | 'flap' | 'settings' | 'missingRecipient' | 'throttle'
   | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate'
-  | 'check_disabled' | undefined;
+  | 'check_disabled' | 'account_unclaimed' | undefined;
 
 /** Reasons that warrant a follow-up retry based on the reason ALONE.
  *  `settings`/`missingRecipient`/`maintenance_mode`/`check_disabled` are

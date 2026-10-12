@@ -43,6 +43,7 @@ export async function triggerDnsRecordAlert(
   check: Website,
   changes: DnsChange[],
 ): Promise<void> {
+  if (check.agentUnclaimed) return; // see Website.agentUnclaimed
   const hasMissing = changes.some(c => c.changeType === 'missing');
   const event: WebhookEvent = hasMissing ? 'dns_record_missing' : 'dns_record_changed';
 
@@ -132,6 +133,7 @@ export async function triggerDnsResolutionFailedAlert(
   check: Website,
   error: string,
 ): Promise<void> {
+  if (check.agentUnclaimed) return; // see Website.agentUnclaimed
   const payload: DnsResolutionFailedPayload = {
     event: 'dns_resolution_failed',
     checkId: check.id,

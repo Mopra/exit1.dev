@@ -595,6 +595,15 @@ export interface McpAuthorizationRequest {
   expiresAt: number;
 }
 
+/** An account an AI agent created, as shown to the person claiming it. */
+export interface AgentClaim {
+  status: "unclaimed" | "claimed";
+  agentName: string;
+  email: string;
+  checkCount: number;
+  createdAt: number;
+}
+
 /** An AI tool the user has connected and granted access to. */
 export interface McpConnection {
   clientId: string;

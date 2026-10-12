@@ -820,7 +820,8 @@ async function handleCreateCheck(
   keyDocId: string,
   path: string,
   isAgentSession = false,
-  access: KeyAccess | null = null
+  access: KeyAccess | null = null,
+  accountUnclaimed = false
 ): Promise<void> {
   // Idempotency key required for POST
   const idempotencyKey = req.header('Idempotency-Key') || '';
@@ -1167,6 +1168,7 @@ async function handleCreateCheck(
       userId,
       userTier,
       checkRegion,
+      ...(accountUnclaimed ? { agentUnclaimed: true } : {}),
       ...(effectiveRegionOverride ? { checkRegionOverride: effectiveRegionOverride } : {}),
       checkFrequency: finalCheckFrequency,
       consecutiveFailures: 0,
@@ -2207,7 +2209,8 @@ async function handleGetAccount(
   res: Parameters<Parameters<typeof onRequest>[0]>[1],
   userId: string,
   scopes: string[],
-  key: { expiresAt: number | null; access: KeyAccess | null } | null
+  key: { expiresAt: number | null; access: KeyAccess | null } | null,
+  accountUnclaimed = false
 ): Promise<void> {
   const [tier, stats, webhookSnap, emailSnap] = await Promise.all([
     getUserTier(userId),
@@ -2247,6 +2250,11 @@ async function handleGetAccount(
         webhookCount: webhookSnap.data().count,
       },
       dashboardUrl: 'https://app.exit1.dev/checks',
+      // Agent-signup accounts: alerts are held until the owner claims it.
+      claimed: !accountUnclaimed,
+      ...(accountUnclaimed
+        ? { claimHint: 'Alerts are held until the user opens the claim email from exit1 and claims the account.' }
+        : {}),
       // Agent-onboarded users never see the pricing page, so a free account
       // hits its cap and 5-minute interval floor with no signal that a faster
       // plan exists. Give the agent something concrete to hand off with.
@@ -2299,6 +2307,9 @@ export const publicApi = onRequest({
     let userId: string;
     let keyScopes: string[];
     let isAgentSession = false;
+    // An agent-signup account nobody has claimed: checks are created with
+    // alerts held and test alerts are refused (agent-signup.ts).
+    let accountUnclaimed = false;
     // Checks/folders an API key is restricted to. null = every check (and always for OAuth).
     let access: KeyAccess | null = null;
     let keyExpiresAt: number | null = null;
@@ -2317,6 +2328,7 @@ export const publicApi = onRequest({
       keyScopes = resolved.scopes;
       memberUid = resolved.memberUid;
       isAgentSession = true;
+      accountUnclaimed = resolved.accountUnclaimed;
     } else {
       const hash = await hashApiKey(apiKey);
       let keyEnabled: boolean;
@@ -2493,6 +2505,16 @@ export const publicApi = onRequest({
       return;
     }
     if (isAlertRoute) {
+      // A test alert sends right now, to whatever address the agent set. Until
+      // the owner claims the account that address is unproven, so a test
+      // would make exit1 mail a stranger on an agent's say-so.
+      if (accountUnclaimed && req.method === 'POST' && segments[segments.length - 1] === 'test') {
+        res.status(403).json({
+          error: 'account_unclaimed',
+          message: 'Test alerts are sent once the account is claimed. Ask the user to open the claim email from exit1.',
+        });
+        return;
+      }
       // PATCH /v1/public/alerts/email
       if (req.method === 'PATCH' && segments.length === 4 && segments[3] === 'email') {
         await handleUpdateEmailAlerts(req, res, userId);
@@ -2535,7 +2557,7 @@ export const publicApi = onRequest({
 
     // GET /v1/public/account
     if (req.method === 'GET' && segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'account') {
-      await handleGetAccount(res, userId, keyScopes.length > 0 ? keyScopes : [API_SCOPES.CHECKS_READ], isAgentSession ? null : { expiresAt: keyExpiresAt, access });
+      await handleGetAccount(res, userId, keyScopes.length > 0 ? keyScopes : [API_SCOPES.CHECKS_READ], isAgentSession ? null : { expiresAt: keyExpiresAt, access }, accountUnclaimed);
       return;
     }
 
@@ -2551,7 +2573,7 @@ export const publicApi = onRequest({
 
     // POST /v1/public/checks - Create check
     if (req.method === 'POST' && segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
-      await handleCreateCheck(req, res, userId, keyDocId, reqPath, isAgentSession, access);
+      await handleCreateCheck(req, res, userId, keyDocId, reqPath, isAgentSession, access, accountUnclaimed);
       return;
     }
 

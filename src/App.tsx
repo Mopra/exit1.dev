@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Suspense } from 'react';
 import { lazyWithRetry as lazy } from './utils/lazyWithRetry';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuth, useUser } from '@clerk/clerk-react';
 import CustomSignIn from './components/auth/CustomSignIn';
 import CustomSignUp from './components/auth/CustomSignUp';
 import Layout from './components/layout/Layout';
@@ -59,6 +59,7 @@ const Privacy = lazy(() => import('./pages/Privacy'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Authorize = lazy(() => import('./pages/Authorize'));
+const Claim = lazy(() => import('./pages/Claim'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -75,6 +76,18 @@ function GuestRoute({ children, redirectTo }: { children: React.ReactNode; redir
     const dest = redirectTo || (completed ? '/checks' : '/onboarding');
     return <Layout><Navigate to={dest} replace /></Layout>;
   }
+  return <>{children}</>;
+}
+
+// An account an AI agent created stays "unclaimed" until its owner decides
+// whether the agent keeps access. Every post-auth path funnels through
+// /onboarding, so gating it here catches an owner who signs in normally
+// instead of through the claim email.
+function UnclaimedAgentGate({ children }: { children: React.ReactNode }) {
+  const { user, isLoaded } = useUser();
+  if (!isLoaded) return null;
+  const agentSignup = user?.publicMetadata?.agentSignup as { status?: string } | undefined;
+  if (agentSignup?.status === 'unclaimed') return <Navigate to="/claim" replace />;
   return <>{children}</>;
 }
 
@@ -292,7 +305,9 @@ function App() {
                 path="/onboarding"
                 element={
                   <AuthGuard>
-                    <Onboarding />
+                    <UnclaimedAgentGate>
+                      <Onboarding />
+                    </UnclaimedAgentGate>
                   </AuthGuard>
                 }
               />
@@ -300,6 +315,10 @@ function App() {
                   visitor arrives from an external AI tool mid-flow and is sent
                   straight back out again. AuthGuard here is what turns an
                   unauthenticated agent connection into a Clerk sign-up. */}
+              {/* Claim page for agent-created accounts. Deliberately outside
+                  AuthGuard: the owner arrives signed out, carrying a sign-in
+                  ticket from the claim email that the page itself redeems. */}
+              <Route path="/claim" element={<Claim />} />
               <Route
                 path="/authorize/:requestId"
                 element={

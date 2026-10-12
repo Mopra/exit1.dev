@@ -262,11 +262,14 @@ export interface CoverageRows {
 export async function loadCoverageRows(): Promise<CoverageRows> {
   const [inputs, usersSnap] = await Promise.all([
     loadCoverageInputs(),
-    firestore.collection("users").select("tier", "onboarding", "lifecycle").get(),
+    firestore.collection("users").select("tier", "onboarding", "lifecycle", "agentSignup").get(),
   ]);
 
   const users = new Map<string, CoverageUser>();
   for (const doc of usersSnap.docs) {
+    // An agent-created account nobody has claimed yet: its address isn't
+    // proven to be the owner's, so the lifecycle mailer leaves it alone.
+    if ((doc.get("agentSignup") as { status?: string } | undefined)?.status === "unclaimed") continue;
     const rawOnboarding = doc.get("onboarding") as
       | { sources?: unknown; useCases?: unknown; teamSize?: unknown }
       | undefined;

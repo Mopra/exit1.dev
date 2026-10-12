@@ -72,6 +72,7 @@ export async function triggerDomainAlert(
 ): Promise<void> {
   const domainExpiry = check.domainExpiry;
   if (!domainExpiry) return;
+  if (check.agentUnclaimed) return; // see Website.agentUnclaimed
 
   const event: WebhookEvent = daysUntilExpiry <= 0 ? 'domain_expired' : 'domain_expiring';
 
@@ -118,6 +119,7 @@ export async function triggerDomainRenewalAlert(
 ): Promise<void> {
   const domainExpiry = check.domainExpiry;
   if (!domainExpiry) return;
+  if (check.agentUnclaimed) return; // see Website.agentUnclaimed
 
   const event: WebhookEvent = 'domain_renewed';
 

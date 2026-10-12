@@ -68,6 +68,7 @@ interface ClerkUserCreatedEvent {
     first_name: string | null;
     last_name: string | null;
     created_at: number;
+    public_metadata?: Record<string, unknown>;
   };
   type: 'user.created';
 }
@@ -242,6 +243,155 @@ async function pushTierProperty(userId: string, tier: UserTier): Promise<void> {
  *   - user.created → adds to Resend Contacts (with signup_date + plan_tier + topic opt-in)
  *   - subscription.* → syncs tier from Clerk billing to Firestore + Resend plan_tier property
  */
+/**
+ * Mirror a new signup into the email providers: Resend contact, Day3 contact,
+ * topic opt-ins and the `user.created` automation event. Runs from the Clerk
+ * webhook for normal signups, and from the claim for agent-created accounts,
+ * which are held back until their owner proves they own the address.
+ */
+export async function syncSignupToEmailProviders(params: {
+  userId: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  createdAt: number;
+}): Promise<{ success: boolean; contactId?: string; error?: string }> {
+  const { userId, email, firstName, lastName, createdAt } = params;
+  // New signups always start on free tier — onboarding data isn't collected yet,
+  // so we only set the two properties we know for certain.
+  const signupProperties = buildPropertiesForUser({
+    signupDate: formatSignupDate(createdAt),
+    tier: 'free',
+    onboarding: null,
+  });
+
+  const result = await addContactToResend(
+    email,
+    firstName,
+    lastName,
+    userId,
+    signupProperties,
+  );
+
+  // Mirror the new contact into Day3. Independent of the Resend result — a
+  // Resend outage must not leave Day3 missing the user. Day3 topics default to
+  // subscribed, so there's no topic write to make here.
+  const day3ApiKey = getDay3ApiKey();
+  let day3Ok = false;
+  if (day3ApiKey) {
+    try {
+      const day3Result = await upsertDay3Contact(day3ApiKey, {
+        email: email,
+        firstName: firstName,
+        lastName: lastName,
+        attributes: signupProperties,
+      });
+      day3Ok = day3Result.success;
+      if (!day3Result.success) {
+        logger.warn('Failed to add contact to Day3', {
+          email: email,
+          userId: userId,
+          error: day3Result.error,
+        });
+      } else {
+        logger.info('Contact added to Day3', {
+          email: email,
+          userId: userId,
+        });
+      }
+    } catch (e) {
+      logger.warn('Exception adding contact to Day3', {
+        email: email,
+        userId: userId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  // Opt new users into every topic. Resend topic defaults already cover this
+  // for new contacts, but explicit records give the future preference center
+  // real data to render.
+  if (result.success) {
+    const apiKey = getResendApiKey();
+    if (apiKey) {
+      const resend = new Resend(apiKey);
+      try {
+        const topicResult = await syncContactTopics(
+          resend,
+          email,
+        );
+        if (!topicResult.success) {
+          logger.warn('Failed to opt new user into topics', {
+            email: email,
+            error: topicResult.error,
+          });
+        }
+      } catch (topicErr) {
+        logger.warn('Exception opting new user into topics', {
+          email: email,
+          error: topicErr instanceof Error ? topicErr.message : String(topicErr),
+        });
+      }
+
+      // Fire the user.created automation event. Must run after the contact
+      // exists in Resend so any automation step that reads contact properties
+      // has data to work with.
+      const eventResult = await triggerResendEvent(
+        apiKey,
+        email,
+        'user.created',
+        {
+          userId: userId,
+          signupDate: formatSignupDate(createdAt),
+        },
+      );
+      if (!eventResult.success) {
+        logger.warn('Failed to trigger Resend user.created event', {
+          email: email,
+          error: eventResult.error,
+        });
+      } else {
+        logger.info('Triggered Resend user.created event', {
+          email: email,
+          userId: userId,
+        });
+      }
+    }
+
+    // Stamp the sync timestamps so the bulk resyncs skip this user for 30 days.
+    // Per-provider so one provider failing doesn't suppress the other's backfill.
+    try {
+      await firestore.collection('users').doc(userId).set(
+        {
+          resendPropertiesSyncedAt: Date.now(),
+          ...(day3Ok ? { day3SyncedAt: Date.now() } : {}),
+        },
+        { merge: true },
+      );
+    } catch (e) {
+      logger.debug('Failed to stamp contact sync timestamps on user.created', {
+        userId: userId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  } else if (day3Ok) {
+    // Resend failed but Day3 landed — still record the Day3 stamp.
+    try {
+      await firestore.collection('users').doc(userId).set(
+        { day3SyncedAt: Date.now() },
+        { merge: true },
+      );
+    } catch (e) {
+      logger.debug('Failed to stamp day3SyncedAt on user.created', {
+        userId: userId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  return result;
+}
+
 export const clerkWebhook = onRequest({
   secrets: [RESEND_API_KEY, DAY3_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
   cors: false,
@@ -426,137 +576,21 @@ export const clerkWebhook = onRequest({
     lastName: user.last_name,
   });
 
-  // New signups always start on free tier — onboarding data isn't collected yet,
-  // so we only set the two properties we know for certain.
-  const signupProperties = buildPropertiesForUser({
-    signupDate: formatSignupDate(user.created_at),
-    tier: 'free',
-    onboarding: null,
+  // Agent-created accounts stay out of the email providers until claimed:
+  // the address hasn't been proven to belong to whoever asked for the account.
+  if ((user.public_metadata as { agentSignup?: { status?: string } } | undefined)?.agentSignup?.status === 'unclaimed') {
+    logger.info('Skipping provider sync for unclaimed agent signup', { userId: user.id });
+    res.status(200).json({ received: true, processed: false, reason: 'agent_signup_unclaimed' });
+    return;
+  }
+
+  const result = await syncSignupToEmailProviders({
+    userId: user.id,
+    email: primaryEmail.email_address,
+    firstName: user.first_name,
+    lastName: user.last_name,
+    createdAt: user.created_at,
   });
-
-  const result = await addContactToResend(
-    primaryEmail.email_address,
-    user.first_name,
-    user.last_name,
-    user.id,
-    signupProperties,
-  );
-
-  // Mirror the new contact into Day3. Independent of the Resend result — a
-  // Resend outage must not leave Day3 missing the user. Day3 topics default to
-  // subscribed, so there's no topic write to make here.
-  const day3ApiKey = getDay3ApiKey();
-  let day3Ok = false;
-  if (day3ApiKey) {
-    try {
-      const day3Result = await upsertDay3Contact(day3ApiKey, {
-        email: primaryEmail.email_address,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        attributes: signupProperties,
-      });
-      day3Ok = day3Result.success;
-      if (!day3Result.success) {
-        logger.warn('Failed to add contact to Day3', {
-          email: primaryEmail.email_address,
-          userId: user.id,
-          error: day3Result.error,
-        });
-      } else {
-        logger.info('Contact added to Day3', {
-          email: primaryEmail.email_address,
-          userId: user.id,
-        });
-      }
-    } catch (e) {
-      logger.warn('Exception adding contact to Day3', {
-        email: primaryEmail.email_address,
-        userId: user.id,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
-  // Opt new users into every topic. Resend topic defaults already cover this
-  // for new contacts, but explicit records give the future preference center
-  // real data to render.
-  if (result.success) {
-    const apiKey = getResendApiKey();
-    if (apiKey) {
-      const resend = new Resend(apiKey);
-      try {
-        const topicResult = await syncContactTopics(
-          resend,
-          primaryEmail.email_address,
-        );
-        if (!topicResult.success) {
-          logger.warn('Failed to opt new user into topics', {
-            email: primaryEmail.email_address,
-            error: topicResult.error,
-          });
-        }
-      } catch (topicErr) {
-        logger.warn('Exception opting new user into topics', {
-          email: primaryEmail.email_address,
-          error: topicErr instanceof Error ? topicErr.message : String(topicErr),
-        });
-      }
-
-      // Fire the user.created automation event. Must run after the contact
-      // exists in Resend so any automation step that reads contact properties
-      // has data to work with.
-      const eventResult = await triggerResendEvent(
-        apiKey,
-        primaryEmail.email_address,
-        'user.created',
-        {
-          userId: user.id,
-          signupDate: formatSignupDate(user.created_at),
-        },
-      );
-      if (!eventResult.success) {
-        logger.warn('Failed to trigger Resend user.created event', {
-          email: primaryEmail.email_address,
-          error: eventResult.error,
-        });
-      } else {
-        logger.info('Triggered Resend user.created event', {
-          email: primaryEmail.email_address,
-          userId: user.id,
-        });
-      }
-    }
-
-    // Stamp the sync timestamps so the bulk resyncs skip this user for 30 days.
-    // Per-provider so one provider failing doesn't suppress the other's backfill.
-    try {
-      await firestore.collection('users').doc(user.id).set(
-        {
-          resendPropertiesSyncedAt: Date.now(),
-          ...(day3Ok ? { day3SyncedAt: Date.now() } : {}),
-        },
-        { merge: true },
-      );
-    } catch (e) {
-      logger.debug('Failed to stamp contact sync timestamps on user.created', {
-        userId: user.id,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  } else if (day3Ok) {
-    // Resend failed but Day3 landed — still record the Day3 stamp.
-    try {
-      await firestore.collection('users').doc(user.id).set(
-        { day3SyncedAt: Date.now() },
-        { merge: true },
-      );
-    } catch (e) {
-      logger.debug('Failed to stamp day3SyncedAt on user.created', {
-        userId: user.id,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
 
   if (result.success) {
     res.status(200).json({ received: true, processed: true, contactId: result.contactId });

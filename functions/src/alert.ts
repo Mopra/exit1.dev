@@ -336,7 +336,9 @@ export {
  * rare. Fails open on read errors — dropping a real DOWN alert is worse
  * than sending a spurious one.
  */
-async function verifyAlertable(website: Website): Promise<'check_disabled' | 'maintenance_mode' | null> {
+async function verifyAlertable(
+  website: Website
+): Promise<'check_disabled' | 'maintenance_mode' | 'account_unclaimed' | null> {
   if (website.disabled) return 'check_disabled';
   try {
     const snap = await firestore.collection('checks').doc(website.id).get();
@@ -347,6 +349,9 @@ async function verifyAlertable(website: Website): Promise<'check_disabled' | 'ma
       return 'check_disabled';
     }
     if (fresh?.maintenanceMode === true) return 'maintenance_mode';
+    // Read fresh, not from the in-memory copy: a claim clears the flag and
+    // the very next alert must go out even if check_edits hasn't landed yet.
+    if (fresh?.agentUnclaimed === true) return 'account_unclaimed';
     // While we have the fresh doc, sync severity onto the in-memory copy —
     // otherwise a stale copy maps the alert priority (e.g. Pushover) from a
     // value the user has already changed.
@@ -721,7 +726,7 @@ export async function triggerAlert(
 
 export type SSLAlertResult = {
   delivered: boolean;
-  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | 'check_disabled';
+  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | 'check_disabled' | 'account_unclaimed';
   // The value the caller should persist to check.sslAlertedState. Undefined
   // means "leave it unchanged" — e.g. nothing was delivered and no recent alert
   // exists, so the transition must be retried on the next evaluation. Set only

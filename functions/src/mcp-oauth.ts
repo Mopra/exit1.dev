@@ -38,6 +38,15 @@ import {
   verifyPkce,
 } from "./mcp-oauth-policy";
 import { CimdError, resolveCimdClient } from "./mcp-cimd";
+import { checkAgentToken, handleAgentSignup } from "./agent-signup";
+import {
+  CLERK_SECRET_KEY_PROD,
+  CLERK_SECRET_KEY_DEV,
+  RESEND_API_KEY,
+  RESEND_FROM,
+  DAY3_API_KEY,
+  DAY3_FROM,
+} from "./env";
 
 // ── Constants ──
 
@@ -127,6 +136,8 @@ export interface OAuthTokenDoc {
   lastUsedAt?: number;
   /** Set on refresh tokens so rotating one can invalidate its predecessor's family. */
   familyId?: string;
+  /** Minted by agent signup; only usable while agent-signup.ts says so. */
+  provisional?: boolean;
 }
 
 // ── Helpers ──
@@ -169,6 +180,7 @@ async function issueTokenPair(params: {
   clientName: string;
   scopes: ApiScope[];
   familyId?: string;
+  provisional?: boolean;
 }): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
   const now = Date.now();
   const accessToken = `ek_at_${randomBytes(32).toString("hex")}`;
@@ -191,6 +203,7 @@ async function issueTokenPair(params: {
     expiresAt: now + ACCESS_TOKEN_TTL_MS,
     revoked: false,
     familyId,
+    ...(params.provisional ? { provisional: true } : {}),
   } satisfies OAuthTokenDoc);
 
   batch.set(refreshRef, {
@@ -205,6 +218,7 @@ async function issueTokenPair(params: {
     expiresAt: now + REFRESH_TOKEN_TTL_MS,
     revoked: false,
     familyId,
+    ...(params.provisional ? { provisional: true } : {}),
   } satisfies OAuthTokenDoc);
 
   await batch.commit();
@@ -223,6 +237,8 @@ export interface ResolvedBearer {
   scopes: ApiScope[];
   clientId: string;
   tokenDocId: string;
+  /** The account is an agent signup nobody has claimed yet (alerts are held). */
+  accountUnclaimed: boolean;
 }
 
 // Every MCP tool call validates the token twice — once at the MCP endpoint, once
@@ -275,12 +291,20 @@ export async function resolveBearerToken(token: string): Promise<ResolvedBearer 
     return null;
   }
 
+  let accountUnclaimed = false;
+  if (data.provisional) {
+    const gate = await checkAgentToken(data.userId);
+    if (!gate.allowed) return null;
+    accountUnclaimed = gate.unclaimed;
+  }
+
   const resolved: ResolvedBearer = {
     userId: data.userId,
     memberUid: data.memberUid ?? null,
     scopes: (data.scopes || []) as ApiScope[],
     clientId: data.clientId,
     tokenDocId: doc.id,
+    accountUnclaimed,
   };
 
   // Never cache past the token's own expiry.
@@ -647,6 +671,7 @@ async function handleRefreshTokenGrant(
     clientName: data.clientName,
     scopes: data.scopes,
     familyId: data.familyId,
+    provisional: data.provisional,
   });
 
   sendJson(res, 200, {
@@ -732,6 +757,9 @@ function authorizationServerMetadata() {
     registration_endpoint: `${ISSUER}/oauth/register`,
     revocation_endpoint: `${ISSUER}/oauth/revoke`,
     client_id_metadata_document_supported: true,
+    // Not an OAuth standard: lets an agent with no account create one for its
+    // user and get a token in a single call. See agent-signup.ts.
+    exit1_agent_signup_endpoint: `${ISSUER}/oauth/agent-signup`,
     authorization_response_iss_parameter_supported: true,
     scopes_supported: ADVERTISED_SCOPES,
     response_types_supported: ["code"],
@@ -754,7 +782,11 @@ function protectedResourceMetadata() {
 
 // ── Function export ──
 
-export const mcpOauth = onRequest({ maxInstances: 10 }, async (req, res) => {
+export const mcpOauth = onRequest({
+  maxInstances: 10,
+  // Agent signup creates the Clerk user and sends the claim email.
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM],
+}, async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Protocol-Version");
@@ -788,6 +820,10 @@ export const mcpOauth = onRequest({ maxInstances: 10 }, async (req, res) => {
     }
     if (req.method === "POST" && path === "/oauth/token") {
       await handleToken(req, res);
+      return;
+    }
+    if (req.method === "POST" && path === "/oauth/agent-signup") {
+      await handleAgentSignup(req, res, issueTokenPair);
       return;
     }
     if (req.method === "POST" && path === "/oauth/revoke") {

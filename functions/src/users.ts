@@ -32,7 +32,7 @@ const BATCH_MAX = 500;
  * Delete all Firestore data associated with a user.
  * Shared by self-service deleteUserAccount and admin deleteUser/bulkDeleteUsers.
  */
-async function deleteAllUserData(userId: string): Promise<{
+export async function deleteAllUserData(userId: string): Promise<{
   checks: number;
   webhooks: number;
   apiKeys: number;
@@ -51,6 +51,8 @@ async function deleteAllUserData(userId: string): Promise<{
     teamOwnedSnap,
     teamJoinedSnap,
     teamInvitesSnap,
+    oauthTokensSnap,
+    oauthCodesSnap,
   ] = await Promise.all([
     firestore.collection("checks").where("userId", "==", userId).get(),
     firestore.collection("webhooks").where("userId", "==", userId).get(),
@@ -64,6 +66,10 @@ async function deleteAllUserData(userId: string): Promise<{
     firestore.collection("teamMembers").where("ownerUid", "==", userId).get(),
     firestore.collection("teamMembers").where("memberUid", "==", userId).get(),
     firestore.collection("teamInvites").where("ownerUid", "==", userId).get(),
+    // Agent (MCP OAuth) credentials. Without these a deleted account's agent
+    // tokens survived the deletion.
+    firestore.collection("mcp_oauth_tokens").where("userId", "==", userId).get(),
+    firestore.collection("mcp_oauth_codes").where("userId", "==", userId).get(),
   ]);
 
   // 2. Collect all document refs to delete
@@ -73,6 +79,8 @@ async function deleteAllUserData(userId: string): Promise<{
   checksSnap.docs.forEach(doc => allRefs.push(doc.ref));
   webhooksSnap.docs.forEach(doc => allRefs.push(doc.ref));
   apiKeysSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  oauthTokensSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  oauthCodesSnap.docs.forEach(doc => allRefs.push(doc.ref));
   statusPagesSnap.docs.forEach(doc => allRefs.push(doc.ref));
   notificationsSnap.docs.forEach(doc => allRefs.push(doc.ref));
   manualLogsSnap.docs.forEach(doc => allRefs.push(doc.ref));

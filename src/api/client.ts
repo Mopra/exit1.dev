@@ -20,6 +20,7 @@ import type {
   CreateApiKeyOptions,
   OrganizationBillingProfile,
   McpAuthorizationRequest,
+  AgentClaim,
   McpConnection,
   EmailProviderSettingsInput,
   WebhookEvent,
@@ -527,6 +528,19 @@ export class Exit1ApiClient {
       "getMcpAuthorizationRequest",
       { requestId },
       'Failed to load the authorization request',
+    );
+  }
+
+  getAgentClaim() {
+    return this.callUnwrap<AgentClaim>("getAgentClaim", {}, 'Failed to load this account');
+  }
+
+  /** Take ownership of an agent-created account, keeping or cutting the agent's access. */
+  claimAgentAccount(keepAgentAccess: boolean, emailAlerts: boolean) {
+    return this.call<{ success: boolean }>(
+      "claimAgentAccount",
+      { keepAgentAccess, emailAlerts },
+      'Failed to claim the account',
     );
   }
 

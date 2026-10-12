@@ -112,7 +112,7 @@ export interface AlertContext {
 
 export type AlertResult = {
   delivered: boolean;
-  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | 'check_disabled';
+  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | 'check_disabled' | 'account_unclaimed';
   emailNeedsRetry?: boolean;
   smsNeedsRetry?: boolean;
   /** Webhooks were never dispatched for this transition (e.g. suppressed by

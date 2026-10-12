@@ -78,6 +78,12 @@ const JOBS: JobSpec[] = [
     // @ts-expect-error: functions/lib has no .d.ts
     run: async () => (await import('../../functions/lib/lifecycle.js')).runScheduledLifecycleSweep(),
   },
+  {
+    // Pauses agent-created accounts left unclaimed for 7 days, deletes them at 30.
+    name: 'agentSignupExpiry', hours: [5], minute: 25, leaseMs: 30 * MIN,
+    // @ts-expect-error: functions/lib has no .d.ts
+    run: async () => (await import('../../functions/lib/agent-signup.js')).runAgentSignupExpiry(),
+  },
 ];
 
 /** Start of the most recent slot at or before `now`, in ms. */
