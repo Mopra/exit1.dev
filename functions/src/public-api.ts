@@ -12,6 +12,7 @@ import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-def
 import { CheckRegion } from "./check-region";
 import { hasScope, API_SCOPES, type ApiScope } from "./api-scopes";
 import { resolveBearerToken, buildWwwAuthenticate, MCP_TOKENS_COLLECTION } from "./mcp-oauth";
+import { getMemberAccess } from "./team-access";
 import {
   normalizeCheckType,
   getCanonicalUrlKeySafe,
@@ -105,6 +106,8 @@ interface CachedApiKey {
   scopes: string[];
   keyExpiresAt: number | null;
   access: KeyAccess | null;
+  /** Team member who minted the key inside the owner's account, if any. */
+  createdByUid: string | null;
   /** When this cache entry goes stale. */
   expiresAt: number;
 }
@@ -2286,6 +2289,8 @@ export const publicApi = onRequest({
     // Checks/folders an API key is restricted to. null = every check (and always for OAuth).
     let access: KeyAccess | null = null;
     let keyExpiresAt: number | null = null;
+    // Team member who minted this key or token inside the owner's account.
+    let memberUid: string | null = null;
 
     if (bearerToken) {
       const resolved = await resolveBearerToken(bearerToken);
@@ -2297,6 +2302,7 @@ export const publicApi = onRequest({
       principalId = resolved.tokenDocId;
       userId = resolved.userId;
       keyScopes = resolved.scopes;
+      memberUid = resolved.memberUid;
       isAgentSession = true;
     } else {
       const hash = await hashApiKey(apiKey);
@@ -2310,6 +2316,7 @@ export const publicApi = onRequest({
         keyScopes = cachedKey.scopes;
         keyExpiresAt = cachedKey.keyExpiresAt;
         access = cachedKey.access;
+        memberUid = cachedKey.createdByUid;
       } else {
         const keySnap = await firestore
           .collection(API_KEYS_COLLECTION)
@@ -2330,8 +2337,9 @@ export const publicApi = onRequest({
         keyScopes = key.scopes || [];
         keyExpiresAt = typeof key.expiresAt === 'number' ? key.expiresAt : null;
         access = key.access ? readStoredAccess(key.access) : null;
+        memberUid = key.createdByUid || null;
 
-        setCachedApiKey(hash, { keyDocId: principalId, userId, enabled: keyEnabled, scopes: keyScopes, keyExpiresAt, access });
+        setCachedApiKey(hash, { keyDocId: principalId, userId, enabled: keyEnabled, scopes: keyScopes, keyExpiresAt, access, createdByUid: memberUid });
       }
 
       if (!keyEnabled) {
@@ -2342,6 +2350,21 @@ export const publicApi = onRequest({
       if (isKeyExpired(keyExpiresAt, Date.now())) {
         res.status(401).json({ error: 'API key expired' });
         return;
+      }
+    }
+
+    // A key or token a teammate minted inside someone's account is only as good
+    // as their membership: removed, or the owner left Pro, and it stops. Keys
+    // outlive any session, so this runs on every request (cached a minute).
+    // Viewers keep read access only, whatever scopes the key was minted with.
+    if (memberUid && memberUid !== userId) {
+      const member = await getMemberAccess(userId, memberUid);
+      if (!member.active) {
+        res.status(401).json({ error: 'This credential belonged to a team member who no longer has access to the account' });
+        return;
+      }
+      if (member.role === 'viewer') {
+        keyScopes = keyScopes.filter((scope) => scope.endsWith(':read'));
       }
     }
 

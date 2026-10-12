@@ -9,13 +9,11 @@ import { normalizeCheckFilter } from "./webhook-events";
 import { notifySettingsEdit } from "./check-helpers";
 import { getActiveSuppressions, clearEmailSuppression } from "./email-suppression";
 import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
+import { resolveAccountId } from "./team-access";
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
 
   const { recipients, recipient, enabled, events, checkFilter, emailFormat } = request.data || {};
 
@@ -81,10 +79,7 @@ export const saveEmailSettings = onCall(async (request) => {
  * overrides are untouched.
  */
 export const enableEmailAlertsForAllChecks = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
 
   const { recipients, events } = (request.data || {}) as { recipients?: unknown; events?: unknown };
   const incomingRecipients = Array.isArray(recipients)
@@ -139,10 +134,7 @@ export const enableEmailAlertsForAllChecks = onCall(async (request) => {
 export const updateEmailPerCheck = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
   const { checkId, enabled, events, recipients } = request.data || {};
   if (!checkId || typeof checkId !== 'string') {
     throw new HttpsError('invalid-argument', 'checkId is required');
@@ -242,10 +234,7 @@ export const updateEmailPerCheck = onCall({
 export const bulkUpdateEmailPerCheck = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, 'write');
   
   const { updates } = request.data || {};
   if (!Array.isArray(updates) || updates.length === 0) {
@@ -361,10 +350,7 @@ export const bulkUpdateEmailPerCheck = onCall({
 
 // Update per-folder overrides (enable/disable email alerts for all checks in a folder)
 export const updateEmailPerFolder = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
   const { folderPath, enabled, events, recipients } = request.data || {};
   if (!folderPath || typeof folderPath !== 'string') {
     throw new HttpsError('invalid-argument', 'folderPath is required');
@@ -486,10 +472,7 @@ export const updateEmailPerFolder = onCall(async (request) => {
 
 // Get email settings
 export const getEmailSettings = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, 'read');
   const doc = await firestore.collection('emailSettings').doc(uid).get();
   if (!doc.exists) {
     return { success: true, data: null };
@@ -504,10 +487,7 @@ const getWindowStart = (nowMs: number, windowMs: number): number => {
 export const getEmailUsage = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'read');
 
   const now = Date.now();
   const hourlyWindowMs = CONFIG.EMAIL_USER_BUDGET_WINDOW_MS;
@@ -571,10 +551,7 @@ function getAllConfiguredRecipients(settings: EmailSettings): string[] {
 // Return the caller's recipients that are currently suppressed (bouncing),
 // so the Emails page can surface a warning banner.
 export const getEmailSuppressions = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'read');
 
   const snap = await firestore.collection('emailSettings').doc(uid).get();
   if (!snap.exists) {
@@ -602,10 +579,7 @@ export const getEmailSuppressions = onCall(async (request) => {
 // in the caller's own settings, so users can't clear suppressions for
 // recipients they don't use.
 export const resumeSuppressedEmail = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
   const { email } = request.data || {};
   if (!email || typeof email !== 'string') {
     throw new HttpsError('invalid-argument', 'email is required');
@@ -641,10 +615,7 @@ function getEmailRecipients(settings: EmailSettings): string[] {
 export const sendTestEmail = onCall({
   secrets: [RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
 
   try {
     const snap = await firestore.collection('emailSettings').doc(uid).get();

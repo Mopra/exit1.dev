@@ -5,6 +5,7 @@ import { firestore } from "./init";
 import { Website } from "./types";
 import { buildTargetMetadataBestEffort, resolveTarget, TargetMetadata } from "./target-metadata";
 import { CONFIG } from "./config";
+import { resolveAccountId } from "./team-access";
 
 const FIRESTORE_BATCH_SIZE = 400;
 const MAX_PARALLEL_LOOKUPS = 20;
@@ -294,10 +295,7 @@ export const refreshTargetMetadata = onSchedule(
 );
 
 export const refreshCheckMetadata = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
 
   const checkId = typeof request.data?.checkId === "string" ? request.data.checkId : "";
   if (!checkId) {

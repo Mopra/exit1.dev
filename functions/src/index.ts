@@ -136,6 +136,19 @@ export {
 // Organization management functions
 export { updateOrganizationBillingProfile } from './organizations';
 
+// Team members (Pro): invites, roles, leaving
+export {
+  getTeamContext,
+  getTeam,
+  inviteTeamMember,
+  revokeTeamInvite,
+  acceptTeamInvite,
+  declineTeamInvite,
+  updateTeamMemberRole,
+  removeTeamMember,
+  leaveTeam,
+} from './team';
+
 // Status pages
 export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } from './status-pages';
 

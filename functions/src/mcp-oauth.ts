@@ -24,6 +24,7 @@ import { createHash, randomBytes } from "crypto";
 import { firestore } from "./init";
 import { FixedWindowRateLimiter, getClientIp } from "./rate-limit";
 import { type ApiScope } from "./api-scopes";
+import { resolveAccount } from "./team-access";
 import {
   DEFAULT_MCP_SCOPES,
   appendQuery,
@@ -87,6 +88,8 @@ interface AuthCodeDoc {
   codeHash: string;
   clientId: string;
   userId: string;
+  /** Team member who consented inside the owner's account (userId), if any. */
+  memberUid?: string | null;
   redirectUri: string;
   codeChallenge: string;
   scopes: ApiScope[];
@@ -100,6 +103,8 @@ export interface OAuthTokenDoc {
   tokenHash: string;
   type: "access" | "refresh";
   userId: string;
+  /** Team member the token acts for inside the owner's account (userId), if any. */
+  memberUid?: string | null;
   clientId: string;
   clientName: string;
   scopes: ApiScope[];
@@ -146,6 +151,7 @@ function oauthError(
 
 async function issueTokenPair(params: {
   userId: string;
+  memberUid?: string | null;
   clientId: string;
   clientName: string;
   scopes: ApiScope[];
@@ -164,6 +170,7 @@ async function issueTokenPair(params: {
     tokenHash: hashToken(accessToken),
     type: "access",
     userId: params.userId,
+    memberUid: params.memberUid ?? null,
     clientId: params.clientId,
     clientName: params.clientName,
     scopes: params.scopes,
@@ -177,6 +184,7 @@ async function issueTokenPair(params: {
     tokenHash: hashToken(refreshToken),
     type: "refresh",
     userId: params.userId,
+    memberUid: params.memberUid ?? null,
     clientId: params.clientId,
     clientName: params.clientName,
     scopes: params.scopes,
@@ -197,6 +205,8 @@ async function issueTokenPair(params: {
 
 export interface ResolvedBearer {
   userId: string;
+  /** Team member the token acts for; the public API re-checks their membership. */
+  memberUid: string | null;
   scopes: ApiScope[];
   clientId: string;
   tokenDocId: string;
@@ -254,6 +264,7 @@ export async function resolveBearerToken(token: string): Promise<ResolvedBearer 
 
   const resolved: ResolvedBearer = {
     userId: data.userId,
+    memberUid: data.memberUid ?? null,
     scopes: (data.scopes || []) as ApiScope[],
     clientId: data.clientId,
     tokenDocId: doc.id,
@@ -516,6 +527,7 @@ async function handleAuthorizationCodeGrant(
 
   const tokens = await issueTokenPair({
     userId: codeData.userId,
+    memberUid: codeData.memberUid ?? null,
     clientId,
     clientName,
     scopes: codeData.scopes,
@@ -579,6 +591,7 @@ async function handleRefreshTokenGrant(
 
   const tokens = await issueTokenPair({
     userId: data.userId,
+    memberUid: data.memberUid ?? null,
     clientId: data.clientId,
     clientName: data.clientName,
     scopes: data.scopes,
@@ -631,15 +644,16 @@ async function revokeTokensForFamily(familyId: string | undefined, userId: strin
   invalidateBearerCacheForUser(userId);
 }
 
-async function revokeTokensForClientAndUser(clientId: string, userId: string): Promise<void> {
+async function revokeTokensForClientAndUser(clientId: string, userId: string, memberUid?: string): Promise<void> {
   const snap = await firestore
     .collection(TOKENS_COLLECTION)
     .where("userId", "==", userId)
     .where("clientId", "==", clientId)
     .get();
-  if (snap.empty) return;
+  const docs = memberUid ? snap.docs.filter((d) => (d.data() as OAuthTokenDoc).memberUid === memberUid) : snap.docs;
+  if (docs.length === 0) return;
   const batch = firestore.batch();
-  snap.docs.forEach((d) => batch.update(d.ref, { revoked: true }));
+  docs.forEach((d) => batch.update(d.ref, { revoked: true }));
   await batch.commit();
   invalidateBearerCacheForUser(userId);
 }
@@ -779,8 +793,11 @@ export const getMcpAuthorizationRequest = onCall({ cors: true, maxInstances: 10 
  * code and returns the URL the browser should be sent to.
  */
 export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  // A teammate connecting from inside someone's account grants the agent that
+  // account, tagged with who consented so removal can cut it off.
+  const account = await resolveAccount(request, "read");
+  const uid = account.accountId;
+  const memberUid = account.isMember ? account.actorUid : null;
 
   const requestId = typeof request.data?.requestId === "string" ? request.data.requestId : "";
   const approved = request.data?.approved !== false;
@@ -813,6 +830,7 @@ export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, 
     codeHash: hashToken(code),
     clientId: data.clientId,
     userId: uid,
+    memberUid,
     redirectUri: data.redirectUri,
     codeChallenge: data.codeChallenge,
     scopes: data.scopes,
@@ -822,8 +840,9 @@ export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, 
   } satisfies AuthCodeDoc);
 
   // Attribution: first MCP grant marks where this user came from. Never
-  // overwritten — a Pro user connecting an agent later is not an MCP signup.
-  const userRef = firestore.collection("users").doc(uid);
+  // overwritten: a Pro user connecting an agent later is not an MCP signup.
+  // Stamped on the person who consented, not the account they consented in.
+  const userRef = firestore.collection("users").doc(account.actorUid);
   const userSnap = await userRef.get();
   const existingOrigin = userSnap.exists ? (userSnap.data() || {}).acquisitionOrigin : undefined;
   await userRef.set(
@@ -835,7 +854,7 @@ export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, 
     { merge: true }
   );
 
-  logger.info("MCP authorization approved", { uid, clientId: data.clientId, scopes: data.scopes });
+  logger.info("MCP authorization approved", { uid, memberUid, clientId: data.clientId, scopes: data.scopes });
 
   return {
     success: true,
@@ -845,8 +864,9 @@ export const approveMcpAuthorization = onCall({ cors: true, maxInstances: 10 }, 
 
 /** List the agent connections a user has authorized, for the dashboard. */
 export const listMcpConnections = onCall({ cors: true, maxInstances: 10 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  // Owners see every connection in their account; a teammate sees their own.
+  const account = await resolveAccount(request, "read");
+  const uid = account.accountId;
 
   const snap = await firestore
     .collection(TOKENS_COLLECTION)
@@ -861,6 +881,7 @@ export const listMcpConnections = onCall({ cors: true, maxInstances: 10 }, async
   for (const doc of snap.docs) {
     const data = doc.data() as OAuthTokenDoc;
     if (data.expiresAt <= now) continue;
+    if (account.isMember && data.memberUid !== account.actorUid) continue;
     const existing = byClient.get(data.clientId);
     if (!existing || data.createdAt > existing.createdAt) {
       byClient.set(data.clientId, {
@@ -881,13 +902,14 @@ export const listMcpConnections = onCall({ cors: true, maxInstances: 10 }, async
 
 /** Revoke every token issued to one client for the calling user. */
 export const revokeMcpConnection = onCall({ cors: true, maxInstances: 10 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  const account = await resolveAccount(request, "read");
+  const uid = account.accountId;
 
   const clientId = typeof request.data?.clientId === "string" ? request.data.clientId : "";
   if (!clientId) throw new HttpsError("invalid-argument", "clientId is required");
 
-  await revokeTokensForClientAndUser(clientId, uid);
+  // A teammate can only disconnect their own agents.
+  await revokeTokensForClientAndUser(clientId, uid, account.isMember ? account.actorUid : undefined);
   logger.info("MCP connection revoked", { uid, clientId });
   return { success: true };
 });

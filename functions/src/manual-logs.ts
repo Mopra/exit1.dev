@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
+import { resolveAccount, resolveAccountId } from "./team-access";
 
 const MANUAL_LOG_MESSAGE_MAX = 2000;
 const MANUAL_LOG_LIMIT = 500;
@@ -45,10 +46,7 @@ function normalizeTimestamp(value: unknown): number {
 }
 
 export const getManualLogs = onCall({ cors: true }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const { websiteId, startDate, endDate, limit } = request.data || {};
   if (!websiteId) {
@@ -113,10 +111,7 @@ export const getManualLogs = onCall({ cors: true }, async (request) => {
 });
 
 export const addManualLog = onCall({ cors: true }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const { accountId: uid, actorUid } = await resolveAccount(request, "write");
 
   const { websiteId, message, timestamp, status } = request.data || {};
   if (!websiteId) {
@@ -144,6 +139,8 @@ export const addManualLog = onCall({ cors: true }, async (request) => {
     const docRef = logsRef.doc();
     const payload = {
       userId: uid,
+      // The signed-in person who wrote it, which differs from userId for team members.
+      createdBy: actorUid,
       websiteId: String(websiteId),
       message: trimmed,
       status: normalizedStatus,

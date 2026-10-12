@@ -7,6 +7,7 @@ import { BigQueryCheckHistoryRow, purgeOldCheckHistory } from "./bigquery";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 import { FixedWindowRateLimiter } from "./rate-limit";
 import { createHash } from "crypto";
+import { resolveAccountId } from "./team-access";
 
 // ── Stats cache ──────────────────────────────────────────────────────────────
 // Caches BigQuery stats results in Firestore to avoid re-scanning on repeated
@@ -214,10 +215,7 @@ export const getCheckHistoryBigQuery = onCall({
   timeoutSeconds: 540, // 9 minutes max timeout
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const {
     websiteId,
@@ -379,10 +377,7 @@ export const getCheckStatsBigQuery = onCall({
   maxInstances: 10,
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const { websiteId, startDate, endDate } = request.data;
   if (!websiteId) {
@@ -456,10 +451,7 @@ export const getCheckStatsBatchBigQuery = onCall({
   maxInstances: 10,
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const { websiteIds, startDate, endDate } = request.data;
   if (!Array.isArray(websiteIds) || websiteIds.length === 0) {
@@ -547,10 +539,7 @@ export const getCheckHistoryDailySummary = onCall({
   timeoutSeconds: 540,
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const { websiteId, startDate, endDate } = request.data;
   if (!websiteId) {
@@ -685,10 +674,7 @@ export const getCheckReportMetrics = onCall({
   timeoutSeconds: 540,
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const { websiteId, startDate, endDate } = request.data;
   if (!websiteId) {
@@ -763,10 +749,7 @@ export const getCheckReportMetrics = onCall({
 
 // Callable function to get check history for statistics
 export const getCheckHistoryForStats = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const { websiteId, startDate, endDate } = request.data;
   if (!websiteId) {

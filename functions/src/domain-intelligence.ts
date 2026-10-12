@@ -30,6 +30,7 @@ import {
   DAY3_FROM,
 } from "./env";
 import { TIER_LIMITS } from "./config";
+import { resolveAccountId } from "./team-access";
 
 // Configuration
 const DI_SCHEDULER_MEMORY = "256MiB" as const;
@@ -294,8 +295,7 @@ function prefixKeys(prefix: string, obj: Record<string, unknown>): FirebaseFires
 export const enableDomainExpiry = onCall(
   { secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
   async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
+  const uid = await resolveAccountId(request, 'write');
   
   // Verify the user's tier has Domain Intelligence enabled (live check).
   const tier = await getUserTierLive(uid);
@@ -385,8 +385,7 @@ export const enableDomainExpiry = onCall(
 export const disableDomainExpiry = onCall(
   { secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
   async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
+  const uid = await resolveAccountId(request, 'write');
   
   const { checkId } = request.data as { checkId: string };
   
@@ -423,8 +422,7 @@ export const disableDomainExpiry = onCall(
 export const updateDomainExpiry = onCall(
   { secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
   async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
+  const uid = await resolveAccountId(request, 'write');
   
   const { checkId, alertThresholds } = request.data as {
     checkId: string;
@@ -472,8 +470,7 @@ export const updateDomainExpiry = onCall(
 export const refreshDomainExpiry = onCall(
   { secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
   async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
+  const uid = await resolveAccountId(request, 'write');
   
   const { checkId } = request.data as { checkId: string };
   
@@ -549,8 +546,7 @@ export const bulkEnableDomainExpiry = onCall(
     timeoutSeconds: 60, // 1 minute is plenty since we don't query RDAP
   },
   async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
+  const uid = await resolveAccountId(request, 'write');
   
   // Verify the user's tier has Domain Intelligence enabled (live check).
   const tier = await getUserTierLive(uid);
@@ -676,8 +672,7 @@ export const bulkEnableDomainExpiry = onCall(
 export const getDomainIntelligence = onCall(
   { secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
   async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
+  const uid = await resolveAccountId(request, 'read');
   
   // Query all checks with domain expiry enabled for this user
   const checksQuery = firestore.collection('checks')

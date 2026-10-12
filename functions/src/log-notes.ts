@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { firestore, getUserTier } from "./init";
 import { Website } from "./types";
+import { resolveAccount, resolveAccountId } from "./team-access";
 
 async function assertCommentsEntitled(uid: string): Promise<void> {
   const tier = await getUserTier(uid);
@@ -40,10 +41,7 @@ function normalizeMessage(value: unknown): string {
 }
 
 export const getLogNotes = onCall({ cors: true }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   const { websiteId, logId } = request.data || {};
   if (!websiteId || !logId) {
@@ -83,10 +81,7 @@ export const getLogNotes = onCall({ cors: true }, async (request) => {
 });
 
 export const addLogNote = onCall({ cors: true }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const { accountId: uid, actorUid } = await resolveAccount(request, "write");
 
   const { websiteId, logId, message } = request.data || {};
   if (!websiteId || !logId) {
@@ -111,6 +106,8 @@ export const addLogNote = onCall({ cors: true }, async (request) => {
     const docRef = notesRef.doc();
     const payload = {
       userId: uid,
+      // The signed-in person who wrote it, which differs from userId for team members.
+      createdBy: actorUid,
       websiteId: String(websiteId),
       logId: String(logId),
       logKey,
@@ -139,10 +136,7 @@ export const addLogNote = onCall({ cors: true }, async (request) => {
 });
 
 export const updateLogNote = onCall({ cors: true }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
 
   const { websiteId, logId, noteId, message } = request.data || {};
   if (!websiteId || !logId || !noteId) {
@@ -203,10 +197,7 @@ export const updateLogNote = onCall({ cors: true }, async (request) => {
 });
 
 export const deleteLogNote = onCall({ cors: true }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
 
   const { websiteId, logId, noteId } = request.data || {};
   if (!websiteId || !logId || !noteId) {

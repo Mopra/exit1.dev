@@ -47,6 +47,7 @@ import {
   refreshRateLimitWindows,
   type CheckType,
 } from "./check-helpers";
+import { resolveAccountId } from "./team-access";
 
 // AlertReason, shouldRetryAlert and applyPendingRetryFlags are pure and live in
 // ./alert-retry-flags so they can be unit-tested in isolation.
@@ -2371,10 +2372,7 @@ export const addCheck = onCall({
       publicSlug,
     } = request.data || {};
 
-    const uid = request.auth?.uid;
-    if (!uid) {
-      throw new HttpsError("unauthenticated", "Authentication required");
-    }
+    const uid = await resolveAccountId(request, "write");
 
     const now = Date.now();
 
@@ -2824,10 +2822,7 @@ export const bulkAddChecks = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   try {
-    const uid = request.auth?.uid;
-    if (!uid) {
-      throw new HttpsError("unauthenticated", "Authentication required");
-    }
+    const uid = await resolveAccountId(request, "write");
 
     const { checks: items } = request.data || {};
     if (!Array.isArray(items) || items.length === 0) {
@@ -3085,10 +3080,7 @@ export const getChecks = onCall({
   cors: true, // Enable CORS for this function
   maxInstances: 10, // Limit concurrent instances
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "read");
 
   try {
     const checksSnapshot = await firestore
@@ -3155,10 +3147,7 @@ export const updateCheck = onCall({
     public: isPublic,
     publicSlug
   } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!id) {
     throw new HttpsError("invalid-argument", "Check ID required");
   }
@@ -3428,10 +3417,7 @@ export const deleteWebsite = onCall({
   maxInstances: 10,
 }, async (request) => {
   const { id } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!id) {
     throw new HttpsError("invalid-argument", "Website ID required");
   }
@@ -3501,10 +3487,7 @@ export const toggleCheckStatus = onCall({
   secrets: [RESEND_API_KEY, RESEND_FROM, DAY3_API_KEY, DAY3_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const { id, disabled, reason } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!id) {
     throw new HttpsError("invalid-argument", "Check ID required");
   }
@@ -3591,10 +3574,7 @@ export const toggleMaintenanceMode = onCall({
   maxInstances: 10,
 }, async (request) => {
   const { checkId, enabled, duration, reason } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!checkId) {
     throw new HttpsError("invalid-argument", "Check ID required");
   }
@@ -3691,7 +3671,7 @@ export const scheduleMaintenanceWindow = onCall({
   maxInstances: 10,
 }, async (request) => {
   const { checkId, startTime, duration, reason } = request.data || {};
-  const uid = request.auth?.uid;
+  const uid = await resolveAccountId(request, "write");
   const { checkData } = await validateCheckOwnership(uid, checkId);
 
   // Live tier, not the stale copy on checkData.userTier. Ownership is already
@@ -3735,7 +3715,7 @@ export const cancelScheduledMaintenance = onCall({
   maxInstances: 10,
 }, async (request) => {
   const { checkId } = request.data || {};
-  const uid = request.auth?.uid;
+  const uid = await resolveAccountId(request, "write");
   const { checkData } = await validateCheckOwnership(uid, checkId);
 
   if (!checkData.maintenanceScheduledStart) {
@@ -3761,7 +3741,7 @@ export const setRecurringMaintenance = onCall({
   maxInstances: 10,
 }, async (request) => {
   const { checkId, daysOfWeek, startTimeMinutes, durationMinutes, timezone, reason } = request.data || {};
-  const uid = request.auth?.uid;
+  const uid = await resolveAccountId(request, "write");
   const { checkData } = await validateCheckOwnership(uid, checkId);
 
   // Live tier, not the stale copy on checkData.userTier (see above).
@@ -3807,7 +3787,7 @@ export const deleteRecurringMaintenance = onCall({
   maxInstances: 10,
 }, async (request) => {
   const { checkId } = request.data || {};
-  const uid = request.auth?.uid;
+  const uid = await resolveAccountId(request, "write");
   await validateCheckOwnership(uid, checkId);
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update({
@@ -3883,10 +3863,7 @@ export const manualCheck = onCall({
   ],
 }, async (request) => {
   const { checkId } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
 
   // ── Deploy Mode guard: allow manual check to run but suppress alerts ──
   let deployModeActive = false;
@@ -4210,10 +4187,7 @@ export const updateCheckRegions = onCall({
   maxInstances: 10,
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
 
   try {
     // Get user tier first - force refresh by clearing cache

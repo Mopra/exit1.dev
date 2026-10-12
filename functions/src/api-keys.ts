@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { firestore, getUserTierLive } from "./init";
 import { CONFIG } from "./config";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { resolveAccount } from "./team-access";
 import { KeyAccessError, parseExpiresInSeconds, parseKeyAccess, readStoredAccess, type KeyAccess } from "./public-api-access";
 
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -20,6 +21,8 @@ type ApiKeyDoc = {
   createdAt: number;
   lastUsedAt?: number;
   lastUsedPath?: string;
+  /** Team member who minted the key inside the owner's account (userId). */
+  createdByUid?: string;
 };
 
 async function generateApiKey(): Promise<string> {
@@ -48,8 +51,11 @@ export const createApiKey = onCall({
   maxInstances: 10,
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  // Keys belong to the account. A teammate's key counts against the account's
+  // key limit and is stamped with who made it, so removing them switches it
+  // off (team.ts) and the public API can re-check their membership.
+  const account = await resolveAccount(request, "read");
+  const uid = account.accountId;
 
   const userTier = await getUserTierLive(uid);
   const maxKeys = CONFIG.getMaxApiKeysForTier(userTier);
@@ -111,6 +117,7 @@ export const createApiKey = onCall({
     expiresAt,
     access,
     createdAt: now,
+    ...(account.isMember ? { createdByUid: account.actorUid } : {}),
   } as ApiKeyDoc);
 
   return {
@@ -130,8 +137,8 @@ export const listApiKeys = onCall({
   cors: true,
   maxInstances: 10,
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  const account = await resolveAccount(request, "read");
+  const uid = account.accountId;
 
   const snap = await firestore
     .collection(API_KEYS_COLLECTION)
@@ -152,6 +159,9 @@ export const listApiKeys = onCall({
       scopes: data.scopes || [],
       expiresAt: data.expiresAt ?? null,
       access: data.access ? readStoredAccess(data.access) : null,
+      createdByUid: data.createdByUid || null,
+      // The owner manages every key; a teammate only the ones they made.
+      canManage: !account.isMember || data.createdByUid === account.actorUid,
     };
   });
 
@@ -166,8 +176,8 @@ export const revokeApiKey = onCall({
   cors: true,
   maxInstances: 10,
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  const account = await resolveAccount(request, "read");
+  const uid = account.accountId;
   const { id } = request.data || {};
   if (!id) throw new HttpsError("invalid-argument", "Key ID required");
 
@@ -176,6 +186,9 @@ export const revokeApiKey = onCall({
   if (!doc.exists) throw new HttpsError("not-found", "Key not found");
   const data = doc.data() as ApiKeyDoc;
   if (data.userId !== uid) throw new HttpsError("permission-denied", "Insufficient permissions");
+  if (account.isMember && data.createdByUid !== account.actorUid) {
+    throw new HttpsError("permission-denied", "Only the account owner can manage keys made by someone else");
+  }
 
   await ref.update({ enabled: false, lastUsedAt: Date.now() });
   return { success: true };
@@ -186,8 +199,8 @@ export const deleteApiKey = onCall({
   cors: true,
   maxInstances: 10,
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  const account = await resolveAccount(request, "read");
+  const uid = account.accountId;
   const { id } = request.data || {};
   if (!id) throw new HttpsError("invalid-argument", "Key ID required");
 
@@ -196,6 +209,9 @@ export const deleteApiKey = onCall({
   if (!doc.exists) throw new HttpsError("not-found", "Key not found");
   const data = doc.data() as ApiKeyDoc;
   if (data.userId !== uid) throw new HttpsError("permission-denied", "Insufficient permissions");
+  if (account.isMember && data.createdByUid !== account.actorUid) {
+    throw new HttpsError("permission-denied", "Only the account owner can manage keys made by someone else");
+  }
   if (data.enabled) throw new HttpsError("failed-precondition", "Revoke the key before deleting");
 
   await ref.delete();

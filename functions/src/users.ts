@@ -48,6 +48,9 @@ async function deleteAllUserData(userId: string): Promise<{
     notificationsSnap,
     manualLogsSnap,
     logNotesSnap,
+    teamOwnedSnap,
+    teamJoinedSnap,
+    teamInvitesSnap,
   ] = await Promise.all([
     firestore.collection("checks").where("userId", "==", userId).get(),
     firestore.collection("webhooks").where("userId", "==", userId).get(),
@@ -56,6 +59,11 @@ async function deleteAllUserData(userId: string): Promise<{
     firestore.collection("user_notifications").where("userId", "==", userId).get(),
     firestore.collection("users").doc(userId).collection("manualLogs").get(),
     firestore.collection("users").doc(userId).collection("logNotes").get(),
+    // Team: the user's own team, the teams they joined, and invites they sent.
+    // Keys a member minted elsewhere stop working once the membership is gone.
+    firestore.collection("teamMembers").where("ownerUid", "==", userId).get(),
+    firestore.collection("teamMembers").where("memberUid", "==", userId).get(),
+    firestore.collection("teamInvites").where("ownerUid", "==", userId).get(),
   ]);
 
   // 2. Collect all document refs to delete
@@ -69,6 +77,9 @@ async function deleteAllUserData(userId: string): Promise<{
   notificationsSnap.docs.forEach(doc => allRefs.push(doc.ref));
   manualLogsSnap.docs.forEach(doc => allRefs.push(doc.ref));
   logNotesSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  teamOwnedSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  teamJoinedSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  teamInvitesSnap.docs.forEach(doc => allRefs.push(doc.ref));
 
   // Single-doc collections keyed by userId
   allRefs.push(firestore.collection("emailSettings").doc(userId));

@@ -1,6 +1,36 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // ---- Team accounts ----
+    // An account is identified by its owner's uid (every doc's `userId`). A Pro
+    // owner can add teammates: `teamMembers/{ownerUid}_{memberUid}` exists while
+    // the member belongs to the account. Membership is looked up live on every
+    // request, so removing a member or the owner leaving Pro cuts access at once
+    // (no token to wait out).
+    function signedIn() {
+      return request.auth != null;
+    }
+    function memberDoc(ownerId) {
+      return /databases/$(database)/documents/teamMembers/$(ownerId + '_' + request.auth.uid);
+    }
+    function ownerIsPro(ownerId) {
+      return get(/databases/$(database)/documents/users/$(ownerId)).data.get('tier', 'free') == 'pro';
+    }
+    function isTeamMember(ownerId) {
+      return exists(memberDoc(ownerId)) && ownerIsPro(ownerId);
+    }
+    function isTeamEditor(ownerId) {
+      return isTeamMember(ownerId) && get(memberDoc(ownerId)).data.role == 'editor';
+    }
+    // Owner, or any member (viewers included).
+    function canReadAccount(ownerId) {
+      return signedIn() && (request.auth.uid == ownerId || isTeamMember(ownerId));
+    }
+    // Owner, or a member with the editor role.
+    function canWriteAccount(ownerId) {
+      return signedIn() && (request.auth.uid == ownerId || isTeamEditor(ownerId));
+    }
+
     // True iff the requesting user is flagged admin in their synced users doc.
     function isAdmin() {
       return request.auth != null &&
@@ -20,12 +50,12 @@ service cloud.firestore {
 
     // Check collection rules
     match /checks/{checkId} {
-      // Allow read/write only if user is authenticated
-      // Allow read/update/delete only if user is authenticated AND is the owner
-      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      // Members read the account's checks; editors also write them.
+      allow read: if canReadAccount(resource.data.userId);
+      allow delete: if canWriteAccount(resource.data.userId);
 
-      // Allow create if user is authenticated and sets themselves as owner
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
+      // Create into an account the caller can write to
+      allow create: if canWriteAccount(request.resource.data.userId) &&
         // Validate required fields
         request.resource.data.keys().hasAll(['url', 'name', 'userId', 'createdAt', 'updatedAt']) &&
         // Validate URL format
@@ -39,11 +69,12 @@ service cloud.firestore {
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
 
-      // Allow update only by the owner. The public-exposure fields
-      // (`public` / `publicSlug`) may only be changed by admins, since they
-      // surface the check on the public marketing site (exit1.dev/status).
-      allow update: if request.auth != null &&
-        resource.data.userId == request.auth.uid &&
+      // Update by the owner or an editor, never moving the check to another
+      // account. The public-exposure fields (`public` / `publicSlug`) may only
+      // be changed by admins, since they surface the check on the public
+      // marketing site (exit1.dev/status).
+      allow update: if canWriteAccount(resource.data.userId) &&
+        request.resource.data.userId == resource.data.userId &&
         (publicFieldsUnchanged() || isAdmin());
 
 
@@ -51,11 +82,11 @@ service cloud.firestore {
     
     // Webhook collection rules
     match /webhooks/{webhookId} {
-      // Allow read/update/delete only if user is authenticated AND is the owner
-      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
-      
-      // Allow create if user is authenticated and sets themselves as owner
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
+      allow read: if canReadAccount(resource.data.userId);
+      allow delete: if canWriteAccount(resource.data.userId);
+
+      // Create into an account the caller can write to
+      allow create: if canWriteAccount(request.resource.data.userId) &&
         // Validate required fields
         request.resource.data.keys().hasAll(['url', 'name', 'userId', 'enabled', 'events', 'createdAt', 'updatedAt']) &&
         // Validate URL format
@@ -75,8 +106,10 @@ service cloud.firestore {
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
       
-      // Allow update if user is authenticated and provides valid data
-      allow update: if request.auth != null &&
+      // Update by the owner or an editor with valid data. This used to accept
+      // any signed-in user, which let anyone rewrite anyone's webhook by id.
+      allow update: if canWriteAccount(resource.data.userId) &&
+        request.resource.data.userId == resource.data.userId &&
         // Validate URL format
         request.resource.data.url is string &&
         request.resource.data.url.matches('^https?://.+') &&
@@ -100,10 +133,10 @@ service cloud.firestore {
     match /status_pages/{statusPageId} {
       // Allow public read for public pages, and owner read for private
       allow read: if resource.data.visibility == 'public' ||
-        (request.auth != null && resource.data.userId == request.auth.uid);
+        canReadAccount(resource.data.userId);
 
-      // Allow create if user is authenticated and sets themselves as owner
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
+      // Create into an account the caller can write to
+      allow create: if canWriteAccount(request.resource.data.userId) &&
         // Validate required fields
         request.resource.data.keys().hasAll(['name', 'userId', 'visibility', 'checkIds', 'createdAt', 'updatedAt']) &&
         // Validate name
@@ -130,12 +163,10 @@ service cloud.firestore {
         request.resource.data.updatedAt is number;
 
       // Allow delete if user is authenticated and owns the document
-      allow delete: if request.auth != null &&
-        resource.data.userId == request.auth.uid;
+      allow delete: if canWriteAccount(resource.data.userId);
 
-      // Allow update if user is authenticated and provides valid data
-      allow update: if request.auth != null &&
-        resource.data.userId == request.auth.uid &&
+      // Allow update by the owner or an editor with valid data
+      allow update: if canWriteAccount(resource.data.userId) &&
         request.resource.data.userId == resource.data.userId &&
         request.resource.data.createdAt == resource.data.createdAt &&
         // Validate name
@@ -169,9 +200,11 @@ service cloud.firestore {
     
     // API Keys collection rules
     match /apiKeys/{apiKeyId} {
-      // Allow read/update/delete only if user is authenticated AND is the owner
-      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
-      
+      // Members see the account's keys (prefix and last4 only, never the
+      // secret). Every other change goes through the apiKeys callables.
+      allow read: if canReadAccount(resource.data.userId);
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+
       // Allow create if user is authenticated and sets themselves as owner
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
         // Validate required fields
@@ -189,12 +222,15 @@ service cloud.firestore {
         // Validate timestamps
         request.resource.data.createdAt is number;
       
-      // Allow update if user is authenticated and provides valid data
+      // Owner-only update with valid data. This used to accept any signed-in
+      // user, which let anyone toggle anyone's key by id.
       allow update: if request.auth != null &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
         // Validate enabled is boolean if provided
-        (request.resource.data.enabled == null || request.resource.data.enabled is bool) &&
+        (request.resource.data.get('enabled', null) == null || request.resource.data.enabled is bool) &&
         // Validate lastUsedAt is number if provided
-        (request.resource.data.lastUsedAt == null || request.resource.data.lastUsedAt is number);
+        (request.resource.data.get('lastUsedAt', null) == null || request.resource.data.lastUsedAt is number);
       
 
     }
@@ -245,8 +281,8 @@ service cloud.firestore {
     // User check stats collection rules
     // Stores aggregated check statistics per user (managed by Cloud Functions)
     match /user_check_stats/{userId} {
-      // Users can read their own stats
-      allow read: if request.auth != null && request.auth.uid == userId;
+      // Owner and team members can read the account's stats
+      allow read: if canReadAccount(userId);
       // Only backend can write (via Firebase Functions)
       allow write: if false;
     }
@@ -278,13 +314,13 @@ service cloud.firestore {
     // Clients read live via onSnapshot; all writes go through Cloud Functions
     // (validation + tier gating), so writes stay backend-only.
     match /emailSettings/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+      allow read: if canReadAccount(userId);
       allow write: if false;
     }
 
     // SMS notification settings — same model as emailSettings.
     match /smsSettings/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+      allow read: if canReadAccount(userId);
       allow write: if false;
     }
 
@@ -338,6 +374,19 @@ service cloud.firestore {
     // founder being able to read their own report.
     match /probeFindings/{findingId} {
       allow read, write: if false;
+    }
+
+    // Team membership and invites. All writes go through the team callables
+    // (functions/src/team.ts); clients only read. A member sees their own
+    // memberships, an owner sees everyone in their account.
+    match /teamMembers/{membershipId} {
+      allow read: if signedIn() &&
+        (resource.data.memberUid == request.auth.uid || resource.data.ownerUid == request.auth.uid);
+      allow write: if false;
+    }
+    match /teamInvites/{inviteId} {
+      allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow write: if false;
     }
 
     // Deny all other access

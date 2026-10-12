@@ -1,6 +1,7 @@
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall, HttpsError, type CallableRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
+import { resolveAccount } from "./team-access";
 
 const MAX_CHECKS = 50;
 const HEARTBEAT_DAYS = 90;
@@ -244,6 +245,26 @@ async function resolveStatusPageCheckIds(
   return Array.from(allCheckIds);
 }
 
+/**
+ * Private status pages are visible to the account that owns them: the owner,
+ * plus teammates with access to that account. The page already names its
+ * account, so this does not depend on the app sending accountId.
+ */
+async function canViewPrivateStatusPage(
+  request: Pick<CallableRequest, 'auth'>,
+  ownerUid: string,
+): Promise<boolean> {
+  const actorUid = request.auth?.uid;
+  if (!actorUid) return false;
+  if (actorUid === ownerUid) return true;
+  try {
+    await resolveAccount({ auth: request.auth, data: { accountId: ownerUid } }, 'read');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, async (request) => {
   const { statusPageId } = request.data || {};
   if (!statusPageId || typeof statusPageId !== 'string') {
@@ -260,8 +281,7 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
     throw new HttpsError("not-found", "Status page data not found");
   }
 
-  const isOwner = request.auth?.uid && request.auth.uid === statusPage.userId;
-  if (!isOwner && statusPage.visibility !== 'public') {
+  if (statusPage.visibility !== 'public' && !(await canViewPrivateStatusPage(request, statusPage.userId))) {
     throw new HttpsError("permission-denied", "Status page is private");
   }
 
@@ -330,8 +350,7 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
     throw new HttpsError("not-found", "Status page data not found");
   }
 
-  const isOwner = request.auth?.uid && request.auth.uid === statusPage.userId;
-  if (!isOwner && statusPage.visibility !== 'public') {
+  if (statusPage.visibility !== 'public' && !(await canViewPrivateStatusPage(request, statusPage.userId))) {
     throw new HttpsError("permission-denied", "Status page is private");
   }
 
@@ -419,8 +438,7 @@ export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, a
     throw new HttpsError("not-found", "Status page data not found");
   }
 
-  const isOwner = request.auth?.uid && request.auth.uid === statusPage.userId;
-  if (!isOwner && statusPage.visibility !== 'public') {
+  if (statusPage.visibility !== 'public' && !(await canViewPrivateStatusPage(request, statusPage.userId))) {
     throw new HttpsError("permission-denied", "Status page is private");
   }
 

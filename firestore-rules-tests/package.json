@@ -1,0 +1,13 @@
+{
+  "name": "exit1-firestore-rules-tests",
+  "private": true,
+  "type": "module",
+  "description": "Firestore rules tests. Run: npm install && npm test (needs Java for the emulator).",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-team \"node team.test.mjs ../firestore.rules\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.0.0"
+  }
+}

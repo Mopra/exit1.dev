@@ -18,16 +18,14 @@ import {
 } from "./alert-pushover";
 import { triggerResendEvent } from "./resend-sync";
 import { notifySettingsEdit } from "./check-helpers";
+import { resolveAccountId } from "./team-access";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY],
 }, async (request) => {
   const { url, name, events, secret, headers, webhookType, checkFilter } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
 
   // Validate webhook URL
   try {
@@ -149,10 +147,7 @@ async function fireResendWebhookEvents(
 // Callable function to update webhook settings
 export const updateWebhookSettings = onCall(async (request) => {
   const { id, url, name, events, enabled, secret, headers, webhookType, checkFilter } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
 
   if (!id) {
     throw new Error("Webhook ID required");
@@ -224,10 +219,7 @@ export const updateWebhookSettings = onCall(async (request) => {
 // Callable function to delete webhook
 export const deleteWebhook = onCall(async (request) => {
   const { id } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!id) {
     throw new Error("Webhook ID required");
   }
@@ -250,10 +242,7 @@ export const deleteWebhook = onCall(async (request) => {
 // Callable function to test webhook
 export const testWebhook = onCall(async (request) => {
   const { id } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!id) {
     throw new Error("Webhook ID required");
   }
@@ -494,10 +483,7 @@ export const testWebhook = onCall(async (request) => {
 // Callable function to bulk delete webhooks (reduces N function calls to 1)
 export const bulkDeleteWebhooks = onCall(async (request) => {
   const { ids } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!Array.isArray(ids) || ids.length === 0) {
     throw new Error("Webhook IDs array required");
   }
@@ -540,10 +526,7 @@ export const bulkDeleteWebhooks = onCall(async (request) => {
 // Callable function to bulk update webhook status (reduces N function calls to 1)
 export const bulkUpdateWebhookStatus = onCall(async (request) => {
   const { ids, enabled } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
+  const uid = await resolveAccountId(request, "write");
   if (!Array.isArray(ids) || ids.length === 0) {
     throw new Error("Webhook IDs array required");
   }

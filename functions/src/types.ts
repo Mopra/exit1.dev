@@ -502,4 +502,6 @@ export interface ApiKeyDoc {
   createdAt: number;
   lastUsedAt?: number;
   lastUsedPath?: string;
+  /** Set when a team member minted the key inside the owner's account (userId). */
+  createdByUid?: string;
 }

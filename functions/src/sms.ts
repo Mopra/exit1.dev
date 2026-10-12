@@ -15,6 +15,7 @@ import {
 } from "./env";
 import { normalizeCheckFilter } from "./webhook-events";
 import { notifySettingsEdit } from "./check-helpers";
+import { resolveAccountId } from "./team-access";
 
 const normalizePhone = (raw: string): string => {
   const trimmed = raw.trim();
@@ -188,10 +189,7 @@ const sendTwilioMessage = async (to: string, body: string) => {
 export const saveSmsSettings = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
 
   await ensureSmsTierOrAdmin(uid);
 
@@ -247,10 +245,7 @@ export const saveSmsSettings = onCall({
 export const updateSmsPerCheck = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
 
   await ensureSmsTierOrAdmin(uid);
 
@@ -325,10 +320,7 @@ export const updateSmsPerCheck = onCall({
 export const bulkUpdateSmsPerCheck = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
 
   await ensureSmsTierOrAdmin(uid);
 
@@ -417,10 +409,7 @@ export const bulkUpdateSmsPerCheck = onCall({
 export const getSmsSettings = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'read');
 
   await ensureSmsTierOrAdmin(uid);
 
@@ -434,10 +423,7 @@ export const getSmsSettings = onCall({
 export const getSmsUsage = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'read');
 
   const admin = await isAdminUser(uid);
   // SMS is enabled on tiers whose TIER_LIMITS.smsAlerts = true (Pro).
@@ -512,10 +498,7 @@ function getSmsRecipients(settings: SmsSettings): string[] {
 export const sendTestSms = onCall({
   secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, TWILIO_MESSAGING_SERVICE_SID],
 }, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+  const uid = await resolveAccountId(request, 'write');
 
   await ensureSmsTierOrAdmin(uid);
 

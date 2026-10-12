@@ -5,6 +5,7 @@ import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 import { CONFIG } from "./config";
 import type { Website } from "./types";
 import type { BigQueryCheckHistoryRow } from "./bigquery";
+import { resolveAccountId } from "./team-access";
 
 /**
  * Column order must match `CSV_COLUMNS` in
@@ -209,10 +210,7 @@ export const exportChecksCsv = onCall(
     maxInstances: 10,
   },
   async (request): Promise<ExportChecksCsvResult> => {
-    const uid = request.auth?.uid;
-    if (!uid) {
-      throw new HttpsError("unauthenticated", "Authentication required");
-    }
+    const uid = await resolveAccountId(request, "read");
 
     // Tier gate — Pro only.
     const { tier } = await getUserPlanInfo(uid);
