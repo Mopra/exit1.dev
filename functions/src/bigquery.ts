@@ -381,7 +381,9 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   region: data.region ?? null,
   peer_region: data.peer_region ?? null,
   peer_status: data.peer_status ?? null,
-  peer_response_time: data.peer_response_time ?? null,
+  // INTEGER column; ping peers report fractional ms (22.36) and BigQuery rejects
+  // the row, failing every other row in the same insert batch with it.
+  peer_response_time: typeof data.peer_response_time === 'number' ? Math.round(data.peer_response_time) : null,
   peer_status_code: data.peer_status_code ?? null,
   peer_checked_at: typeof data.peer_checked_at === 'number' ? new Date(data.peer_checked_at) : null,
   peer_reachable: typeof data.peer_reachable === 'boolean' ? data.peer_reachable : null,
@@ -652,10 +654,20 @@ const extractFailedIndices = (
 
 const extractErrorMetadata = (error: unknown) => {
   if (!error || typeof error !== 'object') return { error };
-  const err = error as { code?: number | string; message?: string };
+  const err = error as {
+    code?: number | string;
+    message?: string;
+    errors?: Array<{ errors?: Array<{ reason?: string; message?: string }> }>;
+  };
+  // PartialFailureError's message is generic; the real cause is per row. Rows that
+  // were fine come back as reason "stopped", so report the first other reason.
+  const rowErrors = Array.isArray(err.errors) ? err.errors.flatMap(e => e.errors ?? []) : [];
+  const cause = rowErrors.find(e => e.reason !== 'stopped') ?? rowErrors[0];
   return {
     code: err.code,
     message: err.message,
+    rowReason: cause?.reason,
+    rowMessage: cause?.message,
   };
 };
 
