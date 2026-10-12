@@ -2,10 +2,15 @@
 // Lightweight BigQuery analytics for badge views.
 // Uses a simple buffer that flushes periodically to avoid per-request inserts.
 
-import { BigQuery } from '@google-cloud/bigquery';
+import type { BigQuery } from '@google-cloud/bigquery';
 import * as logger from 'firebase-functions/logger';
 
-const bigquery = new BigQuery({ projectId: 'exit1-dev' });
+// Loaded on the first flush, not at import: the BigQuery client is a large
+// module and badge cold starts should not pay for it before serving the SVG.
+let bigqueryClient: Promise<BigQuery> | null = null;
+const getBigQuery = (): Promise<BigQuery> =>
+  (bigqueryClient ??= import('@google-cloud/bigquery').then(({ BigQuery }) => new BigQuery({ projectId: 'exit1-dev' })));
+
 const DATASET_ID = 'checks';
 const TABLE_ID = 'badge_views';
 
@@ -42,10 +47,8 @@ let tableReady = false;
 async function ensureTable(): Promise<void> {
   if (tableReady) return;
 
-  const dataset = bigquery.dataset(DATASET_ID);
-  const table = dataset.table(TABLE_ID);
-
   try {
+    const table = (await getBigQuery()).dataset(DATASET_ID).table(TABLE_ID);
     const [exists] = await table.exists();
     if (!exists) {
       await table.create({
@@ -89,7 +92,7 @@ export async function flushBadgeViews(): Promise<void> {
   const rows = buffer.splice(0, buffer.length);
   try {
     await ensureTable();
-    const table = bigquery.dataset(DATASET_ID).table(TABLE_ID);
+    const table = (await getBigQuery()).dataset(DATASET_ID).table(TABLE_ID);
     await table.insert(rows);
   } catch (err: unknown) {
     const e = err as { name?: string; errors?: unknown[] };

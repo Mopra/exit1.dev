@@ -93,8 +93,37 @@ function parseIndexExports(src) {
       map.set(deployed, file);
     }
   }
+  // Lazy exports: lazy((): typeof import('./x') => require('./x'), ['a', 'b']).
+  // index.ts exports almost every function this way so a cold start only loads
+  // its own module. Missing this shape would map those functions to nothing and
+  // silently under-deploy, so a call that does not parse cleanly aborts.
+  const reLazyCall = /\blazy\s*\(/g;
+  const reLazy = /^lazy\s*\(\s*\(\)\s*:\s*typeof\s+import\s*\(\s*['"]([^'"]+)['"]\s*\)\s*=>\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)\s*,\s*\[([^\]]*)\]\s*\)/;
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  for (const call of code.matchAll(reLazyCall)) {
+    const rest = code.slice(call.index);
+    if (/^lazy\s*\(\s*load\b/.test(rest)) continue; // the helper's own definition
+    const m = rest.match(reLazy);
+    if (!m || m[1] !== m[2]) {
+      console.error(`✖ Unparseable lazy() export in src/index.ts near: ${rest.slice(0, 80)}`);
+      process.exit(1);
+    }
+    const file = resolveImport(INDEX_TS, m[2]);
+    if (!file) {
+      console.error(`✖ lazy() export points at a missing module: ${m[2]}`);
+      process.exit(1);
+    }
+    for (const raw of m[3].split(',')) {
+      const name = raw.trim().replace(/^['"]|['"]$/g, '');
+      if (name) map.set(name, file);
+    }
+  }
   return map;
 }
+
+/** index.ts with comments and whitespace removed, to tell code edits from prose edits. */
+const indexCode = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/\s+/g, '');
 
 /** Stable "name -> file" signature, for comparing two revisions of index.ts. */
 const exportSignature = (map) =>
@@ -214,11 +243,16 @@ if (OPT.all) {
   // signature keeps the safety net for anything that renames, adds, moves or
   // drops an export, and charges nothing for prose. If the previous revision
   // cannot be read, assume the worst and deploy everything.
+  // index.ts also carries runtime code (the lazy() export helper) that every
+  // function runs on cold start, so any edit outside comments and whitespace
+  // redeploys everything too.
   let surfaceMoved = false;
+  let indexCodeChanged = false;
   if (inFunctions.includes(INDEX_TS)) {
     const baseRef = OPT.base && OPT.committedOnly ? OPT.base : 'HEAD';
     const before = git(['show', `${baseRef}:functions/src/index.ts`]);
     surfaceMoved = !before || exportSignature(parseIndexExports(before)) !== exportSignature(fnToFile);
+    indexCodeChanged = !before || indexCode(before) !== indexCode(indexSrc);
   }
 
   if (forcedFull) {
@@ -227,6 +261,9 @@ if (OPT.all) {
   } else if (surfaceMoved) {
     targets = ALL_FNS;
     reason = 'src/index.ts changed the export surface';
+  } else if (indexCodeChanged) {
+    targets = ALL_FNS;
+    reason = 'src/index.ts code changed (every function runs it)';
   } else {
     // Map each changed src file to the deployed functions it transitively affects.
     const affectedFiles = new Set();

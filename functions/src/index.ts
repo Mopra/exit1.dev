@@ -11,31 +11,57 @@
 // before any modules that depend on them are imported
 import './init';
 
+// The lazy exports below need a synchronous require() per module (see lazy()).
+/* eslint-disable @typescript-eslint/no-require-imports */
+
 // Tier sync function (force-refreshes Firestore tier cache from Clerk)
 export { syncMyTier } from './init';
 
-// Re-export all Firebase Functions from their respective modules
-// Exports maintain identical names and signatures for zero-downtime deployment
+// Every other function is exported lazily: a getter that requires its module on
+// first access. Each Gen2 function runs in its own container, and the functions
+// framework only reads the one export named by its target, so a cold start loads
+// that function's module chain instead of the whole bundle (Twilio, Resend,
+// BigQuery, the MCP SDK, ...). Deploy discovery enumerates the exports, which
+// runs every getter, so every function stays discoverable.
+//
+// The `typeof import()` return type is erased at compile time and makes tsc check
+// each name against the module. Keep the require() a literal path in this
+// `lazy((): typeof import('./x') => require('./x'), [...])` shape:
+// scripts/deploy-changed.mjs parses it to map each function to its source file.
+function lazy<M>(load: () => M, names: readonly (keyof M & string)[]): void {
+  for (const name of names) {
+    Object.defineProperty(exports, name, {
+      enumerable: true,
+      get() {
+        const fn = load()[name];
+        // Discovery skips undefined exports silently, and a full deploy would
+        // then delete that function. Fail loudly instead.
+        if (fn === undefined) throw new Error(`index.ts: ${name} is not exported by its module`);
+        return fn;
+      },
+    });
+  }
+}
 
 // Check management functions
-export {
-  addCheck,
-  bulkAddChecks,
-  getChecks,
-  updateCheck,
-  deleteWebsite,
-  toggleCheckStatus,
-  toggleMaintenanceMode,
-  scheduleMaintenanceWindow,
-  cancelScheduledMaintenance,
-  setRecurringMaintenance,
-  deleteRecurringMaintenance,
-  manualCheck,
-  updateCheckRegions,
-} from './checks';
+lazy((): typeof import('./checks') => require('./checks'), [
+  'addCheck',
+  'bulkAddChecks',
+  'getChecks',
+  'updateCheck',
+  'deleteWebsite',
+  'toggleCheckStatus',
+  'toggleMaintenanceMode',
+  'scheduleMaintenanceWindow',
+  'cancelScheduledMaintenance',
+  'setRecurringMaintenance',
+  'deleteRecurringMaintenance',
+  'manualCheck',
+  'updateCheckRegions',
+]);
 
 // CSV export (Pro+ tier-gated)
-export { exportChecksCsv } from './csv-export';
+lazy((): typeof import('./csv-export') => require('./csv-export'), ['exportChecksCsv']);
 
 // Check event handlers (no longer exported as Cloud Functions - called directly from check logic)
 // The logCheckDisabled Firestore trigger was removed to eliminate ~170K+ wasted invocations/day.
@@ -47,113 +73,113 @@ export { exportChecksCsv } from './csv-export';
 // and the Cloud Scheduler job fees.
 
 // On-demand target metadata refresh (DNS + GeoIP)
-export { refreshCheckMetadata } from './target-metadata-refresh';
+lazy((): typeof import('./target-metadata-refresh') => require('./target-metadata-refresh'), ['refreshCheckMetadata']);
 
 // System status function
-export { getSystemStatus } from './system';
+lazy((): typeof import('./system') => require('./system'), ['getSystemStatus']);
 
 // Webhook management functions
-export {
-  saveWebhookSettings,
-  updateWebhookSettings,
-  deleteWebhook,
-  testWebhook,
-  bulkDeleteWebhooks,
-  bulkUpdateWebhookStatus,
-} from './webhooks';
+lazy((): typeof import('./webhooks') => require('./webhooks'), [
+  'saveWebhookSettings',
+  'updateWebhookSettings',
+  'deleteWebhook',
+  'testWebhook',
+  'bulkDeleteWebhooks',
+  'bulkUpdateWebhookStatus',
+]);
 
 // Email settings functions
-export {
-  saveEmailSettings,
-  enableEmailAlertsForAllChecks,
-  updateEmailPerCheck,
-  updateEmailPerFolder,
-  getEmailSettings,
-  getEmailUsage,
-  sendTestEmail,
-  bulkUpdateEmailPerCheck,
-  getEmailSuppressions,
-  resumeSuppressedEmail,
-} from './email';
+lazy((): typeof import('./email') => require('./email'), [
+  'saveEmailSettings',
+  'enableEmailAlertsForAllChecks',
+  'updateEmailPerCheck',
+  'updateEmailPerFolder',
+  'getEmailSettings',
+  'getEmailUsage',
+  'sendTestEmail',
+  'bulkUpdateEmailPerCheck',
+  'getEmailSuppressions',
+  'resumeSuppressedEmail',
+]);
 
 // Resend bounce/complaint webhook (email suppression)
-export { resendWebhook } from './resend-webhook';
+lazy((): typeof import('./resend-webhook') => require('./resend-webhook'), ['resendWebhook']);
 
 // Day3 delivery-event webhook — the second feed into the same
 // `emailSuppressions` store, for traffic sent via Day3.
-export { day3Webhook } from './day3-webhook';
+lazy((): typeof import('./day3-webhook') => require('./day3-webhook'), ['day3Webhook']);
 
 // SMS settings functions
-export {
-  saveSmsSettings,
-  updateSmsPerCheck,
-  getSmsSettings,
-  getSmsUsage,
-  sendTestSms,
-  bulkUpdateSmsPerCheck,
-} from './sms';
+lazy((): typeof import('./sms') => require('./sms'), [
+  'saveSmsSettings',
+  'updateSmsPerCheck',
+  'getSmsSettings',
+  'getSmsUsage',
+  'sendTestSms',
+  'bulkUpdateSmsPerCheck',
+]);
 
 // Check history and statistics functions
-export {
-  getCheckHistoryBigQuery,
-  getCheckStatsBigQuery,
-  getCheckStatsBatchBigQuery, // Batch stats for multiple websites (cost optimized)
-  getCheckReportMetrics,
-  getCheckHistoryForStats,
-  getCheckHistoryDailySummary,
-} from './history';
+lazy((): typeof import('./history') => require('./history'), [
+  'getCheckHistoryBigQuery',
+  'getCheckStatsBigQuery',
+  'getCheckStatsBatchBigQuery', // Batch stats for multiple websites (cost optimized)
+  'getCheckReportMetrics',
+  'getCheckHistoryForStats',
+  'getCheckHistoryDailySummary',
+]);
 
 // Log notes
-export {
-  getLogNotes,
-  addLogNote,
-  updateLogNote,
-  deleteLogNote,
-} from './log-notes';
+lazy((): typeof import('./log-notes') => require('./log-notes'), [
+  'getLogNotes',
+  'addLogNote',
+  'updateLogNote',
+  'deleteLogNote',
+]);
 
 // Manual logs
-export {
-  getManualLogs,
-  addManualLog,
-} from './manual-logs';
+lazy((): typeof import('./manual-logs') => require('./manual-logs'), [
+  'getManualLogs',
+  'addManualLog',
+]);
 
 // API key management functions
-export {
-  createApiKey,
-  listApiKeys,
-  revokeApiKey,
-  deleteApiKey,
-} from './api-keys';
+lazy((): typeof import('./api-keys') => require('./api-keys'), [
+  'createApiKey',
+  'listApiKeys',
+  'revokeApiKey',
+  'deleteApiKey',
+]);
 
 // User management functions
-export {
-  getAllUsers,
-  deleteUser,
-  bulkDeleteUsers,
-  deleteUserAccount,
-} from './users';
+lazy((): typeof import('./users') => require('./users'), [
+  'getAllUsers',
+  'deleteUser',
+  'bulkDeleteUsers',
+  'deleteUserAccount',
+]);
 
 // Organization management functions
-export { updateOrganizationBillingProfile } from './organizations';
+lazy((): typeof import('./organizations') => require('./organizations'), ['updateOrganizationBillingProfile']);
 
 // Team members (Pro): invites, roles, leaving
-export {
-  getTeamContext,
-  getTeam,
-  inviteTeamMember,
-  revokeTeamInvite,
-  acceptTeamInvite,
-  declineTeamInvite,
-  updateTeamMemberRole,
-  removeTeamMember,
-  leaveTeam,
-} from './team';
+lazy((): typeof import('./team') => require('./team'), [
+  'getTeamContext',
+  'getTeam',
+  'inviteTeamMember',
+  'revokeTeamInvite',
+  'acceptTeamInvite',
+  'declineTeamInvite',
+  'updateTeamMemberRole',
+  'removeTeamMember',
+  'leaveTeam',
+]);
 
 // Status pages
-export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } from './status-pages';
+lazy((): typeof import('./status-pages') => require('./status-pages'), ['getStatusPageUptime', 'getStatusPageSnapshot', 'getStatusPageHeartbeat']);
 
 // Public API
-export { publicApi } from './public-api';
+lazy((): typeof import('./public-api') => require('./public-api'), ['publicApi']);
 
 // ---------------------------------------------------------------------------
 // probe (see the probe repo, PLAN.md §6)
@@ -161,106 +187,106 @@ export { publicApi } from './public-api';
 // probeGenerate answers probe's generator contract: given a launched product,
 // return one severity-1 finding about its public surface, or 204. probeEvidence
 // serves the public report the email links to.
-export { probeGenerate, probeEvidence } from './probe-generate';
+lazy((): typeof import('./probe-generate') => require('./probe-generate'), ['probeGenerate', 'probeEvidence']);
 
 // Remote MCP server + its OAuth 2.1 authorization server.
 // Agent-native onboarding: see Docs/agent-onboarding.md
-export { mcpServer } from './mcp-server';
-export {
-  mcpOauth,
-  getMcpAuthorizationRequest,
-  approveMcpAuthorization,
-  listMcpConnections,
-  revokeMcpConnection,
-} from './mcp-oauth';
+lazy((): typeof import('./mcp-server') => require('./mcp-server'), ['mcpServer']);
+lazy((): typeof import('./mcp-oauth') => require('./mcp-oauth'), [
+  'mcpOauth',
+  'getMcpAuthorizationRequest',
+  'approveMcpAuthorization',
+  'listMcpConnections',
+  'revokeMcpConnection',
+]);
 
 // Badge endpoint (public, no auth)
-export { badge } from './badge';
+lazy((): typeof import('./badge') => require('./badge'), ['badge']);
 
 // Public marketing stats (total checks performed, for homepage counter)
-export { getPublicChecksStats } from './public-stats';
+lazy((): typeof import('./public-stats') => require('./public-stats'), ['getPublicChecksStats']);
 
 // Public monitors (curated uptime landing pages on the marketing site)
-export {
-  getPublicMonitors,
-  getPublicMonitor,
-} from './public-monitors';
+lazy((): typeof import('./public-monitors') => require('./public-monitors'), [
+  'getPublicMonitors',
+  'getPublicMonitor',
+]);
 
 // Admin functions
-export {
-  getAdminStats,
-  getBigQueryUsage,
-  backfillDailySummariesAdmin,
-  getBadgeAnalytics,
-  investigateCheck,
-} from './admin';
+lazy((): typeof import('./admin') => require('./admin'), [
+  'getAdminStats',
+  'getBigQueryUsage',
+  'backfillDailySummariesAdmin',
+  'getBadgeAnalytics',
+  'investigateCheck',
+]);
 
 // System Notifications
-export {
-  createSystemNotification,
-  toggleSystemNotification,
-  deleteSystemNotification,
-  createUserNotification,
-  markNotificationAsRead,
-  markAllNotificationsAsRead,
-  deleteUserNotification,
-} from './notifications';
+lazy((): typeof import('./notifications') => require('./notifications'), [
+  'createSystemNotification',
+  'toggleSystemNotification',
+  'deleteSystemNotification',
+  'createUserNotification',
+  'markNotificationAsRead',
+  'markAllNotificationsAsRead',
+  'deleteUserNotification',
+]);
 
 // Deploy Mode (global kill switch for deployments)
 // Heartbeat-defer toggle co-exports from the same file — both are admin
 // callables that flip system_settings/* docs the VPS listens to.
-export {
-  enableDeployMode,
-  disableDeployMode,
-  toggleHeartbeatDefer,
-  setEmailProvider,
-} from './deploy-mode';
+lazy((): typeof import('./deploy-mode') => require('./deploy-mode'), [
+  'enableDeployMode',
+  'disableDeployMode',
+  'toggleHeartbeatDefer',
+  'setEmailProvider',
+]);
 
 // Clerk webhook and email-platform contact sync (Resend + Day3)
-export {
-  clerkWebhook,
-  syncClerkUsersToResend,
-  syncSegmentsToResend,
-  resyncResendProperties,
-  backfillDay3Contacts,
-} from './clerk-webhook';
+lazy((): typeof import('./clerk-webhook') => require('./clerk-webhook'), [
+  'clerkWebhook',
+  'syncClerkUsersToResend',
+  'syncSegmentsToResend',
+  'resyncResendProperties',
+  'backfillDay3Contacts',
+]);
 
 // Plan enforcement (downgrade handler)
-export { enforcePlanDowngrade } from './plan-enforcement';
+lazy((): typeof import('./plan-enforcement') => require('./plan-enforcement'), ['enforcePlanDowngrade']);
 
 // Tier recompute (admin callable — resyncs tier + subscribedPlanKey for every Clerk user)
-export { recomputeAllTiers } from './recompute-tiers';
+lazy((): typeof import('./recompute-tiers') => require('./recompute-tiers'), ['recomputeAllTiers']);
 
 // Domain Intelligence (DI) - Domain Expiry Monitoring
-export {
-  enableDomainExpiry,         // Enable DI for a check (Nano only)
-  disableDomainExpiry,        // Disable DI for a check
-  updateDomainExpiry,         // Update DI settings (thresholds)
-  refreshDomainExpiry,        // Manual refresh of RDAP data
-  bulkEnableDomainExpiry,     // Bulk enable DI for multiple checks
-  getDomainIntelligence,      // Get all DI data for user's checks
-} from './domain-intelligence';
+lazy((): typeof import('./domain-intelligence') => require('./domain-intelligence'), [
+  'enableDomainExpiry', // Enable DI for a check (Nano only)
+  'disableDomainExpiry', // Disable DI for a check
+  'updateDomainExpiry', // Update DI settings (thresholds)
+  'refreshDomainExpiry', // Manual refresh of RDAP data
+  'bulkEnableDomainExpiry', // Bulk enable DI for multiple checks
+  'getDomainIntelligence', // Get all DI data for user's checks
+]);
 
 // Onboarding survey responses (written to BigQuery)
-export {
-  submitOnboardingResponse,
-  getOnboardingResponses,
-  getOnboardingStatus,
-  deleteOnboardingResponses,
-  backfillOnboardingMetadata,
-} from './onboarding';
+lazy((): typeof import('./onboarding') => require('./onboarding'), [
+  'submitOnboardingResponse',
+  'getOnboardingResponses',
+  'getOnboardingStatus',
+  'deleteOnboardingResponses',
+  'backfillOnboardingMetadata',
+]);
 
 // Activation lifecycle: fires user.first_incident_caught and
 // the no-alert-channel notice, and keeps the activation contact properties current.
 // getAlertCoverageReport answers "how many users can actually be alerted?".
-export {
-  runLifecycleSweep,
-  notifyUsersWithoutAlertChannel,
-  getAlertCoverageReport,
-} from './lifecycle';
+lazy((): typeof import('./lifecycle') => require('./lifecycle'), [
+  'runLifecycleSweep',
+  'notifyUsersWithoutAlertChannel',
+  'getAlertCoverageReport',
+]);
 
 // In-app feedback (emails connect@exit1.dev via Resend)
-export { submitFeedback } from './feedback';
+lazy((): typeof import('./feedback') => require('./feedback'), ['submitFeedback']);
 
 // Inbound SMS on the Twilio number → forwarded to email via Resend
-export { twilioInboundSms } from './twilio-inbound';
+lazy((): typeof import('./twilio-inbound') => require('./twilio-inbound'), ['twilioInboundSms']);
