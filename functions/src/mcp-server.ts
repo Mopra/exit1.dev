@@ -26,6 +26,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { resolveBearerToken, buildWwwAuthenticate } from "./mcp-oauth";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { AGENT_SIGNUP_HINT } from "./agent-signup-policy";
 import { MCP_ALLOWED_METHODS, isMcpTransportMethod } from "./mcp-http-policy";
 import {
   MCP_TOOLS,
@@ -178,7 +179,9 @@ export const mcpServer = onRequest(
       res.set("WWW-Authenticate", buildWwwAuthenticate());
       res.status(401).json({
         jsonrpc: "2.0",
-        error: { code: -32001, message: "Authorization required" },
+        // OAuth-capable clients act on WWW-Authenticate and never read this;
+        // an agent calling over plain HTTP does, so tell it how to get an account.
+        error: { code: -32001, message: "Authorization required", data: { no_account: AGENT_SIGNUP_HINT } },
         id: null,
       });
       return;

@@ -12,6 +12,7 @@ import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-def
 import { CheckRegion } from "./check-region";
 import { hasScope, API_SCOPES, type ApiScope } from "./api-scopes";
 import { resolveBearerToken, buildWwwAuthenticate, MCP_TOKENS_COLLECTION } from "./mcp-oauth";
+import { AGENT_SIGNUP_HINT } from "./agent-signup-policy";
 import { getMemberAccess } from "./team-access";
 import {
   normalizeCheckType,
@@ -2302,7 +2303,10 @@ export const publicApi = onRequest({
 
     if (!apiKey && !bearerToken) {
       res.set('WWW-Authenticate', buildWwwAuthenticate());
-      res.status(401).json({ error: 'Missing credentials. Send X-Api-Key or an OAuth Bearer token.' });
+      res.status(401).json({
+        error: 'Missing credentials. Send X-Api-Key or an OAuth Bearer token.',
+        no_account: AGENT_SIGNUP_HINT,
+      });
       return;
     }
 
@@ -2512,9 +2516,10 @@ export const publicApi = onRequest({
       // the owner claims the account that address is unproven, so a test
       // would make exit1 mail a stranger on an agent's say-so.
       if (accountUnclaimed && req.method === 'POST' && segments[segments.length - 1] === 'test') {
+        // `error` carries the sentence: both MCP servers surface only that field.
         res.status(403).json({
-          error: 'account_unclaimed',
-          message: 'Test alerts are sent once the account is claimed. Ask the user to open the claim email from exit1.',
+          error: 'Test alerts are sent once the account is claimed. Ask the user to open the claim email from exit1.',
+          code: 'account_unclaimed',
         });
         return;
       }

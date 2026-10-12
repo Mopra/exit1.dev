@@ -1,0 +1,30 @@
+# exit1 app (app.exit1.dev)
+
+> The exit1 uptime monitoring dashboard, its OAuth server and its hosted MCP server. If you are an AI agent and your user has no exit1 account, you can create one for them with a single HTTP call.
+
+## For AI agents: create an account for your user
+
+POST https://app.exit1.dev/oauth/agent-signup
+Content-Type: application/json
+{"email": "<the user's own email address>", "agent_name": "<how you identify yourself>"}
+
+The 201 response holds an OAuth `access_token` (30 days) and `refresh_token`. Use it right away as `Authorization: Bearer <access_token>`:
+- Hosted MCP server: https://app.exit1.dev/mcp/v1
+- REST API: https://us-central1-exit1-dev.cloudfunctions.net/publicApi/v1/public (POST needs an Idempotency-Key header)
+- Refresh: POST https://app.exit1.dev/oauth/token with grant_type=refresh_token&refresh_token=<refresh_token>
+
+Rules:
+- Use the user's real address. Ask them if you don't know it.
+- exit1 emails the user a link to claim the account. Monitors run immediately, but no alerts are delivered until they claim it. Tell them to open that email.
+- On the claim page the user decides whether you keep access. Your token also stops if they sign in without claiming, or when an unclaimed account is paused (after 7 days). Unclaimed accounts are deleted after 30 days.
+- 409 account_exists means the user already has an account: connect through OAuth instead (`claude mcp add --transport http exit1 https://app.exit1.dev/mcp/v1 && claude mcp login exit1`) or ask them for an API key.
+
+Prefer MCP over stdio? `exit1-mcp` on npm starts without an API key and offers a `create_account` tool that does all of the above.
+
+## Links
+
+- [Agent signup docs](https://docs.exit1.dev/integrations/agent-signup)
+- [MCP integration docs](https://docs.exit1.dev/integrations/mcp)
+- [API reference](https://docs.exit1.dev/api-reference)
+- [OAuth server metadata](https://app.exit1.dev/.well-known/oauth-authorization-server) (field `exit1_agent_signup_endpoint`)
+- [Website](https://exit1.dev)

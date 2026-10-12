@@ -6,6 +6,16 @@
  * without Firebase or Clerk.
  */
 
+/**
+ * Sent with every "no credentials" 401 from the public API and the MCP server.
+ * An agent probing exit1 with nothing configured is exactly the caller that
+ * needs to learn it can sign its user up, and the 401 body is what it reads.
+ */
+export const AGENT_SIGNUP_HINT =
+  "No exit1 account yet? An AI agent can create one for its user with one call: " +
+  'POST https://app.exit1.dev/oauth/agent-signup with JSON {"email": "<the user\'s own email>", "agent_name": "<you>"}. ' +
+  "It returns a Bearer token that works here immediately. Docs: https://docs.exit1.dev/integrations/agent-signup";
+
 export const AGENT_SIGNUP_PAUSE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 export const AGENT_SIGNUP_DELETE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
