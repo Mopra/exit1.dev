@@ -5,8 +5,11 @@
 - Alert/check code runs on the VPS: changes there need a VPS rebuild in both regions, before hosting.
 - No session can post to Discord: customer replies there are the human's. `quest blocked` only works on a quest a session holds.
 - npm and MCP registry publishes need the human's npm login: sessions bump, test and push exit1-mcp, then stop; the human publishes the newest version.
+- A session that stops while its own long background job runs (deploy:changed --all, a timed pilot) is waiting, not stalled: check its last note, leave it, do not re-file.
+- A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-13 Round (hourly, first after 04:00): look back found 4 silent stops on the lazy-load quest, all waits on its own --all deploy (it landed); wrote a rule, no quest. The re-measure quest is [x] with no result before its 2026-10-19 date: noted it, will file a fresh one then.
 - 2026-10-13 Rounds (hourly, three so far, latest at bca4c5e): nothing to do. 16 done, 0 open, no aim; only the cold-start re-measure waits on its timer (2026-10-19).
 - 2026-10-13 Round (human left): nothing to do. MCP registry now lists exit1-mcp 0.4.0 as latest, so that Open item is closed. Only the cold-start re-measure waits on its timer (2026-10-19); no aim open.
 - 2026-10-12 Round (hourly): nothing to do. Only the cold-start re-measure waits on its own timer (2026-10-19); no aim open.
@@ -32,4 +35,4 @@
 - 2026-10-10 Woken for "Deploy JSON assertions": not blocked, its session waits on its own background deploy:changed. Noted that "Deploy list-endpoint include=uptime (57abb82)" is likely covered by the same deploy.
 
 ## Open
-- Cold-start re-measure quest unblocks itself 2026-10-19T09:00Z; nothing to do before then.
+- Cold-start re-measure: its quest was checked off early with no result. On the first round on or after 2026-10-19, file "Functions: re-measure cold starts (week after rollout, 2026-10-19)" (Model: haiku) with the baseline from the old quest, unless a result was noted there.
