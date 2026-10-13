@@ -70,8 +70,17 @@ type MonitorIndexEntry = {
   daysWithData: number;
 };
 
+/**
+ * Where a public page's up/down signal comes from. "direct" probes the site.
+ * "vendor_status" reads the vendor's own status API, for sites whose bot
+ * firewall refuses every datacenter probe (openai.com, medium.com, ...).
+ * Those pages carry no response time: we would only be timing the status API.
+ */
+type MonitorSource = 'direct' | 'vendor_status';
+
 type MonitorPage = MonitorIndexEntry & {
   checkId: string;
+  source: MonitorSource;
   stats: MonitorStats;
   heartbeat: HeartbeatDay[];      // oldest → newest, up to 90 entries
   updatedAt: number;
@@ -248,6 +257,7 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
     lastChecked: number;
     responseTime: number | null;
     explicitSlug: string | null;
+    source: MonitorSource;
   };
 
   const checks: CheckMeta[] = [];
@@ -256,8 +266,13 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
     if (d.type === 'domain') continue; // domain-only checks have no uptime data
     if (d.disabled === true) continue;
     const userId = typeof d.userId === 'string' ? d.userId : '';
-    const url = typeof d.url === 'string' ? d.url : '';
+    // publicUrl is the site the page is about when the check probes a
+    // different URL (robots.txt, or a vendor status API). The slug, host and
+    // shown link all follow it, so switching the probe never moves the page.
+    const probeUrl = typeof d.url === 'string' ? d.url : '';
+    const url = typeof d.publicUrl === 'string' && d.publicUrl.trim() ? d.publicUrl.trim() : probeUrl;
     if (!userId || !url) continue;
+    const source: MonitorSource = d.publicSource === 'vendor_status' ? 'vendor_status' : 'direct';
     checks.push({
       id: doc.id,
       userId,
@@ -266,7 +281,8 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
       type: typeof d.type === 'string' ? d.type : 'website',
       status: publicCurrentStatus(typeof d.status === 'string' ? d.status : 'unknown', d.lastError),
       lastChecked: typeof d.lastChecked === 'number' ? d.lastChecked : 0,
-      responseTime: typeof d.responseTime === 'number' ? d.responseTime : null,
+      responseTime: source === 'direct' && typeof d.responseTime === 'number' ? d.responseTime : null,
+      source,
       explicitSlug: typeof d.publicSlug === 'string' && d.publicSlug.trim() ? slugify(d.publicSlug) : null,
     });
   }
@@ -319,7 +335,8 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
 
   for (const c of checks) {
     const slug = slugOf.get(c.id)!;
-    const heartbeat = dailyByCheck.get(c.id) ?? [];
+    const daily = dailyByCheck.get(c.id) ?? [];
+    const heartbeat = c.source === 'vendor_status' ? daily.map((d) => ({ ...d, responseMs: null })) : daily;
 
     // 30-day average response + total checks from the daily series.
     let respSum = 0;
@@ -355,6 +372,7 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
     pages.push({
       ...indexEntry,
       checkId: c.id,
+      source: c.source,
       stats: {
         uptime7d: uptimeSince(heartbeat, sevenDaysAgo),
         uptime30d,
