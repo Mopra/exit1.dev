@@ -714,6 +714,12 @@ export interface LifecycleSweepResult {
   noChannelNotices: number;
   /** Notices the provider rejected. Unstamped, so they retry on the next run. */
   noChannelFailed: number;
+  /** Day-3 trial invites mailed (on a dry run, would be). */
+  trialInvites1: number;
+  /** Day-10 trial invites mailed (on a dry run, would be). */
+  trialInvites2: number;
+  /** Trial invites that failed or could not be checked. Unstamped, so they retry. */
+  trialInvitesFailed: number;
   propertiesSynced: number;
   errors: number;
   stampFailed: number;

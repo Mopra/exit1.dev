@@ -139,7 +139,7 @@ export function AlertCoveragePanel() {
       return;
     }
     toast.success(dryRun ? 'Sweep dry run' : 'Sweep complete', {
-      description: `${d.usersExamined} examined, ${d.firstIncidentEvents} first-incident (${d.firstIncidentStampedSilently} historical, not fired), ${d.noChannelNotices} no-channel notice${d.noChannelNotices === 1 ? '' : 's'}${d.noChannelFailed ? ` (${d.noChannelFailed} failed)` : ''}, ${d.propertiesSynced} properties${d.errors ? `, ${d.errors} errors` : ''}${d.stampFailed ? `, ${d.stampFailed} stamp failures` : ''}${d.truncated ? ', stopped at time budget' : ''}.`,
+      description: `${d.usersExamined} examined, ${d.firstIncidentEvents} first-incident (${d.firstIncidentStampedSilently} historical, not fired), ${d.noChannelNotices} no-channel notice${d.noChannelNotices === 1 ? '' : 's'}${d.noChannelFailed ? ` (${d.noChannelFailed} failed)` : ''}, ${d.trialInvites1 ?? 0} day-3 and ${d.trialInvites2 ?? 0} day-10 trial invite${(d.trialInvites1 ?? 0) + (d.trialInvites2 ?? 0) === 1 ? '' : 's'}${d.trialInvitesFailed ? ` (${d.trialInvitesFailed} failed)` : ''}, ${d.propertiesSynced} properties${d.errors ? `, ${d.errors} errors` : ''}${d.stampFailed ? `, ${d.stampFailed} stamp failures` : ''}${d.truncated ? ', stopped at time budget' : ''}.`,
       duration: 10000,
     });
   };

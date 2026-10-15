@@ -40,7 +40,7 @@ import {
   getResendCredentials,
   getDay3ApiKey,
 } from "./env";
-import { CONFIG } from "./config";
+import { CONFIG, TIER_LIMITS } from "./config";
 import { requireAdmin } from "./require-admin";
 import { triggerResendEvent, RESEND_RATE_LIMIT_MS } from "./resend-sync";
 import { syncContactToProviders } from "./contact-sync";
@@ -58,7 +58,22 @@ import {
   mailerShouldSkip,
   pastSoftDeadline,
   NIGHTLY_NO_CHANNEL_CAP,
+  NIGHTLY_TRIAL_INVITE_CAP,
+  decideTrialInvite,
+  isTrialInviteEligible,
+  minutesSoonerOnIndie,
+  type BillingFacts,
 } from "./lifecycle-policy";
+import { createClerkClient } from "@clerk/backend";
+import { sendDay3Email } from "./day3-email";
+import { getDay3Contact } from "./day3-sync";
+import {
+  buildTrialInvite1,
+  buildTrialInvite2,
+  hostnameOf,
+  TRIAL_INVITE_FROM,
+  TRIAL_INVITE_REPLY_TO,
+} from "./trial-invite-email";
 import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 import { getActiveSuppressions } from "./email-suppression";
 
@@ -416,6 +431,268 @@ export const notifyUsersWithoutAlertChannel = onCall(
 );
 
 // ----------------------------------------------------------------------------
+// Trial invites: day 3 and day 10 for new free users
+// ----------------------------------------------------------------------------
+
+/** Read Clerk's billing subscription for one user, reduced to what eligibility needs. Null when unknown. */
+async function fetchBillingFacts(uid: string, secretKey: string): Promise<BillingFacts | null> {
+  try {
+    const client = createClerkClient({ secretKey });
+    const sub = (await client.billing.getUserBillingSubscription(uid)) as unknown as {
+      eligibleForFreeTrial?: unknown;
+      subscriptionItems?: Array<{
+        plan?: { slug?: unknown } | null;
+        lifetimePaid?: { amount?: unknown } | null;
+      }>;
+    } | null;
+    if (!sub || typeof sub !== "object") return null;
+    const items = Array.isArray(sub.subscriptionItems) ? sub.subscriptionItems : [];
+    return {
+      eligibleForFreeTrial: typeof sub.eligibleForFreeTrial === "boolean" ? sub.eligibleForFreeTrial : null,
+      items: items.map((i) => ({
+        planSlug: typeof i?.plan?.slug === "string" && i.plan.slug.trim() ? i.plan.slug.trim() : null,
+        lifetimePaidCents: Number(i?.lifetimePaid?.amount) || 0,
+      })),
+    };
+  } catch (e) {
+    logger.warn("[lifecycle] trial invite billing lookup failed; skipping user this run", {
+      userId: uid,
+      error: (e as Error)?.message ?? String(e),
+    });
+    return null;
+  }
+}
+
+/** The user's checks with the fields the copy needs. Only read for users about to be mailed. */
+async function loadInviteChecks(
+  uid: string,
+): Promise<Array<{ host: string | null; lastDowntime: number | null; disabled: boolean }>> {
+  const snap = await firestore
+    .collection("checks")
+    .where("userId", "==", uid)
+    .select("url", "name", "lastDowntime", "disabled")
+    .limit(200)
+    .get();
+  return snap.docs.map((d) => {
+    const name = ((d.get("name") as string | undefined) ?? "").trim();
+    return {
+      host: hostnameOf(d.get("url") as string | undefined) ?? (name || null),
+      lastDowntime: typeof d.get("lastDowntime") === "number" ? (d.get("lastDowntime") as number) : null,
+      disabled: d.get("disabled") === true,
+    };
+  });
+}
+
+export interface TrialInviteResult {
+  dryRun: boolean;
+  /** Users the date and tier rules made due tonight, before billing and suppression checks. */
+  due: number;
+  invite1Sent: number;
+  invite2Sent: number;
+  skippedEverSubscribed: number;
+  skippedSuppressed: number;
+  skippedUnsubscribed: number;
+  skippedNoEmail: number;
+  failed: number;
+  stampFailed: number;
+  truncated: boolean;
+  sampleUserIds: string[];
+}
+
+/**
+ * Invite new free users to start the 7-day trial: once on day 3, once more on
+ * day 10 if they are still free. Same safety as the no-channel notice: dry-run,
+ * one stamp per user per email (`lifecycle.trialInvite1At` / `trialInvite2At`),
+ * a nightly cap, suppressions skipped, and only accounts created after
+ * TRIAL_INVITE_FEATURE_START_MS. On a dry run `invite1Sent` / `invite2Sent` are
+ * what a real run would send; the Clerk and Day3 lookups still run, read-only,
+ * so the counts are honest.
+ */
+export async function sendTrialInvites(opts: {
+  dryRun: boolean;
+  limit: number;
+  users: Map<string, CoverageUser>;
+  rows: UserCoverage[];
+  facts: Map<string, ClerkUserFacts>;
+  startedAt: number;
+}): Promise<TrialInviteResult> {
+  const { dryRun, limit, users, rows, facts, startedAt } = opts;
+  const result: TrialInviteResult = {
+    dryRun,
+    due: 0,
+    invite1Sent: 0,
+    invite2Sent: 0,
+    skippedEverSubscribed: 0,
+    skippedSuppressed: 0,
+    skippedUnsubscribed: 0,
+    skippedNoEmail: 0,
+    failed: 0,
+    stampFailed: 0,
+    truncated: false,
+    sampleUserIds: [],
+  };
+
+  const now = Date.now();
+  const due: Array<{ row: UserCoverage; f: ClerkUserFacts; which: "invite1" | "invite2" }> = [];
+  for (const row of rows) {
+    const u = users.get(row.userId);
+    const f = facts.get(row.userId);
+    if (!u || !f) continue;
+    const d = decideTrialInvite({
+      tier: u.tier,
+      subscribedPlanKey: u.subscribedPlanKey,
+      checkCount: row.checkCount,
+      createdAt: f.createdAt,
+      invite1At: u.lifecycle.trialInvite1At,
+      invite2At: u.lifecycle.trialInvite2At,
+      now,
+    });
+    if ("send" in d) due.push({ row, f, which: d.send });
+  }
+  result.due = due.length;
+  if (due.length === 0) {
+    logger.info("[lifecycle] trial invites complete", result as unknown as Record<string, unknown>);
+    return result;
+  }
+
+  const secretKey = getClerkSecretKey();
+  const day3Key = getDay3ApiKey();
+  if (!secretKey) throw new HttpsError("failed-precondition", "No Clerk secret key is configured");
+  if (!day3Key) throw new HttpsError("failed-precondition", "DAY3_API_KEY is not configured");
+
+  const suppressed = new Set<string>();
+  const emails = due.map((d) => d.f.email).filter((e): e is string => Boolean(e));
+  if (emails.length > 0) {
+    for (const s of await getActiveSuppressions(emails)) {
+      if (s.email) suppressed.add(s.email.toLowerCase());
+    }
+  }
+
+  const minutesSooner = minutesSoonerOnIndie(
+    TIER_LIMITS.free.minCheckIntervalMinutes,
+    TIER_LIMITS.indie.minCheckIntervalMinutes,
+  );
+  let budget = limit;
+
+  for (const { row, f, which } of due) {
+    if (budget <= 0) break;
+    if (pastSoftDeadline(startedAt, Date.now())) {
+      result.truncated = true;
+      break;
+    }
+    if (!f.email) {
+      result.skippedNoEmail++;
+      continue;
+    }
+    if (suppressed.has(f.email.trim().toLowerCase())) {
+      result.skippedSuppressed++;
+      continue;
+    }
+
+    // Never paid, never trialled, not Founders: Clerk's own trial verdict plus
+    // the subscription items. Unknown counts as "skip".
+    if (!isTrialInviteEligible(await fetchBillingFacts(row.userId, secretKey))) {
+      result.skippedEverSubscribed++;
+      continue;
+    }
+
+    // Marketing opt-outs live on the Day3 contact. A missing contact is fine;
+    // any other lookup failure skips the user this run.
+    const contact = await getDay3Contact(day3Key, f.email);
+    if (contact.ok && contact.contact?.status === "unsubscribed") {
+      result.skippedUnsubscribed++;
+      continue;
+    }
+    const lookupCode = String(contact.error ?? "").toLowerCase();
+    if (!contact.ok && !lookupCode.includes("not_found") && lookupCode !== "http_404") {
+      result.failed++;
+      logger.warn("[lifecycle] trial invite contact lookup failed; skipping user this run", {
+        userId: row.userId,
+        error: contact.error,
+      });
+      continue;
+    }
+
+    if (result.sampleUserIds.length < 10) result.sampleUserIds.push(row.userId);
+
+    if (dryRun) {
+      if (which === "invite1") result.invite1Sent++;
+      else result.invite2Sent++;
+      budget--;
+      continue;
+    }
+
+    let body: { subject: string; text: string };
+    try {
+      const checks = await loadInviteChecks(row.userId);
+      if (which === "invite1") {
+        body = buildTrialInvite1({
+          firstName: f.firstName,
+          checkCount: row.checkCount,
+          hostnames: checks
+            .filter((c) => !c.disabled)
+            .map((c) => c.host)
+            .filter((h): h is string => Boolean(h)),
+        });
+      } else {
+        // The latest outage since signup, on any of their monitors.
+        const since = f.createdAt ?? 0;
+        const incident = checks
+          .filter((c) => c.lastDowntime !== null && c.lastDowntime >= since)
+          .sort((a, b) => (b.lastDowntime ?? 0) - (a.lastDowntime ?? 0))[0];
+        body = buildTrialInvite2({
+          firstName: f.firstName,
+          hadIncident: Boolean(incident),
+          incidentHost: incident?.host ?? null,
+          minutesSooner,
+        });
+      }
+    } catch (e) {
+      result.failed++;
+      logger.warn("[lifecycle] trial invite could not be built", {
+        userId: row.userId,
+        error: (e as Error)?.message ?? String(e),
+      });
+      continue;
+    }
+
+    const sendStarted = Date.now();
+    const sent = await sendDay3Email(day3Key, {
+      from: TRIAL_INVITE_FROM,
+      to: f.email,
+      subject: body.subject,
+      text: body.text,
+      replyTo: TRIAL_INVITE_REPLY_TO,
+      idempotencyKey: `trial-${which}:${row.userId}`,
+    });
+    if (!sent.ok) {
+      result.failed++;
+      logger.warn("[lifecycle] trial invite send failed", {
+        userId: row.userId,
+        which,
+        status: sent.status,
+        error: sent.error,
+      });
+      continue;
+    }
+
+    // Provider accepted it. Stamp in its own try, exactly as the no-channel notice does.
+    const stampKey = which === "invite1" ? "lifecycle.trialInvite1At" : "lifecycle.trialInvite2At";
+    const ok = await writeStamps(row.userId, { [stampKey]: Date.now() });
+    if (!ok) result.stampFailed++;
+    else if (which === "invite1") result.invite1Sent++;
+    else result.invite2Sent++;
+    budget--;
+
+    const remaining = RESEND_RATE_LIMIT_MS - (Date.now() - sendStarted);
+    if (remaining > 0) await sleep(remaining);
+  }
+
+  logger.info("[lifecycle] trial invites complete", result as unknown as Record<string, unknown>);
+  return result;
+}
+
+// ----------------------------------------------------------------------------
 // The sweep
 // ----------------------------------------------------------------------------
 
@@ -429,6 +706,12 @@ export interface LifecycleSweepResult {
   noChannelNotices: number;
   /** Notices the provider rejected. They stay unstamped and retry tomorrow. */
   noChannelFailed: number;
+  /** Day-3 trial invites mailed (or, on a dry run, that would be). */
+  trialInvites1: number;
+  /** Day-10 trial invites mailed (or, on a dry run, that would be). */
+  trialInvites2: number;
+  /** Trial invites that failed to send or could not be checked. Unstamped, so they retry. */
+  trialInvitesFailed: number;
   propertiesSynced: number;
   errors: number;
   stampFailed: number;
@@ -578,6 +861,9 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
       firstIncidentStampedSilently: 0,
       noChannelNotices: 0,
       noChannelFailed: 0,
+      trialInvites1: 0,
+      trialInvites2: 0,
+      trialInvitesFailed: 0,
       propertiesSynced: 0,
       errors: 0,
       stampFailed: 0,
@@ -598,6 +884,9 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
       firstIncidentStampedSilently: 0,
       noChannelNotices: 0,
       noChannelFailed: 0,
+      trialInvites1: 0,
+      trialInvites2: 0,
+      trialInvitesFailed: 0,
       propertiesSynced: 0,
       errors: 0,
       stampFailed: 0,
@@ -638,6 +927,28 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
     } catch (e) {
       result.errors++;
       logger.error("[lifecycle] no-channel notices failed", {
+        error: (e as Error)?.message ?? String(e),
+      });
+    }
+
+    // Trial invites next, for the same reason: they are user-visible and capped.
+    try {
+      const invites = await sendTrialInvites({
+        dryRun,
+        limit: NIGHTLY_TRIAL_INVITE_CAP,
+        users,
+        rows: interesting,
+        facts,
+        startedAt,
+      });
+      result.trialInvites1 = invites.invite1Sent;
+      result.trialInvites2 = invites.invite2Sent;
+      result.trialInvitesFailed = invites.failed;
+      result.stampFailed += invites.stampFailed;
+      if (invites.truncated) result.truncated = true;
+    } catch (e) {
+      result.errors++;
+      logger.error("[lifecycle] trial invites failed", {
         error: (e as Error)?.message ?? String(e),
       });
     }

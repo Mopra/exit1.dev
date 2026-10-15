@@ -233,6 +233,8 @@ export function computeUserCoverage(
 export interface CoverageUser {
   userId: string;
   tier: Tier;
+  /** Current Clerk plan slug cached on the user doc, or null. */
+  subscribedPlanKey: string | null;
   /** Present when the user went through the survey flow (possibly with every answer skipped). */
   onboarding: { sources: string[]; useCases: string[]; teamSize: string | null } | null;
   lifecycle: {
@@ -240,6 +242,8 @@ export interface CoverageUser {
     noChannelNotifiedAt: number;
     activationSyncedAt: number;
     activationFingerprint: string | null;
+    trialInvite1At: number;
+    trialInvite2At: number;
   };
 }
 
@@ -262,7 +266,7 @@ export interface CoverageRows {
 export async function loadCoverageRows(): Promise<CoverageRows> {
   const [inputs, usersSnap] = await Promise.all([
     loadCoverageInputs(),
-    firestore.collection("users").select("tier", "onboarding", "lifecycle", "agentSignup").get(),
+    firestore.collection("users").select("tier", "subscribedPlanKey", "onboarding", "lifecycle", "agentSignup").get(),
   ]);
 
   const users = new Map<string, CoverageUser>();
@@ -286,6 +290,7 @@ export async function loadCoverageRows(): Promise<CoverageRows> {
     users.set(doc.id, {
       userId: doc.id,
       tier: coerceTier(doc.get("tier")),
+      subscribedPlanKey: typeof doc.get("subscribedPlanKey") === "string" ? (doc.get("subscribedPlanKey") as string) || null : null,
       onboarding,
       lifecycle: {
         firstIncidentEventAt: Number(lc.firstIncidentEventAt) || 0,
@@ -295,6 +300,8 @@ export async function loadCoverageRows(): Promise<CoverageRows> {
         noChannelNotifiedAt: Number(lc.noChannelNotifiedAt) || 0,
         activationSyncedAt: Number(lc.activationSyncedAt) || 0,
         activationFingerprint: typeof lc.activationFingerprint === "string" ? lc.activationFingerprint : null,
+        trialInvite1At: Number(lc.trialInvite1At) || 0,
+        trialInvite2At: Number(lc.trialInvite2At) || 0,
       },
     });
   }
