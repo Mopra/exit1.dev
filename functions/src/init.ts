@@ -6,6 +6,14 @@ import { onCall } from "firebase-functions/v2/https";
 import { createClerkClient } from '@clerk/backend';
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 import { CONFIG } from "./config";
+import {
+  applyReverseTrial,
+  cachedPaidTier,
+  readReverseTrial,
+  shouldStampConversion,
+  trialCacheExpired,
+  type ReverseTrialState,
+} from "./reverse-trial-policy";
 
 // Initialize Firebase Admin
 initializeApp({
@@ -109,7 +117,7 @@ export type UserTier = 'free' | 'indie' | 'nano' | 'pro';
 // Trade-off: Tier changes take longer to reflect (acceptable since subscription changes are rare)
 const USER_TIER_CACHE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-function normalizeTier(value: unknown): UserTier | null {
+export function normalizeTier(value: unknown): UserTier | null {
   // Back-compat: migrate values stored by older deploys.
   if (value === 'premium') return 'nano';
   // Agency was retired; Pro absorbed its entitlements, so both legacy values
@@ -151,7 +159,10 @@ function safeSecretValue(secret: { value: () => string }): string | null {
   }
 }
 
-async function fetchTierFromClerk(uid: string): Promise<{ tier: UserTier; planKey: string | null }> {
+async function fetchTierFromClerk(
+  uid: string,
+  opts: { strict?: boolean } = {},
+): Promise<{ tier: UserTier; planKey: string | null }> {
   // Try prod first, then dev (mirrors other code paths in this repo).
   const prodSecretKey = safeSecretValue(CLERK_SECRET_KEY_PROD);
   const devSecretKey = safeSecretValue(CLERK_SECRET_KEY_DEV);
@@ -261,7 +272,43 @@ async function fetchTierFromClerk(uid: string): Promise<{ tier: UserTier; planKe
     }
   }
 
+  // Strict callers (the reverse-trial expiry) must never read a failed lookup
+  // as "free": that is the difference between leaving a paying customer alone
+  // and downgrading them.
+  if (opts.strict) {
+    throw new Error(`Clerk billing lookup failed in every instance for ${uid}`);
+  }
   return { tier: 'free', planKey: null };
+}
+
+/**
+ * The Clerk tier with no fallbacks: throws unless a Clerk instance actually
+ * answered. Used where a wrong 'free' would downgrade someone.
+ */
+export const fetchTierFromClerkStrict = (uid: string) => fetchTierFromClerk(uid, { strict: true });
+
+type FreshTier = {
+  tier: UserTier;
+  planKey: string | null;
+  /** What Clerk alone says, before the reverse trial is laid on top. */
+  paidTier: UserTier;
+  source: 'reverse_trial' | 'clerk';
+};
+
+/**
+ * Clerk's tier with the reverse trial laid on top. Every tier resolution goes
+ * through here, so the trial is honoured wherever tier matters and only ever
+ * lifts Free (see reverse-trial-policy.ts).
+ */
+async function resolveFreshTier(uid: string, trial: ReverseTrialState): Promise<FreshTier> {
+  const paid = await fetchTierFromClerk(uid);
+  const eff = applyReverseTrial(paid.tier, trial, Date.now());
+  return { tier: eff.tier, planKey: paid.planKey, paidTier: paid.tier, source: eff.source };
+}
+
+/** A cached tier as it should be served now: the trial applied, or taken off once it is over. */
+function effectiveCachedTier(cachedTier: UserTier, trial: ReverseTrialState): UserTier {
+  return applyReverseTrial(cachedPaidTier(cachedTier, trial), trial, Date.now()).tier;
 }
 
 /**
@@ -299,11 +346,19 @@ async function fetchTierFromClerk(uid: string): Promise<{ tier: UserTier; planKe
 const persistTierAndSyncChecks = async (
   userRef: FirebaseFirestore.DocumentReference,
   uid: string,
-  fresh: { tier: UserTier; planKey: string | null },
+  fresh: FreshTier,
   previousTier: UserTier | null,
+  trial: ReverseTrialState,
 ): Promise<void> => {
   await userRef.set(
-    { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
+    {
+      tier: fresh.tier,
+      subscribedPlanKey: fresh.planKey,
+      tierUpdatedAt: Date.now(),
+      tierSource: fresh.source,
+      // A paid plan seen on a trial account ends the trial for good.
+      ...(shouldStampConversion(fresh.paidTier, trial) ? { reverseTrialConvertedAt: Date.now() } : {}),
+    },
     { merge: true },
   );
 
@@ -345,33 +400,36 @@ export const getUserTierDetailed = async (
 
   try {
     const snap = await userRef.get();
+    const trial = readReverseTrial(snap.exists ? snap.data() : null);
     if (snap.exists) {
       const data = snap.data() || {};
       const cachedTier = normalizeTier((data as { tier?: unknown }).tier);
       const cachedAt = Number((data as { tierUpdatedAt?: unknown }).tierUpdatedAt || 0);
 
-      if (cachedTier && cachedAt > Date.now() - USER_TIER_CACHE_MS) {
-        return { tier: cachedTier, failedOpen: false };
+      // A tier cached from a trial that has since ended is stale however new it is.
+      if (cachedTier && cachedAt > Date.now() - USER_TIER_CACHE_MS && !trialCacheExpired(trial, Date.now())) {
+        return { tier: effectiveCachedTier(cachedTier, trial), failedOpen: false };
       }
 
       // If we have any cached tier at all, keep it as a safe fallback if Clerk is unavailable.
       if (cachedTier) {
         try {
-          const fresh = await fetchTierFromClerk(uid);
-          await persistTierAndSyncChecks(userRef, uid, fresh, cachedTier);
+          const fresh = await resolveFreshTier(uid, trial);
+          await persistTierAndSyncChecks(userRef, uid, fresh, cachedTier, trial);
           return { tier: fresh.tier, failedOpen: false };
         } catch (e) {
-          logger.warn(`Tier refresh failed for ${uid}, using cached tier: ${cachedTier}`, e);
-          return { tier: cachedTier, failedOpen: false };
+          const fallback = effectiveCachedTier(cachedTier, trial);
+          logger.warn(`Tier refresh failed for ${uid}, using cached tier: ${fallback}`, e);
+          return { tier: fallback, failedOpen: false };
         }
       }
     }
 
-    const fresh = await fetchTierFromClerk(uid);
+    const fresh = await resolveFreshTier(uid, trial);
     // No cached tier to compare against — pass null so the sync runs. It is
     // idempotent (docs already holding the value are skipped), and this is the
     // path a user takes at most once.
-    await persistTierAndSyncChecks(userRef, uid, fresh, null);
+    await persistTierAndSyncChecks(userRef, uid, fresh, null, trial);
     return { tier: fresh.tier, failedOpen: false };
   } catch (error) {
     logger.warn(`Error getting user tier for ${uid}, defaulting to free:`, error);
@@ -388,19 +446,21 @@ export const getUserTierLive = async (uid: string): Promise<UserTier> => {
     // Read the cached tier first so the check-doc sync can tell whether this
     // resolution actually changed anything.
     let previousTier: UserTier | null = null;
+    let trial = readReverseTrial(null);
     try {
       const snap = await userRef.get();
       if (snap.exists) {
         const data = snap.data() || {};
         previousTier = normalizeTier((data as { tier?: unknown }).tier);
+        trial = readReverseTrial(data);
       }
     } catch {
       // Leave null — persistTierAndSyncChecks treats unknown as "do not sync"
       // rather than guessing at an upgrade.
     }
 
-    const fresh = await fetchTierFromClerk(uid);
-    await persistTierAndSyncChecks(userRef, uid, fresh, previousTier);
+    const fresh = await resolveFreshTier(uid, trial);
+    await persistTierAndSyncChecks(userRef, uid, fresh, previousTier, trial);
     return fresh.tier;
   } catch (error) {
     logger.warn(`Live tier lookup failed for ${uid}, falling back to cached tier`, error);
@@ -410,7 +470,7 @@ export const getUserTierLive = async (uid: string): Promise<UserTier> => {
         const data = snap.data() || {};
         const cachedTier = normalizeTier((data as { tier?: unknown }).tier);
         if (cachedTier) {
-          return cachedTier;
+          return effectiveCachedTier(cachedTier, readReverseTrial(data));
         }
       }
     } catch (readError) {
@@ -455,23 +515,30 @@ export const getUserPlanInfo = async (
       : null;
     const cachedAt = Number((data as { tierUpdatedAt?: unknown }).tierUpdatedAt || 0);
 
-    const isFresh = cachedTier && cachedAt > Date.now() - USER_TIER_CACHE_MS;
+    const trial = readReverseTrial(data);
+    const isFresh = cachedTier && cachedAt > Date.now() - USER_TIER_CACHE_MS && !trialCacheExpired(trial, Date.now());
     if (isFresh && cachedTier) {
-      tier = cachedTier;
+      tier = effectiveCachedTier(cachedTier, trial);
       subscribedPlanKey = cachedPlanKey;
     } else {
       try {
-        const fresh = await fetchTierFromClerk(uid);
+        const fresh = await resolveFreshTier(uid, trial);
         tier = fresh.tier;
         subscribedPlanKey = fresh.planKey;
         await userRef.set(
-          { tier, subscribedPlanKey, tierUpdatedAt: Date.now() },
+          {
+            tier,
+            subscribedPlanKey,
+            tierUpdatedAt: Date.now(),
+            tierSource: fresh.source,
+            ...(shouldStampConversion(fresh.paidTier, trial) ? { reverseTrialConvertedAt: Date.now() } : {}),
+          },
           { merge: true },
         );
       } catch (e) {
         logger.warn(`getUserPlanInfo: Clerk lookup failed for ${uid}, using cache`, e);
         if (cachedTier) {
-          tier = cachedTier;
+          tier = effectiveCachedTier(cachedTier, trial);
           subscribedPlanKey = cachedPlanKey;
         }
       }

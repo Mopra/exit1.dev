@@ -107,6 +107,7 @@ export type TrialInviteDecision =
   | {
     skip:
       | "not_free"
+      | "reverse_trial"
       | "plan_history"
       | "no_checks"
       | "unknown_signup"
@@ -131,8 +132,15 @@ export function decideTrialInvite(opts: {
   invite1At: number;
   invite2At: number;
   now: number;
+  /**
+   * True for an account that has had a reverse trial (running or over). Those
+   * accounts already had a week of Nano and get the reverse-trial emails, so
+   * an invite to "start a trial" would be a second, conflicting pitch.
+   */
+  hadReverseTrial?: boolean;
 }): TrialInviteDecision {
   const { tier, subscribedPlanKey, checkCount, createdAt, invite1At, invite2At, now } = opts;
+  if (opts.hadReverseTrial) return { skip: "reverse_trial" };
   if (tier !== "free") return { skip: "not_free" };
   if (subscribedPlanKey && subscribedPlanKey !== FREE_PLAN_SLUG) return { skip: "plan_history" };
   if (checkCount < 1) return { skip: "no_checks" };

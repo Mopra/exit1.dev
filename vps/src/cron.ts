@@ -79,6 +79,14 @@ const JOBS: JobSpec[] = [
     run: async () => (await import('../../functions/lib/lifecycle.js')).runScheduledLifecycleSweep(),
   },
   {
+    // Ends 7-day reverse trials: drops to Free (same enforcement as a lapsed
+    // plan) unless Clerk says they pay, then sends the "trial ended" email.
+    // Hourly so nobody keeps Nano long past their week.
+    name: 'reverseTrialExpiry', minute: 50, leaseMs: 30 * MIN,
+    // @ts-expect-error: functions/lib has no .d.ts
+    run: async () => (await import('../../functions/lib/reverse-trial.js')).runReverseTrialExpiry(),
+  },
+  {
     // Pauses agent-created accounts left unclaimed for 7 days, deletes them at 30.
     name: 'agentSignupExpiry', hours: [5], minute: 25, leaseMs: 30 * MIN,
     // @ts-expect-error: functions/lib has no .d.ts

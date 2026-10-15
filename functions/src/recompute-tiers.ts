@@ -4,6 +4,7 @@ import { createClerkClient } from "@clerk/backend";
 import { firestore, tierFromPlanKey, TIER_RANK } from "./init";
 import type { UserTier } from "./init";
 import { backfillCheckUserTier } from "./plan-enforcement";
+import { applyReverseTrial, readReverseTrial } from "./reverse-trial-policy";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 
 // Per-invocation user cap. Clerk page fetches dominate wall time; 200 users
@@ -172,12 +173,17 @@ export const recomputeAllTiers = onCall({
         const userId = user.id;
 
         try {
-          const { tier, planKey } = await resolveForUser(userId);
+          const paid = await resolveForUser(userId);
+          const planKey = paid.planKey;
 
           // Read the current cached doc to detect changes without writing.
           const userRef = firestore.collection("users").doc(userId);
           const snap = await userRef.get();
           const data = snap.exists ? (snap.data() || {}) : {};
+          // A running reverse trial lifts Free to Nano here exactly as it does
+          // in getUserTier, so a recompute never strips a trial.
+          const eff = applyReverseTrial(paid.tier, readReverseTrial(data), Date.now());
+          const tier = eff.tier;
           const cachedTier = (data as { tier?: unknown }).tier;
           const cachedPlanKey = typeof (data as { subscribedPlanKey?: unknown }).subscribedPlanKey === "string"
             ? (data as { subscribedPlanKey: string }).subscribedPlanKey
@@ -200,6 +206,7 @@ export const recomputeAllTiers = onCall({
               {
                 tier,
                 subscribedPlanKey: planKey,
+                tierSource: eff.source,
                 tierUpdatedAt: 0, // forces next getUserTier() to refetch from Clerk
               },
               { merge: true },

@@ -17,6 +17,7 @@
  */
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
+import { readReverseTrial, type ReverseTrialState } from "./reverse-trial-policy";
 import { TIER_LIMITS, type Tier } from "./config";
 import { filterWebhooksForEvent } from "./alert-helpers";
 import {
@@ -244,7 +245,11 @@ export interface CoverageUser {
     activationFingerprint: string | null;
     trialInvite1At: number;
     trialInvite2At: number;
+    /** The day-5 "N days left of your Nano trial" email. */
+    reverseTrialReminderAt: number;
   };
+  /** Reverse-trial fields from the user doc (all zero when the account never had one). */
+  reverseTrial: ReverseTrialState;
 }
 
 export interface CoverageRows {
@@ -266,7 +271,11 @@ export interface CoverageRows {
 export async function loadCoverageRows(): Promise<CoverageRows> {
   const [inputs, usersSnap] = await Promise.all([
     loadCoverageInputs(),
-    firestore.collection("users").select("tier", "subscribedPlanKey", "onboarding", "lifecycle", "agentSignup").get(),
+    firestore.collection("users").select(
+      "tier", "subscribedPlanKey", "onboarding", "lifecycle", "agentSignup",
+      "reverseTrialStartedAt", "reverseTrialEndsAt", "reverseTrialConvertedAt",
+      "reverseTrialExpiredAt", "reverseTrialOutcome", "tierSource",
+    ).get(),
   ]);
 
   const users = new Map<string, CoverageUser>();
@@ -302,7 +311,9 @@ export async function loadCoverageRows(): Promise<CoverageRows> {
         activationFingerprint: typeof lc.activationFingerprint === "string" ? lc.activationFingerprint : null,
         trialInvite1At: Number(lc.trialInvite1At) || 0,
         trialInvite2At: Number(lc.trialInvite2At) || 0,
+        reverseTrialReminderAt: Number(lc.reverseTrialReminderAt) || 0,
       },
+      reverseTrial: readReverseTrial(doc.data()),
     });
   }
 

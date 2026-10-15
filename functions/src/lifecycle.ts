@@ -28,7 +28,7 @@
  */
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { firestore } from "./init";
+import { firestore, fetchTierFromClerkStrict } from "./init";
 import {
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
@@ -75,6 +75,9 @@ import {
   TRIAL_INVITE_REPLY_TO,
 } from "./trial-invite-email";
 import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
+import { decideReverseTrialReminder, hadReverseTrial } from "./reverse-trial-policy";
+import { buildReverseTrialReminder } from "./reverse-trial-email";
+import { loadTrialChecks, summarizeUsage } from "./reverse-trial";
 import { getActiveSuppressions } from "./email-suppression";
 
 const APP_URL = process.env.FRONTEND_URL || "https://app.exit1.dev";
@@ -546,6 +549,7 @@ export async function sendTrialInvites(opts: {
       invite1At: u.lifecycle.trialInvite1At,
       invite2At: u.lifecycle.trialInvite2At,
       now,
+      hadReverseTrial: hadReverseTrial(u.reverseTrial),
     });
     if ("send" in d) due.push({ row, f, which: d.send });
   }
@@ -693,6 +697,168 @@ export async function sendTrialInvites(opts: {
 }
 
 // ----------------------------------------------------------------------------
+// Reverse trial: the day-5 reminder
+// ----------------------------------------------------------------------------
+
+/** Reverse-trial accounts due their "N days left" email now, with the days left. User doc fields only. */
+export function reverseTrialReminderDue(
+  users: Map<string, CoverageUser>,
+  now: number,
+): Array<{ uid: string; daysLeft: number }> {
+  const out: Array<{ uid: string; daysLeft: number }> = [];
+  for (const u of users.values()) {
+    const d = decideReverseTrialReminder({ s: u.reverseTrial, now, reminderAt: u.lifecycle.reverseTrialReminderAt });
+    if ("send" in d) out.push({ uid: u.userId, daysLeft: d.daysLeft });
+  }
+  return out;
+}
+
+export interface ReverseTrialReminderResult {
+  dryRun: boolean;
+  due: number;
+  sent: number;
+  skippedSubscribed: number;
+  skippedSuppressed: number;
+  skippedUnsubscribed: number;
+  skippedNoEmail: number;
+  failed: number;
+  stampFailed: number;
+  truncated: boolean;
+}
+
+/**
+ * Day 5 of the 7-day reverse trial: one plain-text email from Morten saying how
+ * many days are left, what the account used, and where to keep Nano. Same
+ * safety as the trial invites: dry-run, one stamp ever
+ * (lifecycle.reverseTrialReminderAt), suppressions and Day3 opt-outs skipped.
+ * A strict Clerk lookup runs first, so someone who already subscribed is not
+ * asked to.
+ */
+export async function sendReverseTrialReminders(opts: {
+  dryRun: boolean;
+  users: Map<string, CoverageUser>;
+  facts: Map<string, ClerkUserFacts>;
+  startedAt: number;
+}): Promise<ReverseTrialReminderResult> {
+  const { dryRun, users, facts, startedAt } = opts;
+  const result: ReverseTrialReminderResult = {
+    dryRun,
+    due: 0,
+    sent: 0,
+    skippedSubscribed: 0,
+    skippedSuppressed: 0,
+    skippedUnsubscribed: 0,
+    skippedNoEmail: 0,
+    failed: 0,
+    stampFailed: 0,
+    truncated: false,
+  };
+
+  const due = reverseTrialReminderDue(users, Date.now());
+  result.due = due.length;
+  if (due.length === 0) return result;
+
+  const day3Key = getDay3ApiKey();
+  if (!day3Key) throw new HttpsError("failed-precondition", "DAY3_API_KEY is not configured");
+
+  const suppressed = new Set<string>();
+  const emails = due.map((d) => facts.get(d.uid)?.email).filter((e): e is string => Boolean(e));
+  if (emails.length > 0) {
+    for (const s of await getActiveSuppressions(emails)) {
+      if (s.email) suppressed.add(s.email.toLowerCase());
+    }
+  }
+
+  for (const { uid, daysLeft } of due) {
+    if (pastSoftDeadline(startedAt, Date.now())) {
+      result.truncated = true;
+      break;
+    }
+    const f = facts.get(uid);
+    if (!f?.email) {
+      result.skippedNoEmail++;
+      continue;
+    }
+    if (suppressed.has(f.email.trim().toLowerCase())) {
+      result.skippedSuppressed++;
+      continue;
+    }
+
+    // Already paying? Then there is nothing to keep. Unknown means try again next run.
+    try {
+      const paid = await fetchTierFromClerkStrict(uid);
+      if (paid.tier !== "free") {
+        result.skippedSubscribed++;
+        continue;
+      }
+    } catch (e) {
+      result.failed++;
+      logger.warn("[lifecycle] reverse-trial reminder billing lookup failed; skipping this run", {
+        userId: uid,
+        error: (e as Error)?.message ?? String(e),
+      });
+      continue;
+    }
+
+    const contact = await getDay3Contact(day3Key, f.email);
+    if (contact.ok && contact.contact?.status === "unsubscribed") {
+      result.skippedUnsubscribed++;
+      continue;
+    }
+    const lookupCode = String(contact.error ?? "").toLowerCase();
+    if (!contact.ok && !lookupCode.includes("not_found") && lookupCode !== "http_404") {
+      result.failed++;
+      continue;
+    }
+
+    if (dryRun) {
+      result.sent++;
+      continue;
+    }
+
+    let body: { subject: string; text: string };
+    try {
+      body = buildReverseTrialReminder({
+        firstName: f.firstName,
+        daysLeft,
+        usage: summarizeUsage(await loadTrialChecks(uid)),
+      });
+    } catch (e) {
+      result.failed++;
+      logger.warn("[lifecycle] reverse-trial reminder could not be built", {
+        userId: uid,
+        error: (e as Error)?.message ?? String(e),
+      });
+      continue;
+    }
+
+    const sendStarted = Date.now();
+    const sent = await sendDay3Email(day3Key, {
+      from: TRIAL_INVITE_FROM,
+      to: f.email,
+      subject: body.subject,
+      text: body.text,
+      replyTo: TRIAL_INVITE_REPLY_TO,
+      idempotencyKey: "reverse-trial-reminder:" + uid,
+    });
+    if (!sent.ok) {
+      result.failed++;
+      logger.warn("[lifecycle] reverse-trial reminder send failed", { userId: uid, status: sent.status, error: sent.error });
+      continue;
+    }
+    const ok = await writeStamps(uid, { "lifecycle.reverseTrialReminderAt": Date.now() });
+    if (ok) result.sent++;
+    else result.stampFailed++;
+
+    const remaining = RESEND_RATE_LIMIT_MS - (Date.now() - sendStarted);
+    if (remaining > 0) await sleep(remaining);
+  }
+
+  logger.info("[lifecycle] reverse-trial reminders complete", result as unknown as Record<string, unknown>);
+  return result;
+}
+
+// ----------------------------------------------------------------------------
 // The sweep
 // ----------------------------------------------------------------------------
 
@@ -712,6 +878,10 @@ export interface LifecycleSweepResult {
   trialInvites2: number;
   /** Trial invites that failed to send or could not be checked. Unstamped, so they retry. */
   trialInvitesFailed: number;
+  /** Day-5 reverse-trial reminders mailed (or, on a dry run, that would be). */
+  reverseTrialReminders: number;
+  /** Reverse-trial reminders that failed or could not be checked. Unstamped, so they retry. */
+  reverseTrialRemindersFailed: number;
   propertiesSynced: number;
   errors: number;
   stampFailed: number;
@@ -864,6 +1034,8 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
       trialInvites1: 0,
       trialInvites2: 0,
       trialInvitesFailed: 0,
+      reverseTrialReminders: 0,
+      reverseTrialRemindersFailed: 0,
       propertiesSynced: 0,
       errors: 0,
       stampFailed: 0,
@@ -887,6 +1059,8 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
       trialInvites1: 0,
       trialInvites2: 0,
       trialInvitesFailed: 0,
+      reverseTrialReminders: 0,
+      reverseTrialRemindersFailed: 0,
       propertiesSynced: 0,
       errors: 0,
       stampFailed: 0,
@@ -906,7 +1080,10 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
       logger.warn("[lifecycle] no Clerk secret configured; sweep cannot resolve emails");
       return result;
     }
-    const facts = await fetchClerkUserFacts(interesting.map((r) => r.userId), secretKey, "lifecycle");
+    // Reverse-trial reminders go to accounts with no checks too, so they join the lookup.
+    const lookupIds = new Set(interesting.map((r) => r.userId));
+    for (const d of reverseTrialReminderDue(users, Date.now())) lookupIds.add(d.uid);
+    const facts = await fetchClerkUserFacts([...lookupIds], secretKey, "lifecycle");
     const keys = { resend: getResendCredentials().apiKey ?? null, day3: getDay3ApiKey() };
 
     // Notices before properties, deliberately. This is the only thing in the run a
@@ -949,6 +1126,20 @@ export async function runSweep(opts: { dryRun: boolean; owner: string }): Promis
     } catch (e) {
       result.errors++;
       logger.error("[lifecycle] trial invites failed", {
+        error: (e as Error)?.message ?? String(e),
+      });
+    }
+
+    // The day-5 reverse-trial reminder: user-visible and time-bound, so it also goes before the properties.
+    try {
+      const reminders = await sendReverseTrialReminders({ dryRun, users, facts, startedAt });
+      result.reverseTrialReminders = reminders.sent;
+      result.reverseTrialRemindersFailed = reminders.failed;
+      result.stampFailed += reminders.stampFailed;
+      if (reminders.truncated) result.truncated = true;
+    } catch (e) {
+      result.errors++;
+      logger.error("[lifecycle] reverse-trial reminders failed", {
         error: (e as Error)?.message ?? String(e),
       });
     }

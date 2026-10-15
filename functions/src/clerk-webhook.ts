@@ -49,6 +49,7 @@ import {
 import { DAY3_IMPORT_CHUNK_SIZE } from "./day3-config";
 import { IDEMPOTENCY_CONFLICT } from "./day3-client";
 import { requireAdmin } from "./require-admin";
+import { startReverseTrial } from "./reverse-trial";
 
 // Generic Clerk webhook payload — we handle multiple event types
 interface ClerkWebhookPayload {
@@ -581,9 +582,26 @@ export const clerkWebhook = onRequest({
     lastName: user.last_name,
   });
 
+  const agentUnclaimed =
+    (user.public_metadata as { agentSignup?: { status?: string } } | undefined)?.agentSignup?.status === 'unclaimed';
+
+  // Reverse trial: a new account gets Nano for 7 days, no card. Runs before the
+  // provider sync and answers 500 on failure, so Clerk retries the event; the
+  // start is idempotent, so a retry cannot extend or restart a trial.
+  try {
+    await startReverseTrial({ uid: user.id, createdAt: user.created_at, agentUnclaimed });
+  } catch (e) {
+    logger.error('Failed to start reverse trial', {
+      userId: user.id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    res.status(500).json({ received: true, processed: false, error: 'reverse_trial_start_failed' });
+    return;
+  }
+
   // Agent-created accounts stay out of the email providers until claimed:
   // the address hasn't been proven to belong to whoever asked for the account.
-  if ((user.public_metadata as { agentSignup?: { status?: string } } | undefined)?.agentSignup?.status === 'unclaimed') {
+  if (agentUnclaimed) {
     logger.info('Skipping provider sync for unclaimed agent signup', { userId: user.id });
     res.status(200).json({ received: true, processed: false, reason: 'agent_signup_unclaimed' });
     return;
