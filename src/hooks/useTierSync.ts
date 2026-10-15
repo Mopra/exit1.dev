@@ -21,7 +21,10 @@ const syncMyTierFn = httpsCallable(functions, 'syncMyTier');
  */
 export function useTierSync() {
   const { userId } = useAuth();
-  const { paid, isLoading } = usePlan();
+  // realTier, not tier: a reverse-trial account is Nano in the app but Free in
+  // Clerk, and has nothing to sync.
+  const { realTier, isLoading } = usePlan();
+  const paid = realTier !== 'free';
   const hasSynced = useRef(false);
 
   useEffect(() => {

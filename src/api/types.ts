@@ -720,6 +720,10 @@ export interface LifecycleSweepResult {
   trialInvites2: number;
   /** Trial invites that failed or could not be checked. Unstamped, so they retry. */
   trialInvitesFailed: number;
+  /** Day-5 reverse-trial reminders mailed (on a dry run, would be). */
+  reverseTrialReminders?: number;
+  /** Reverse-trial reminders that failed or could not be checked. Unstamped, so they retry. */
+  reverseTrialRemindersFailed?: number;
   propertiesSynced: number;
   errors: number;
   stampFailed: number;

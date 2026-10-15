@@ -206,6 +206,45 @@ subscriptions can be created against it.
 - Rendered with a gold "Founders" badge in-app.
 - **Forfeit condition:** If a Founders user cancels and re-subscribes, current pricing applies.
 
+### Reverse trial (new accounts get Nano for 7 days)
+
+Every account created on or after 2026-10-15 runs on **Nano for its first 7 days,
+with no card and no Clerk checkout**, then drops to Free unless it subscribed.
+Nano, not Pro, on purpose: SMS costs real money per message.
+
+- **Where it lives:** on the user doc, not in Clerk. `users/{uid}.reverseTrialStartedAt`
+  / `reverseTrialEndsAt`, set once by the Clerk `user.created` webhook
+  (`startReverseTrial` in [`functions/src/reverse-trial.ts`](functions/src/reverse-trial.ts)).
+  Unclaimed agent signups and accounts created before the feature do not get one.
+- **How it is honoured:** every tier resolution (`getUserTier`, `getUserTierLive`,
+  `getUserPlanInfo`, `recomputeAllTiers`, and the VPS runner through
+  `getUserTierDetailed`) lays the trial over Clerk's answer with
+  `applyReverseTrial` ([`reverse-trial-policy.ts`](functions/src/reverse-trial-policy.ts)).
+  It **only ever lifts Free to Nano**. Any paid tier wins as is, so a paying
+  customer is never moved by the trial, and someone who buys Indie mid-trial is
+  on Indie. A tier cached from the trial is marked `tierSource: 'reverse_trial'`
+  and is treated as stale the moment the trial ends.
+- **In the app:** `usePlan()` returns `tier: 'nano'` and `onReverseTrial: true`
+  while it runs (`realTier` stays the Clerk tier, so Billing still offers the
+  real checkout). A slim banner, "Nano trial: N days left", links to the Nano
+  card on Billing with annual selected.
+- **Subscribing ends it:** the first time a paid Clerk tier is seen,
+  `reverseTrialConvertedAt` is stamped and the trial is over for good; a later
+  cancellation is the normal lapsed-subscription path.
+- **Day 5:** the nightly lifecycle sweep sends one plain-text email, "2 days left
+  of your Nano trial", with what the account used and the keep-it link
+  (`https://app.exit1.dev/billing`). Skipped for suppressed or unsubscribed
+  addresses and for anyone Clerk says already pays.
+- **Expiry:** an hourly VPS cron job (`reverseTrialExpiry`, `runReverseTrialExpiry`)
+  does a **strict** Clerk lookup (a failed lookup is retried, never read as
+  Free). Still Free: the account goes through `handlePlanDowngrade`, the same
+  path a lapsed subscription takes (intervals clamped to 5 minutes, overflow
+  past 50 checks disabled oldest-first, domain intelligence off, pinned regions
+  reset; nothing is deleted), then gets one short email saying what changed with
+  the keep-it link. Paying: the trial is closed and nothing is touched.
+- **No double pitch:** accounts that had a reverse trial never get the day-3 /
+  day-10 "start a 7-day trial" invites.
+
 ### Retired: the Free-tier check grandfathering
 
 Free briefly dropped from 10 checks to 5, and ~91 early users were grandfathered
@@ -309,7 +348,7 @@ plus the Free-only bookkeeping (`downgradedAt`).
 
 **Is the Live page a paid feature?** No, and it isn't planned to become one. Real-time probe streaming is on every plan.
 
-**Is there a free trial of paid tiers?** No. Free is permanent, unlimited in time, and generous enough to run real projects on; paid tiers start billing on first subscription.
+**Is there a free trial of paid tiers?** Yes, two kinds. Every new account runs on Nano for its first 7 days with no card (the reverse trial above), then moves to Free. Paid plans can also start with a 7-day trial in checkout. Free itself is permanent, unlimited in time, and generous enough to run real projects on.
 
 **Can I pay annually?** Yes — annual pricing shown above is roughly 17–25% cheaper than monthly.
 

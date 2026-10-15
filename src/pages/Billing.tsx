@@ -188,8 +188,10 @@ function getCardExpiry(m: Record<string, unknown>): string {
 // ---- Component ----
 
 export default function Billing() {
-  const { subscription, tier, realTier, isFounders, isLoading, isFetching, error, revalidate } =
-    usePlan()
+  const {
+    subscription, tier, realTier, isFounders, isLoading, isFetching, error, revalidate,
+    onReverseTrial, reverseTrial,
+  } = usePlan()
   // Legacy aliases so the existing billing UI (Phase B2 will redesign this) keeps compiling.
   const nano = tier !== "free"
   const realNano = realTier !== "free"
@@ -798,6 +800,16 @@ export default function Billing() {
                     </div>
                   </CardHeader>
                   <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-2 sm:px-6 lg:px-8 space-y-6">
+                    {onReverseTrial && (
+                      <p className="rounded-lg border border-tier-nano/30 bg-tier-nano/5 px-3 py-2 text-sm">
+                        <span className="font-medium">
+                          You are on a free Nano trial: {reverseTrial.daysLeft} day{reverseTrial.daysLeft === 1 ? "" : "s"} left.
+                        </span>{" "}
+                        <span className="text-muted-foreground">
+                          Pick Nano below to keep it. Otherwise your account moves to Free when the trial ends; nothing is deleted.
+                        </span>
+                      </p>
+                    )}
                     <BillingPeriodToggle value={billingPeriod} onChange={setBillingPeriod} />
 
                     <PlanMatrix

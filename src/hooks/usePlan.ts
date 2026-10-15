@@ -4,6 +4,7 @@ import { useUser } from "@clerk/clerk-react";
 import { getTierLimits, resolvePlanKey } from "@/lib/subscription";
 import { useAdminTierPreview } from "./useAdminTierPreview";
 import { useOptionalAccount } from "@/AccountProvider";
+import { useReverseTrial } from "./useReverseTrial";
 
 export type Tier = "free" | "indie" | "nano" | "pro";
 
@@ -99,14 +100,22 @@ export function usePlan() {
   const account = useOptionalAccount();
   const inTeamAccount = !!account?.isMember;
 
+  // Reverse trial: a new account runs on Nano for its first 7 days with no
+  // card. It only ever lifts Free (a paid plan always wins), mirroring
+  // applyReverseTrial in functions/src/reverse-trial-policy.ts. `realTier`
+  // stays the Clerk tier so Billing keeps offering the real checkout.
+  const reverseTrial = useReverseTrial();
+  const onReverseTrial = realTier === "free" && reverseTrial.active && !isAdmin && !inTeamAccount;
+
   // Effective tier. Admins default to 'pro' entitlements but can preview any
-  // tier via the admin preview. Non-admins use their real tier, or the team
-  // account's Pro while working inside one.
+  // tier via the admin preview. Non-admins use their real tier (lifted to Nano
+  // during a reverse trial), or the team account's Pro while working inside one.
   const tier = useMemo<Tier>(() => {
     if (inTeamAccount) return "pro";
     if (isAdmin) return normalizePreviewTier(previewTier);
+    if (onReverseTrial) return "nano";
     return realTier;
-  }, [inTeamAccount, isAdmin, previewTier, realTier]);
+  }, [inTeamAccount, isAdmin, previewTier, realTier, onReverseTrial]);
 
   /**
    * The full limit row for the effective tier. Every entitlement below is
@@ -135,6 +144,9 @@ export function usePlan() {
     realTier,
     subscribedPlanKey,
     isFounders,
+    /** True while the account runs on Nano through the no-card reverse trial. */
+    onReverseTrial,
+    reverseTrial,
     maxChecks,
     limits,
     // Named entitlements — read these, not the tier booleans. `apiAccess` in
