@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-22 Woken for [!] WhatsApp go-live: rightly with the human (Meta accounts, payment, token). Noted, gave Model: sonnet. Also filed the overdue cold-start re-measure (Model: haiku), date passed.
 - 2026-10-13 Round (hourly, first after 04:00): look back found 4 silent stops on the lazy-load quest, all waits on its own --all deploy (it landed); wrote a rule, no quest. The re-measure quest is [x] with no result before its 2026-10-19 date: noted it, will file a fresh one then.
 - 2026-10-13 Rounds (hourly, eleven more, latest at 64c9eb8): nothing to do. 16 done, 0 open, no aim; only the cold-start re-measure waits on its timer (2026-10-19).
 - 2026-10-13 Round (human left): nothing to do. MCP registry now lists exit1-mcp 0.4.0 as latest, so that Open item is closed. Only the cold-start re-measure waits on its timer (2026-10-19); no aim open.
@@ -35,4 +36,5 @@
 - 2026-10-10 Woken for "Deploy JSON assertions": not blocked, its session waits on its own background deploy:changed. Noted that "Deploy list-endpoint include=uptime (57abb82)" is likely covered by the same deploy.
 
 ## Open
-- Cold-start re-measure: its quest was checked off early with no result. On the first round on or after 2026-10-19, file "Functions: re-measure cold starts (week after rollout, 2026-10-19)" (Model: haiku) with the baseline from the old quest, unless a result was noted there.
+- WhatsApp go-live: waits on the human for Meta setup + approved templates, then token + phone number ID. Resume the quest when they come.
+- Cold-start re-measure filed 2026-10-22: check its notes carry numbers before trusting its [x].
