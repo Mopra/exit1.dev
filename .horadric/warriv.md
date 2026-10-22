@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-23 Round (hourly): cold-start follow-up is truly done (cause agent-signup eager imports, fix 225f8ad deployed, local load CPU halved). Live after-numbers owed: re-measure on or after 2026-10-26. WhatsApp still with the human.
 - 2026-10-22 Round (human left): nothing to do. Cold-start follow-up is in progress; WhatsApp go-live waits on the human; no aim open.
 - 2026-10-22 Round (hourly): cold-start re-measure is really done (badge, day3webhook about 2x faster; mcpoauth 3291 to 5677 ms, publicapi 3106 to 4644 ms slower). Filed a follow-up quest to confirm with medians and fix (Model: sonnet). WhatsApp go-live still with the human.
 - 2026-10-22 Woken for [!] WhatsApp go-live: rightly with the human (Meta accounts, payment, token). Noted, gave Model: sonnet. Also filed the overdue cold-start re-measure (Model: haiku), date passed.
@@ -39,4 +40,4 @@
 
 ## Open
 - WhatsApp go-live: waits on the human for Meta setup + approved templates, then token + phone number ID. Resume the quest when they come.
-- mcpoauth/publicapi cold-start follow-up filed 2026-10-22: check it writes before/after numbers (or says noise) before trusting its [x].
+- On or after 2026-10-26: file a quest to re-run `node scripts/cold-start-report.mjs 3` for live mcpoauth/publicapi after-numbers following 225f8ad (Model: haiku).
