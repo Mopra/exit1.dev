@@ -9,14 +9,22 @@ import {
   TWILIO_AUTH_TOKEN,
   TWILIO_FROM_NUMBER,
   TWILIO_MESSAGING_SERVICE_SID,
+  WHATSAPP_ACCESS_TOKEN,
+  WHATSAPP_PHONE_NUMBER_ID,
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
   getTwilioCredentials,
+  isWhatsAppConfigured,
 } from "./env";
 import { normalizeCheckFilter } from "./webhook-events";
 import { notifySettingsEdit } from "./check-helpers";
 import { resolveAccountId } from "./team-access";
 import { isSmsDestinationAllowed, SMS_ALLOWED_REGIONS_LABEL } from "./sms-countries";
+import {
+  isWhatsAppDestinationAllowed,
+  getWhatsAppRecipients,
+  WHATSAPP_BLOCKED_REGIONS_LABEL,
+} from "./whatsapp-countries";
 
 const normalizePhone = (raw: string): string => {
   const trimmed = raw.trim();
@@ -26,6 +34,17 @@ const normalizePhone = (raw: string): string => {
   }
   if (!isSmsDestinationAllowed(normalized)) {
     throw new HttpsError('invalid-argument', `SMS alerts are only available for numbers in ${SMS_ALLOWED_REGIONS_LABEL}.`);
+  }
+  return normalized;
+};
+
+const normalizeWhatsAppPhone = (raw: string): string => {
+  const normalized = raw.trim().replace(/[\s()-]/g, '');
+  if (!/^\+\d{8,15}$/.test(normalized)) {
+    throw new HttpsError('invalid-argument', 'WhatsApp number must be in E.164 format (e.g., +27821234567)');
+  }
+  if (!isWhatsAppDestinationAllowed(normalized)) {
+    throw new HttpsError('invalid-argument', `WhatsApp alerts are not available for numbers in ${WHATSAPP_BLOCKED_REGIONS_LABEL}.`);
   }
   return normalized;
 };
@@ -191,13 +210,13 @@ const sendTwilioMessage = async (to: string, body: string) => {
 
 // Callable function to save SMS settings
 export const saveSmsSettings = onCall({
-  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID],
 }, async (request) => {
   const uid = await resolveAccountId(request, 'write');
 
   await ensureSmsTierOrAdmin(uid);
 
-  const { recipients, recipient, enabled, events, checkFilter } = request.data || {};
+  const { recipients, recipient, enabled, events, checkFilter, whatsappRecipients, whatsappOptIn } = request.data || {};
 
   // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
   let phoneRecipients: string[] = [];
@@ -207,7 +226,22 @@ export const saveSmsSettings = onCall({
     phoneRecipients = [normalizePhone(recipient)];
   }
 
-  if (phoneRecipients.length === 0) {
+  // WhatsApp numbers are only accepted while WhatsApp is configured, so nobody
+  // saves a number that silently never gets an alert.
+  let whatsappNumbers: string[] | undefined;
+  if (Array.isArray(whatsappRecipients)) {
+    whatsappNumbers = Array.from(new Set(whatsappRecipients.map((r: string) => normalizeWhatsAppPhone(String(r)))));
+    if (whatsappNumbers.length > 0) {
+      if (!isWhatsAppConfigured()) {
+        throw new HttpsError('failed-precondition', 'WhatsApp alerts are not available yet.');
+      }
+      if (whatsappOptIn !== true) {
+        throw new HttpsError('invalid-argument', 'Please agree to receive alerts on WhatsApp before adding a WhatsApp number.');
+      }
+    }
+  }
+
+  if (phoneRecipients.length === 0 && !(whatsappNumbers && whatsappNumbers.length > 0)) {
     throw new HttpsError('invalid-argument', 'At least one recipient phone number is required');
   }
   if (!Array.isArray(events) || events.length === 0) {
@@ -229,13 +263,23 @@ export const saveSmsSettings = onCall({
     events: events,
     updatedAt: now,
   };
+  const docSnap = await docRef.get();
+  if (whatsappNumbers !== undefined) {
+    setData.whatsappRecipients = whatsappNumbers;
+    if (whatsappNumbers.length > 0) {
+      // Keep the first consent time; Meta asks us to be able to show when the
+      // user opted in.
+      setData.whatsappOptInAt = docSnap.data()?.whatsappOptInAt ?? now;
+    } else {
+      setData.whatsappOptInAt = FieldValue.delete();
+    }
+  }
   if (normalizedCheckFilter !== undefined) {
     setData.checkFilter = normalizedCheckFilter;
   } else if (checkFilter === null) {
     setData.checkFilter = FieldValue.delete();
   }
-  // merge: true preserves existing fields like createdAt — only set createdAt on first create
-  const docSnap = await docRef.get();
+  // merge: true preserves existing fields like createdAt, only set createdAt on first create
   if (!docSnap.exists) {
     setData.createdAt = now;
   }
@@ -411,17 +455,18 @@ export const bulkUpdateSmsPerCheck = onCall({
 
 // Get SMS settings
 export const getSmsSettings = onCall({
-  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID],
 }, async (request) => {
   const uid = await resolveAccountId(request, 'read');
 
   await ensureSmsTierOrAdmin(uid);
 
+  const whatsappAvailable = isWhatsAppConfigured();
   const doc = await firestore.collection('smsSettings').doc(uid).get();
   if (!doc.exists) {
-    return { success: true, data: null };
+    return { success: true, data: null, whatsappAvailable };
   }
-  return { success: true, data: doc.data() as SmsSettings };
+  return { success: true, data: doc.data() as SmsSettings, whatsappAvailable };
 });
 
 export const getSmsUsage = onCall({
@@ -497,7 +542,7 @@ function getSmsRecipients(settings: SmsSettings): string[] {
 
 // Send a test SMS to the configured recipients
 export const sendTestSms = onCall({
-  secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, TWILIO_MESSAGING_SERVICE_SID],
+  secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, TWILIO_MESSAGING_SERVICE_SID, WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID],
 }, async (request) => {
   const uid = await resolveAccountId(request, 'write');
 
@@ -509,6 +554,24 @@ export const sendTestSms = onCall({
       throw new HttpsError('failed-precondition', 'SMS settings not found');
     }
     const settings = snap.data() as SmsSettings;
+
+    if (request.data?.channel === 'whatsapp') {
+      if (!isWhatsAppConfigured()) {
+        throw new HttpsError('failed-precondition', 'WhatsApp alerts are not available yet.');
+      }
+      const whatsappNumbers = getWhatsAppRecipients(settings);
+      if (whatsappNumbers.length === 0) {
+        throw new HttpsError('failed-precondition', 'No WhatsApp numbers saved.');
+      }
+      // Loaded on demand: alert-whatsapp pulls in the alert helpers, which the
+      // other SMS callables do not need on a cold start.
+      const { sendWhatsAppTemplate, WHATSAPP_TEMPLATES } = await import('./alert-whatsapp.js');
+      for (const recipient of whatsappNumbers) {
+        await sendWhatsAppTemplate(recipient, WHATSAPP_TEMPLATES.test, []);
+        logger.info('sendTestSms: whatsapp sent', { uid, recipient });
+      }
+      return { success: true };
+    }
     const recipients = getSmsRecipients(settings);
 
     if (recipients.length === 0) {

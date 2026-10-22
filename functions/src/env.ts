@@ -25,6 +25,14 @@ export const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
 export const TWILIO_FROM_NUMBER = defineSecret('TWILIO_FROM_NUMBER');
 export const TWILIO_MESSAGING_SERVICE_SID = defineSecret('TWILIO_MESSAGING_SERVICE_SID');
+// Meta WhatsApp Cloud API (WhatsApp alerts). A permanent System User token with
+// whatsapp_business_messaging, and the Phone Number ID (not the phone number)
+// from WhatsApp Manager. Both hold the placeholder 'unset' until the WhatsApp
+// Business Account is live; WhatsApp stays dark while either is unset. After a
+// `secrets:set`, redeploy every function that binds them (see memory on pinned
+// secret versions), and put the same values in each VPS .env.
+export const WHATSAPP_ACCESS_TOKEN = defineSecret('WHATSAPP_ACCESS_TOKEN');
+export const WHATSAPP_PHONE_NUMBER_ID = defineSecret('WHATSAPP_PHONE_NUMBER_ID');
 export const VPS_MANUAL_CHECK_SECRET = defineSecret('VPS_MANUAL_CHECK_SECRET');
 // Shared secret for the probe generator endpoint (probe PLAN.md §6). probe signs
 // every request as HMAC-SHA256(secret, timestamp + "." + rawBody), and probe
@@ -112,6 +120,34 @@ export const getDay3EmailCredentials = () => {
     apiKey: getDay3ApiKey(),
     fromAddress: fromAddress || getResendCredentials().fromAddress,
   };
+};
+
+export const getWhatsAppCredentials = () => {
+  const sanitize = (value?: string | null) => {
+    const v = typeof value === 'string' ? value.trim() : undefined;
+    return v && v !== 'unset' ? v : undefined;
+  };
+
+  let accessToken: string | undefined;
+  try {
+    accessToken = sanitize(WHATSAPP_ACCESS_TOKEN.value());
+  } catch {
+    accessToken = sanitize(process.env.WHATSAPP_ACCESS_TOKEN);
+  }
+
+  let phoneNumberId: string | undefined;
+  try {
+    phoneNumberId = sanitize(WHATSAPP_PHONE_NUMBER_ID.value());
+  } catch {
+    phoneNumberId = sanitize(process.env.WHATSAPP_PHONE_NUMBER_ID);
+  }
+
+  return { accessToken, phoneNumberId };
+};
+
+export const isWhatsAppConfigured = (): boolean => {
+  const { accessToken, phoneNumberId } = getWhatsAppCredentials();
+  return Boolean(accessToken && phoneNumberId);
 };
 
 export const getTwilioCredentials = () => {

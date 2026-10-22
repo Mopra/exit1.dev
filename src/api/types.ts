@@ -287,8 +287,10 @@ export interface SmsSettings {
   enabled: boolean;
   recipient?: string; // @deprecated - use recipients array instead
   recipients?: string[]; // destination phone numbers (E.164)
+  whatsappRecipients?: string[]; // WhatsApp destination numbers (E.164)
+  whatsappOptInAt?: number; // ms timestamp of the user's WhatsApp consent
   events: WebhookEvent[];
-  /** @deprecated No longer used — flap suppression is handled per-check by the Down-confirmation gate. */
+  /** @deprecated No longer used. Flap suppression is handled per-check by the Down-confirmation gate. */
   minConsecutiveEvents?: number;
   perCheck?: {
     [checkId: string]: {

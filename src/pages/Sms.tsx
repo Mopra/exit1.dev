@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, Fragment, memo } from 'react';
+import { useEffect, useMemo, useState, useCallback, Fragment, memo } from 'react';
 import { useAccountId } from '@/AccountProvider';
 import { getFunctions } from 'firebase/functions';
 import { httpsCallable } from '@/lib/callable';
@@ -40,11 +40,12 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import { usePlan } from '@/hooks/usePlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import type { Website } from '../types';
-import { ALL_NOTIFICATION_EVENTS, SMS_DEFAULT_NOTIFICATION_EVENTS } from '../lib/notification-shared';
+import { ALL_NOTIFICATION_EVENTS, SMS_DEFAULT_NOTIFICATION_EVENTS, whatsappNumberError } from '../lib/notification-shared';
 import { useNotificationSettings } from '../hooks/useNotificationSettings';
 
 // Firebase callable references at module scope to avoid recreating on every render
 const functions = getFunctions();
+const getSmsSettingsFn = httpsCallable(functions, 'getSmsSettings');
 const saveSmsSettingsFn = httpsCallable(functions, 'saveSmsSettings');
 const updateSmsPerCheckFn = httpsCallable(functions, 'updateSmsPerCheck');
 const bulkUpdateSmsPerCheckFn = httpsCallable(functions, 'bulkUpdateSmsPerCheck');
@@ -196,6 +197,24 @@ export default function Sms() {
   const [isSetupOpen, setIsSetupOpen] = useLocalStorage('sms-setup-open', true);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [newPhone, setNewPhone] = useState('');
+  const [newWhatsapp, setNewWhatsapp] = useState('');
+  const [newWhatsappError, setNewWhatsappError] = useState<string | null>(null);
+  // WhatsApp stays hidden until the backend says the Meta setup is live.
+  const [whatsappAvailable, setWhatsappAvailable] = useState(false);
+
+  useEffect(() => {
+    if (!hasAccess || !accountId) return;
+    let cancelled = false;
+    getSmsSettingsFn({})
+      .then((res) => {
+        const available = (res.data as { whatsappAvailable?: boolean } | null)?.whatsappAvailable === true;
+        if (!cancelled) setWhatsappAvailable(available);
+      })
+      .catch(() => {
+        if (!cancelled) setWhatsappAvailable(false);
+      });
+    return () => { cancelled = true; };
+  }, [hasAccess, accountId]);
 
   // Hook callables & params (stable via useMemo)
   const callables = useMemo(() => ({
@@ -212,7 +231,27 @@ export default function Sms() {
     userId: accountId,
     hasAccess: !!hasAccess,
     callables,
+    whatsappAvailable,
   });
+
+  const whatsappCount = whatsappAvailable ? n.whatsappRecipients.length : 0;
+  const savedWhatsappCount = whatsappAvailable ? (n.settings?.whatsappRecipients?.length ?? 0) : 0;
+
+  const { whatsappRecipients, setWhatsappRecipients } = n;
+  const addWhatsapp = useCallback(() => {
+    const phone = newWhatsapp.trim();
+    if (!phone) return;
+    const error = whatsappNumberError(phone);
+    if (error) {
+      setNewWhatsappError(error);
+      return;
+    }
+    if (!whatsappRecipients.includes(phone)) {
+      setWhatsappRecipients([...whatsappRecipients, phone]);
+    }
+    setNewWhatsapp('');
+    setNewWhatsappError(null);
+  }, [newWhatsapp, whatsappRecipients, setWhatsappRecipients]);
 
   const handleSelect = useCallback((checkId: string, selected: boolean) => {
     n.setSelectedChecks((prev) => {
@@ -268,12 +307,14 @@ export default function Sms() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {hasAccess && n.isInitialized && n.recipients.length === 0 && (
+                  {hasAccess && n.isInitialized && n.recipients.length === 0 && whatsappCount === 0 && (
                     <Alert className="bg-background/80 border-primary/30 backdrop-blur-md shadow-lg shadow-primary/10">
                       <AlertCircle className="h-4 w-4 text-primary" />
                       <AlertTitle className="text-foreground">Phone number required</AlertTitle>
                       <AlertDescription className="text-muted-foreground">
-                        Add a phone number in E.164 format (e.g., +15551234567) to start receiving alerts.
+                        {whatsappAvailable
+                          ? 'Add an SMS or WhatsApp number in E.164 format (e.g., +15551234567) to start receiving alerts.'
+                          : 'Add a phone number in E.164 format (e.g., +15551234567) to start receiving alerts.'}
                       </AlertDescription>
                     </Alert>
                   )}
@@ -345,6 +386,98 @@ export default function Sms() {
                     </p>
                   </div>
 
+                  {/* WhatsApp Numbers */}
+                  {whatsappAvailable && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">WhatsApp Numbers</Label>
+                      {n.whatsappRecipients.map((phone, index) => {
+                        const rowError = phone.trim() ? whatsappNumberError(phone) : null;
+                        return (
+                          <div key={index} className="space-y-1 max-w-md">
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="tel"
+                                value={phone}
+                                onChange={(e) => {
+                                  const updated = [...n.whatsappRecipients];
+                                  updated[index] = e.target.value;
+                                  n.setWhatsappRecipients(updated);
+                                }}
+                                aria-invalid={!!rowError}
+                                className="flex-1 h-9"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => n.setWhatsappRecipients(n.whatsappRecipients.filter((_, i) => i !== index))}
+                                className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                            {rowError && <p className="text-xs text-destructive">{rowError}</p>}
+                          </div>
+                        );
+                      })}
+                      <div className="flex items-center gap-2 max-w-md">
+                        <Input
+                          type="tel"
+                          placeholder="Add a WhatsApp number... (+27821234567)"
+                          value={newWhatsapp}
+                          onChange={(e) => {
+                            setNewWhatsapp(e.target.value);
+                            if (newWhatsappError) setNewWhatsappError(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && newWhatsapp.trim()) {
+                              e.preventDefault();
+                              addWhatsapp();
+                            }
+                          }}
+                          aria-invalid={!!newWhatsappError}
+                          className="flex-1 h-9"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={!newWhatsapp.trim()}
+                          onClick={addWhatsapp}
+                          className="h-9"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {newWhatsappError && (
+                        <p className="text-xs text-destructive max-w-md">{newWhatsappError}</p>
+                      )}
+                      <p className="text-xs text-muted-foreground max-w-md">
+                        WhatsApp works in every country except Cuba, Iran, North Korea and Syria, so it reaches places SMS can't, like South Africa, Brazil, Belgium and Japan. WhatsApp alerts use the same alert types, check settings and monthly budget as SMS.
+                      </p>
+                      {n.whatsappRecipients.length > 0 && (
+                        <div className="space-y-1 max-w-md pt-1">
+                          <div className="flex items-start gap-2">
+                            <Checkbox
+                              id="whatsapp-opt-in"
+                              checked={n.whatsappOptIn}
+                              onCheckedChange={(checked) => n.setWhatsappOptIn(checked === true)}
+                              className="mt-0.5 cursor-pointer"
+                            />
+                            <Label htmlFor="whatsapp-opt-in" className="text-xs font-normal leading-relaxed cursor-pointer">
+                              I agree to receive exit1 alerts on WhatsApp at these numbers.
+                            </Label>
+                          </div>
+                          {!n.whatsappOptIn && (
+                            <p className="text-xs text-muted-foreground pl-6">
+                              Tick the box to save your WhatsApp numbers.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="ghost"
@@ -357,7 +490,7 @@ export default function Sms() {
                       Reset to default
                     </Button>
                     <Button
-                      onClick={n.handleTest}
+                      onClick={() => n.handleTest('sms')}
                       disabled={n.manualSaving || n.recipients.length === 0 || !hasAccess}
                       variant="outline"
                       size="sm"
@@ -366,6 +499,18 @@ export default function Sms() {
                       <TestTube2 className="w-3 h-3" />
                       Test SMS
                     </Button>
+                    {savedWhatsappCount > 0 && (
+                      <Button
+                        onClick={() => n.handleTest('whatsapp')}
+                        disabled={n.manualSaving || !n.whatsappOptIn || !hasAccess}
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 cursor-pointer h-8 text-xs"
+                      >
+                        <TestTube2 className="w-3 h-3" />
+                        Send test WhatsApp
+                      </Button>
+                    )}
                   </div>
 
                   <div className="rounded-md border border-border/50">

@@ -12,6 +12,7 @@ import {
   SMS_DEFAULT_NOTIFICATION_EVENTS,
   type NotificationPendingOverride,
   type NotificationUsage,
+  whatsappNumberError,
 } from '../lib/notification-shared';
 import { toast } from 'sonner';
 
@@ -28,8 +29,12 @@ export type NotificationSettings = {
   enabled: boolean;
   recipient?: string;
   recipients?: string[];
+  /** SMS only: WhatsApp numbers (E.164), a second transport of the text channel. */
+  whatsappRecipients?: string[];
+  /** SMS only: when the user consented to WhatsApp alerts (ms). */
+  whatsappOptInAt?: number;
   events: WebhookEvent[];
-  /** @deprecated No longer used — flap suppression is handled per-check by the Down-confirmation gate. */
+  /** @deprecated No longer used. Flap suppression is handled per-check by the Down-confirmation gate. */
   minConsecutiveEvents?: number;
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
@@ -62,7 +67,14 @@ export interface UseNotificationSettingsOptions {
   callables: NotificationCallables;
   /** Default recipient list when no saved settings exist */
   defaultRecipients?: string[];
+  /**
+   * SMS only: WhatsApp transport is live on the backend. When false the hook
+   * never sends WhatsApp fields, so a save cannot touch stored numbers.
+   */
+  whatsappAvailable?: boolean;
 }
+
+export type TestChannel = 'sms' | 'whatsapp';
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -75,6 +87,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     userId,
     hasAccess,
     defaultRecipients = [],
+    whatsappAvailable = false,
   } = options;
   // Fixed for the life of the hook: a page passes one collection and never swaps it.
   const DEFAULT_EVENTS = defaultEventsFor(settingsCollection);
@@ -84,6 +97,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   callablesRef.current = options.callables;
   const defaultRecipientsRef = useRef(defaultRecipients);
   defaultRecipientsRef.current = defaultRecipients;
+  const whatsappAvailableRef = useRef(whatsappAvailable);
+  whatsappAvailableRef.current = whatsappAvailable;
 
   // -----------------------------------------------------------------------
   // State
@@ -92,6 +107,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
   const [manualSaving, setManualSaving] = useState(false);
   const [recipients, setRecipients] = useState<string[]>(defaultRecipients);
+  const [whatsappRecipients, setWhatsappRecipients] = useState<string[]>([]);
+  const [whatsappOptIn, setWhatsappOptIn] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   // 'all' for a user with no saved settings yet. This was 'include' ("only the
   // checks I tick") and it is why 386 of 404 production settings documents had an
@@ -127,6 +144,12 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const recipientsRef = useRef(recipients);
   recipientsRef.current = recipients;
 
+  const whatsappRecipientsRef = useRef(whatsappRecipients);
+  whatsappRecipientsRef.current = whatsappRecipients;
+
+  const whatsappOptInRef = useRef(whatsappOptIn);
+  whatsappOptInRef.current = whatsappOptIn;
+
   const checkFilterModeRef = useRef(checkFilterMode);
   checkFilterModeRef.current = checkFilterMode;
 
@@ -146,6 +169,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
 
   const lastSavedRef = useRef<{
     recipients: string[];
+    whatsappRecipients: string[];
+    whatsappOptIn: boolean;
     checkFilterMode: 'all' | 'include';
     defaultEvents: WebhookEvent[];
     emailFormat: 'html' | 'text';
@@ -181,6 +206,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   // -----------------------------------------------------------------------
 
   const debouncedRecipients = useDebounce(recipients, 1000);
+  const debouncedWhatsappRecipients = useDebounce(whatsappRecipients, 1000);
+  const debouncedWhatsappOptIn = useDebounce(whatsappOptIn, 500);
   const debouncedCheckFilterMode = useDebounce(checkFilterMode, 500);
   const debouncedDefaultEvents = useDebounce(defaultEvents, 500);
   const debouncedEmailFormat = useDebounce(emailFormat, 500);
@@ -270,8 +297,16 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     const curCheckFilterMode = checkFilterModeRef.current;
     const curDefaultEvents = defaultEventsRef.current;
     const curEmailFormat = emailFormatRef.current;
+    const withWhatsapp = whatsappAvailableRef.current;
+    const curWhatsapp = withWhatsapp ? whatsappRecipientsRef.current : [];
+    const curWhatsappOptIn = whatsappOptInRef.current;
 
-    if (!hasAccess || !userId || curRecipients.length === 0) return;
+    if (!hasAccess || !userId || curRecipients.length + curWhatsapp.length === 0) return;
+    // The backend rejects WhatsApp numbers without consent or outside E.164. The
+    // page shows why inline, so hold the save instead of toasting a failure.
+    if (curWhatsapp.length > 0 && (!curWhatsappOptIn || curWhatsapp.some((p) => whatsappNumberError(p)))) {
+      return;
+    }
     if (isSavingRef.current) {
       // A save is already in flight — queue one more run so edits made
       // meanwhile aren't silently dropped.
@@ -283,6 +318,10 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       const last = lastSavedRef.current;
       if (last &&
           JSON.stringify(last.recipients) === JSON.stringify(curRecipients) &&
+          (!withWhatsapp || (
+            JSON.stringify(last.whatsappRecipients) === JSON.stringify(curWhatsapp) &&
+            last.whatsappOptIn === curWhatsappOptIn
+          )) &&
           last.checkFilterMode === curCheckFilterMode &&
           JSON.stringify(last.defaultEvents) === JSON.stringify(curDefaultEvents) &&
           last.emailFormat === curEmailFormat) {
@@ -299,9 +338,15 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       await callablesRef.current.saveSettings({
         recipients: curRecipients, enabled: true, events: DEFAULT_EVENTS,
         checkFilter, emailFormat: curEmailFormat,
+        ...(withWhatsapp
+          ? { whatsappRecipients: curWhatsapp, whatsappOptIn: curWhatsapp.length > 0 && curWhatsappOptIn }
+          : {}),
       });
+      const prevSaved = lastSavedRef.current;
       lastSavedRef.current = {
         recipients: [...curRecipients],
+        whatsappRecipients: withWhatsapp ? [...curWhatsapp] : (prevSaved?.whatsappRecipients ?? []),
+        whatsappOptIn: withWhatsapp ? curWhatsappOptIn : (prevSaved?.whatsappOptIn ?? false),
         checkFilterMode: curCheckFilterMode,
         defaultEvents: [...curDefaultEvents],
         emailFormat: curEmailFormat,
@@ -310,6 +355,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
         prev ? {
           ...prev, recipients: curRecipients, enabled: true, events: DEFAULT_EVENTS,
           checkFilter, emailFormat: curEmailFormat, updatedAt: Date.now(),
+          ...(withWhatsapp ? { whatsappRecipients: curWhatsapp } : {}),
         } : prev,
       );
       if (showSuccessToast) toast.success('Settings saved', { duration: 2000 });
@@ -393,6 +439,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
             : (raw.recipient ? [raw.recipient] : [...defaultRecipientsRef.current]);
           const remote = {
             recipients: remoteRecipients,
+            whatsappRecipients: [...(raw.whatsappRecipients ?? [])],
+            whatsappOptIn: typeof raw.whatsappOptInAt === 'number' && raw.whatsappOptInAt > 0,
             checkFilterMode: (raw.checkFilter?.mode || 'include') as 'all' | 'include',
             defaultEvents: raw.checkFilter?.defaultEvents?.length ? [...raw.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
             emailFormat: (raw.emailFormat || 'html') as 'html' | 'text',
@@ -400,17 +448,23 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
           const last = lastSavedRef.current;
           const localDirty = last !== null && (
             JSON.stringify(last.recipients) !== JSON.stringify(recipientsRef.current) ||
+            JSON.stringify(last.whatsappRecipients) !== JSON.stringify(whatsappRecipientsRef.current) ||
+            last.whatsappOptIn !== whatsappOptInRef.current ||
             last.checkFilterMode !== checkFilterModeRef.current ||
             JSON.stringify(last.defaultEvents) !== JSON.stringify(defaultEventsRef.current) ||
             last.emailFormat !== emailFormatRef.current
           );
           if (!isInitializedRef.current || (!localDirty && !isSavingRef.current)) {
             setRecipients(remote.recipients);
+            setWhatsappRecipients(remote.whatsappRecipients);
+            setWhatsappOptIn(remote.whatsappOptIn);
             setCheckFilterMode(remote.checkFilterMode);
             setDefaultEvents(remote.defaultEvents);
             setEmailFormat(remote.emailFormat);
             lastSavedRef.current = {
               recipients: [...remote.recipients],
+              whatsappRecipients: [...remote.whatsappRecipients],
+              whatsappOptIn: remote.whatsappOptIn,
               checkFilterMode: remote.checkFilterMode,
               defaultEvents: [...remote.defaultEvents],
               emailFormat: remote.emailFormat,
@@ -461,26 +515,28 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   // -----------------------------------------------------------------------
 
   useEffect(() => {
-    if (!isInitialized || !hasAccess || !userId || debouncedRecipients.length === 0) return;
+    if (!isInitialized || !hasAccess || !userId) return;
+    if (debouncedRecipients.length + (whatsappAvailable ? debouncedWhatsappRecipients.length : 0) === 0) return;
     handleSaveSettings(false, false);
-  }, [debouncedRecipients, debouncedCheckFilterMode, debouncedDefaultEvents, debouncedEmailFormat, isInitialized, hasAccess, userId, handleSaveSettings]);
+  }, [debouncedRecipients, debouncedWhatsappRecipients, debouncedWhatsappOptIn, whatsappAvailable, debouncedCheckFilterMode, debouncedDefaultEvents, debouncedEmailFormat, isInitialized, hasAccess, userId, handleSaveSettings]);
 
   // -----------------------------------------------------------------------
   // Test
   // -----------------------------------------------------------------------
 
-  const handleTest = useCallback(async () => {
+  const handleTest = useCallback(async (testChannel?: TestChannel) => {
     if (!hasAccess) return;
+    const label = testChannel === 'whatsapp' ? 'WhatsApp' : channel;
     try {
       await handleSaveSettings(true, true);
-      await callablesRef.current.sendTest({});
-      toast.success(`Test ${channel} sent`, {
+      await callablesRef.current.sendTest(testChannel === 'whatsapp' ? { channel: 'whatsapp' } : {});
+      toast.success(`Test ${label} sent`, {
         description: channel === 'sms' ? 'Check your phone.' : 'Check your inbox.',
         duration: 4000,
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Please try again.';
-      toast.error(`Failed to send test ${channel}`, { description: msg, duration: 5000 });
+      toast.error(`Failed to send test ${label}`, { description: msg, duration: 5000 });
     }
   }, [hasAccess, handleSaveSettings, channel]);
 
@@ -861,6 +917,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   return {
     settings, setSettings, isInitialized, manualSaving,
     recipients, setRecipients,
+    whatsappRecipients, setWhatsappRecipients, whatsappOptIn, setWhatsappOptIn,
     checkFilterMode, setCheckFilterMode, defaultEvents, setDefaultEvents,
     emailFormat, setEmailFormat,
     selectedChecks, setSelectedChecks, pendingCheckUpdates, pendingOverrideCount,

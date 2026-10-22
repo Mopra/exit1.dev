@@ -24,6 +24,8 @@ import * as helpers from './alert-helpers';
 import * as webhookModule from './alert-webhook';
 import * as emailModule from './alert-email';
 import * as smsModule from './alert-sms';
+import * as whatsappModule from './alert-whatsapp';
+import { isWhatsAppConfigured } from './env';
 import { CONFIG } from './config';
 import { firestore } from './init';
 import { decideSSLAlertTransition, normalizeSSLAlertState, type SSLAlertState } from './ssl-alert-state';
@@ -599,7 +601,9 @@ export async function triggerAlert(
         smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = helpers.getSmsRecipients(smsSettings);
-        if (smsRecipients.length > 0 && smsSettings.enabled !== false) {
+        // WhatsApp numbers share the SMS events, filters, throttle and budget.
+        const whatsappRecipients = isWhatsAppConfigured() ? helpers.getWhatsAppRecipients(smsSettings) : [];
+        if (smsRecipients.length + whatsappRecipients.length > 0 && smsSettings.enabled !== false) {
           const globalAllows = (smsSettings.events || []).includes(eventType);
           const perCheck = smsSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
@@ -643,6 +647,16 @@ export async function triggerAlert(
                     } catch (recipientError) {
                       const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
                       logger.error(`SMS failed to ${recipient} for website ${website.name}: ${errorMsg}`);
+                      results.push({ recipient, success: false, error: errorMsg });
+                    }
+                  }
+                  for (const recipient of whatsappRecipients) {
+                    try {
+                      await whatsappModule.sendWhatsAppNotification(recipient, website, eventType, oldStatus);
+                      results.push({ recipient, success: true });
+                    } catch (recipientError) {
+                      const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
+                      logger.error(`WhatsApp failed to ${recipient} for website ${website.name}: ${errorMsg}`);
                       results.push({ recipient, success: false, error: errorMsg });
                     }
                   }
@@ -913,7 +927,9 @@ export async function triggerSSLAlert(
         smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = helpers.getSmsRecipients(smsSettings);
-        if (smsRecipients.length > 0 && smsSettings.enabled !== false) {
+        // WhatsApp numbers share the SMS events, filters, throttle and budget.
+        const whatsappRecipients = isWhatsAppConfigured() ? helpers.getWhatsAppRecipients(smsSettings) : [];
+        if (smsRecipients.length + whatsappRecipients.length > 0 && smsSettings.enabled !== false) {
           const globalAllows = (smsSettings.events || []).includes(eventType);
           const perCheck = smsSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
@@ -952,6 +968,16 @@ export async function triggerSSLAlert(
                   } catch (recipientError) {
                     const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
                     logger.error(`SSL SMS failed to ${recipient} for website ${website.name}: ${errorMsg}`);
+                    results.push({ recipient, success: false, error: errorMsg });
+                  }
+                }
+                for (const recipient of whatsappRecipients) {
+                  try {
+                    await whatsappModule.sendSslWhatsAppNotification(recipient, website, eventType, sslCertificate);
+                    results.push({ recipient, success: true });
+                  } catch (recipientError) {
+                    const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
+                    logger.error(`SSL WhatsApp failed to ${recipient} for website ${website.name}: ${errorMsg}`);
                     results.push({ recipient, success: false, error: errorMsg });
                   }
                 }

@@ -7,6 +7,7 @@ import { getResendCredentials } from './env';
 import { firestore } from './init';
 import { resolveFolderEntry, collectRecipients } from './email-gate';
 import { isSmsDestinationAllowed } from './sms-countries';
+export { getWhatsAppRecipients } from './whatsapp-countries';
 import {
   SmsTier,
   decideSmsTier,

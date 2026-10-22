@@ -464,6 +464,10 @@ export interface SmsSettings {
   enabled: boolean;
   recipient?: string; // @deprecated - use recipients array instead
   recipients?: string[]; // destination phone numbers (E.164)
+  // WhatsApp numbers (E.164). Same events and filters as the SMS numbers; the
+  // alert goes out as a Meta utility template instead of a text.
+  whatsappRecipients?: string[];
+  whatsappOptInAt?: number; // when the user consented to WhatsApp alerts
   events: WebhookEvent[]; // events to notify about
   // @deprecated No longer enforced. Flap suppression is handled per-check by the
   // Down-confirmation gate (see checks.ts); this per-channel debounce was removed.

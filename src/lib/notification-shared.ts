@@ -29,6 +29,30 @@ export type NotificationPendingOverride = {
 };
 
 // ---------------------------------------------------------------------------
+// WhatsApp numbers
+// ---------------------------------------------------------------------------
+
+/** Country codes Meta's WhatsApp Business platform cannot deliver to (sanctions). */
+export const WHATSAPP_BLOCKED_PREFIXES = ['+53', '+98', '+850', '+963'];
+
+/**
+ * Client-side mirror of the backend check in functions/src/sms.ts: E.164, and
+ * any country except Cuba, Iran, North Korea and Syria. Country codes are
+ * prefix-free, so a plain startsWith is exact. Returns an error message, or
+ * null when the number is fine.
+ */
+export function whatsappNumberError(raw: string): string | null {
+  const phone = raw.trim();
+  if (!/^\+[1-9]\d{6,14}$/.test(phone)) {
+    return 'Use E.164 format, e.g. +27821234567.';
+  }
+  if (WHATSAPP_BLOCKED_PREFIXES.some((p) => phone.startsWith(p))) {
+    return 'WhatsApp alerts are not available in Cuba, Iran, North Korea or Syria.';
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Delivery gate
 // ---------------------------------------------------------------------------
 
@@ -37,6 +61,8 @@ export type GateSettings = {
   enabled?: boolean;
   recipient?: string;
   recipients?: string[];
+  /** SMS settings only: WhatsApp is a second transport of the same text channel. */
+  whatsappRecipients?: string[];
   events?: WebhookEvent[];
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
@@ -95,7 +121,8 @@ export function willDeliver(
   const recipientCount =
     globalRecipients.length
     + usable(perCheck?.recipients).length
-    + usable(folderEntry?.recipients).length;
+    + usable(folderEntry?.recipients).length
+    + usable(settings.whatsappRecipients).length;
   if (recipientCount === 0) return false;
 
   const globalAllows = (settings.events ?? []).includes(event);
