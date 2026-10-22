@@ -25,10 +25,14 @@ import {
   refreshRateLimitWindows,
   notifySettingsEdit,
 } from "./check-helpers";
-import { notifyCheckEdit } from "./checks";
-import { extractDomain, validateDomainForRdap } from "./rdap-client";
-import { DEFAULT_ALERT_THRESHOLDS } from "./domain-intelligence";
 import type { DomainExpiry } from "./types";
+// Loaded on first use: these pull in the alerting/Resend/BigQuery chain, which
+// would otherwise run on every publicapi cold start.
+/* eslint-disable @typescript-eslint/no-require-imports */
+const checksModule = (): typeof import("./checks") => require("./checks");
+const rdapClient = (): typeof import("./rdap-client") => require("./rdap-client");
+const domainIntelligence = (): typeof import("./domain-intelligence") => require("./domain-intelligence");
+const emailSend = (): typeof import("./email-send") => require("./email-send");
 import {
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
@@ -37,7 +41,6 @@ import {
   DAY3_API_KEY,
   DAY3_FROM,
 } from "./env";
-import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 import {
   STATUS_POLL_RATE_LIMITS,
   STATUS_SELECT_FIELDS,
@@ -965,12 +968,12 @@ async function handleCreateCheck(
     heartbeatToken = crypto.randomBytes(32).toString('hex');
     effectiveUrl = `heartbeat://${heartbeatToken}`;
   } else if (resolvedType === 'domain') {
-    const inputDomain = extractDomain(typeof url === 'string' ? url : '');
+    const inputDomain = rdapClient().extractDomain(typeof url === 'string' ? url : '');
     if (!inputDomain) {
       res.status(400).json({ error: 'Could not extract a domain. Send a bare domain like "example.com".' });
       return;
     }
-    const validation = validateDomainForRdap(inputDomain);
+    const validation = rdapClient().validateDomainForRdap(inputDomain);
     if (!validation.valid) {
       res.status(400).json({ error: validation.error || 'Domain not supported' });
       return;
@@ -995,7 +998,7 @@ async function handleCreateCheck(
       lastCheckedAt: 0,
       nextCheckAt: now,
       consecutiveErrors: 0,
-      alertThresholds: DEFAULT_ALERT_THRESHOLDS,
+      alertThresholds: domainIntelligence().DEFAULT_ALERT_THRESHOLDS,
       alertsSent: [],
     };
   }
@@ -1231,7 +1234,7 @@ async function handleCreateCheck(
     [`urlHashes.${urlHash}`]: docRef.id,
   }, { merge: true });
 
-  await notifyCheckEdit(docRef.id, 'added');
+  await checksModule().notifyCheckEdit(docRef.id, 'added');
   const responsePayload = { data: { id: docRef.id } };
   await saveIdempotency(userId, idempotencyKey, 'POST', path, 201, responsePayload);
   res.status(201).json(responsePayload);
@@ -1493,7 +1496,7 @@ async function handleUpdateCheck(
   }
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
-  await notifyCheckEdit(checkId, 'modified');
+  await checksModule().notifyCheckEdit(checkId, 'modified');
 
   // Update URL hash index if URL changed
   if (urlChanged) {
@@ -1541,7 +1544,7 @@ async function handleDeleteCheck(
   const urlHashToDelete = canonicalUrlToDelete ? hashCanonicalUrl(canonicalUrlToDelete) : null;
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).delete());
-  await notifyCheckEdit(checkId, 'removed');
+  await checksModule().notifyCheckEdit(checkId, 'removed');
 
   const statsUpdate: Record<string, unknown> = {
     checkCount: FieldValue.increment(-1),
@@ -1596,7 +1599,7 @@ async function handleToggleCheck(
   }
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
-  await notifyCheckEdit(checkId, 'modified');
+  await checksModule().notifyCheckEdit(checkId, 'modified');
 
   // If disabling, record history + send notification
   if (disabled) {
@@ -1652,7 +1655,7 @@ async function handleRegenerateHeartbeatToken(
     updatedAt: Date.now(),
   });
 
-  await notifyCheckEdit(checkId, 'modified');
+  await checksModule().notifyCheckEdit(checkId, 'modified');
 
   res.status(200).json({
     heartbeatToken: newToken,
@@ -1880,7 +1883,7 @@ async function handleTestEmailAlert(
     return;
   }
 
-  if (!isTransactionalEmailConfigured()) {
+  if (!emailSend().isTransactionalEmailConfigured()) {
     res.status(503).json({ error: 'Email delivery is not configured' });
     return;
   }
@@ -1905,7 +1908,7 @@ async function handleTestEmailAlert(
       // Resend allows 2 req/sec — space the sends out. Kept regardless of the
       // active provider, since any message can fall back onto Resend.
       if (i > 0) await new Promise((resolve) => setTimeout(resolve, 600));
-      await sendTransactionalEmail({
+      await emailSend().sendTransactionalEmail({
         to: recipients[i],
         subject,
         ...(format === 'text' ? { text: text! } : { html: html! }),

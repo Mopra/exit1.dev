@@ -26,6 +26,16 @@ import { FixedWindowRateLimiter, getClientIp } from "./rate-limit";
 import { DEFAULT_MCP_SCOPES } from "./mcp-oauth-policy";
 import { PUBLIC_API_BASE } from "./mcp-tools";
 import type { ApiScope } from "./api-scopes";
+// These modules pull in the whole alerting/Resend/BigQuery chain. mcpoauth and
+// publicapi import this file, so they load them on first use, not at cold start.
+/* eslint-disable @typescript-eslint/no-require-imports */
+const emailSend = (): typeof import("./email-send") => require("./email-send");
+const emailSuppression = (): typeof import("./email-suppression") => require("./email-suppression");
+const checksModule = (): typeof import("./checks") => require("./checks");
+const checkHelpers = (): typeof import("./check-helpers") => require("./check-helpers");
+const usersModule = (): typeof import("./users") => require("./users");
+const clerkWebhook = (): typeof import("./clerk-webhook") => require("./clerk-webhook");
+
 import {
   agentSignupExpiryAction,
   agentTokenAllowed,
@@ -35,12 +45,6 @@ import {
   sanitizeAgentName,
   type AgentSignupState,
 } from "./agent-signup-policy";
-import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
-import { getActiveSuppressions } from "./email-suppression";
-import { notifyCheckEdit } from "./checks";
-import { notifySettingsEdit } from "./check-helpers";
-import { deleteAllUserData } from "./users";
-import { syncSignupToEmailProviders } from "./clerk-webhook";
 import {
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
@@ -167,7 +171,7 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
 
   const instance = defaultInstance();
   const clerk = instance ? clerkFor(instance) : null;
-  if (!instance || !clerk || !isTransactionalEmailConfigured()) {
+  if (!instance || !clerk || !emailSend().isTransactionalEmailConfigured()) {
     logger.error("Agent signup unavailable: Clerk or email not configured", { instance });
     fail(res, 503, "temporarily_unavailable", "Signup is unavailable right now.");
     return;
@@ -178,7 +182,7 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
     return;
   }
 
-  if ((await getActiveSuppressions([email])).length > 0) {
+  if ((await emailSuppression().getActiveSuppressions([email])).length > 0) {
     fail(res, 400, "invalid_request", "This address can't receive email from exit1, so it can't be used to sign up.");
     return;
   }
@@ -247,7 +251,7 @@ export async function handleAgentSignup(req: HttpReq, res: HttpRes, issueTokens:
     // it out of the URL before analytics loads.
     const claimUrl = `${APP_ORIGIN}/claim#ticket=${encodeURIComponent(ticket.token)}`;
     const mail = buildClaimEmail({ agentName, email, claimUrl });
-    await sendTransactionalEmail({
+    await emailSend().sendTransactionalEmail({
       to: email,
       subject: mail.subject,
       html: mail.html,
@@ -375,7 +379,7 @@ async function setChecksClaimed(uid: string): Promise<number> {
     }
     await batch.commit();
   }
-  await Promise.all(touched.map((id) => notifyCheckEdit(id, "modified")));
+  await Promise.all(touched.map((id) => checksModule().notifyCheckEdit(id, "modified")));
   return touched.length;
 }
 
@@ -465,7 +469,7 @@ export const claimAgentAccount = onCall(
       await removeAgentAlertChannels(uid);
     }
     if (emailAlerts) await enableEmailAlertsTo(uid, state.email);
-    await notifySettingsEdit(uid);
+    await checkHelpers().notifySettingsEdit(uid);
 
     const checks = await setChecksClaimed(uid);
 
@@ -476,7 +480,7 @@ export const claimAgentAccount = onCall(
           publicMetadata: { agentSignup: { status: "claimed" }, onboardingCompletedAt: now },
         });
         const user = await clerk.users.getUser(uid);
-        await syncSignupToEmailProviders({
+        await clerkWebhook().syncSignupToEmailProviders({
           userId: uid,
           email: state.email,
           firstName: user.firstName,
@@ -520,7 +524,7 @@ export async function runAgentSignupExpiry(): Promise<void> {
         // can't re-enable these or create new checks.
         batch.update(doc.ref, { "agentSignup.pausedAt": now });
         await batch.commit();
-        await Promise.all(ids.map((id) => notifyCheckEdit(id, "modified")));
+        await Promise.all(ids.map((id) => checksModule().notifyCheckEdit(id, "modified")));
         paused++;
       } else if (action === "delete") {
         // Clerk first: if it fails, the Firestore state survives and tomorrow's
@@ -535,8 +539,8 @@ export async function runAgentSignupExpiry(): Promise<void> {
         const checkIds = (await firestore.collection("checks").where("userId", "==", doc.id).select().get()).docs.map(
           (d) => d.id
         );
-        await deleteAllUserData(doc.id);
-        await Promise.all(checkIds.map((id) => notifyCheckEdit(id, "removed")));
+        await usersModule().deleteAllUserData(doc.id);
+        await Promise.all(checkIds.map((id) => checksModule().notifyCheckEdit(id, "removed")));
         deleted++;
       }
     } catch (error) {
