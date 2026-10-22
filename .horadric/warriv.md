@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-22 Round (hourly): cold-start re-measure is really done (badge, day3webhook about 2x faster; mcpoauth 3291 to 5677 ms, publicapi 3106 to 4644 ms slower). Filed a follow-up quest to confirm with medians and fix (Model: sonnet). WhatsApp go-live still with the human.
 - 2026-10-22 Woken for [!] WhatsApp go-live: rightly with the human (Meta accounts, payment, token). Noted, gave Model: sonnet. Also filed the overdue cold-start re-measure (Model: haiku), date passed.
 - 2026-10-13 Round (hourly, first after 04:00): look back found 4 silent stops on the lazy-load quest, all waits on its own --all deploy (it landed); wrote a rule, no quest. The re-measure quest is [x] with no result before its 2026-10-19 date: noted it, will file a fresh one then.
 - 2026-10-13 Rounds (hourly, eleven more, latest at 64c9eb8): nothing to do. 16 done, 0 open, no aim; only the cold-start re-measure waits on its timer (2026-10-19).
@@ -37,4 +38,4 @@
 
 ## Open
 - WhatsApp go-live: waits on the human for Meta setup + approved templates, then token + phone number ID. Resume the quest when they come.
-- Cold-start re-measure filed 2026-10-22: check its notes carry numbers before trusting its [x].
+- mcpoauth/publicapi cold-start follow-up filed 2026-10-22: check it writes before/after numbers (or says noise) before trusting its [x].
