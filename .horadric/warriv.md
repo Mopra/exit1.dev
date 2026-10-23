@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-23 Round (human left, at f64ad9d): nothing to do. New public monitor commits are the human's own work. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Round (human left, at 21a3895): nothing to do. New commits (public monitor follows) are the human's own work, not a quest. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Rounds (hourly, at a08eb07, baca6ef, d4b63b5, 552ebad, 60bd026, 3a8a1d2, d61d530, 6de79a4, 5fb9acd and b5c6bc2): nothing to do. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Round (hourly, first after 04:00, at 12d2e6d): the day was clean (3 quests done, nothing repeated). The day gave 2 lore notes (Twilio sender pool after the Danish number's release; the human's WhatsApp choices). Noted on the WhatsApp quest the after-go-live email to BE/JP users. Nothing else to do.
