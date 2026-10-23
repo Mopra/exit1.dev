@@ -21,6 +21,14 @@ import {
  *   - public_monitor_pages/{slug}      → full per-monitor page payload
  */
 
+import {
+  deriveIncidents,
+  mergeIncidentHistory,
+  normalizeStoredIncidents,
+  type IncidentIsland,
+  type PublicIncident,
+} from "./public-incidents";
+
 const bigquery = new BigQuery({ projectId: "exit1-dev" });
 const DATASET_ID = "checks";
 const DAILY_SUMMARY_TABLE_ID = "check_daily_summaries";
@@ -89,6 +97,8 @@ type MonitorPage = MonitorIndexEntry & {
   stats: MonitorStats;
   heartbeat: HeartbeatDay[];      // oldest → newest, up to 90 entries
   updatedAt: number;
+  /** Outage windows, newest first, last 90 days. Merged into the stored list by persistPublicMonitors. */
+  incidents?: PublicIncident[];
   /** When the status last changed, ms, and to what. Written on transitions by public-monitor-freshness.ts. */
   statusChangedAt?: number;
   statusChangedTo?: string;
@@ -293,11 +303,122 @@ async function fetchLastProbed(
 }
 
 /**
+ * How much history each hourly run re-reads for outage windows. Long enough to
+ * close any outage that ends within it; older incidents stay as stored. A
+ * one-off backfill passes 90 days (scripts call runPublicMonitorsRefresh).
+ */
+export const INCIDENT_LOOKBACK_MS = 3 * DAY_MS;
+
+/**
+ * Runs of consecutive failed probes per check since `since`, as islands
+ * (gaps-and-islands over the raw history). Firewall blocks and 4xx answers are
+ * dropped before grouping, so neither starts nor splits an outage: a 429 or 404
+ * means the service answered and refused our probe (homebrew.sh and
+ * producthunt.com rate-limit us, a wrong path 404s), which is not something a
+ * page should call an outage. Returns null on failure so the caller keeps the
+ * stored incidents untouched.
+ */
+async function fetchIncidentIslands(
+  websiteIds: string[],
+  userId: string,
+  since: number,
+): Promise<Map<string, IncidentIsland[]> | null> {
+  const result = new Map<string, IncidentIsland[]>();
+  if (!websiteIds.length) return result;
+
+  const wafClause = WAF_BLOCK_ERROR_PREFIXES.map((_, i) => `STARTS_WITH(IFNULL(error, ''), @prefix${i})`).join(' OR ');
+  const query = `
+    WITH probes AS (
+      SELECT website_id, timestamp, status = 'offline' AS off, status_code, error, peer_status
+      FROM \`${bigquery.projectId}.${DATASET_ID}.${HISTORY_TABLE_ID}\`
+      WHERE user_id = @userId
+        AND website_id IN UNNEST(@websiteIds)
+        AND timestamp >= @since
+        AND NOT (status = 'offline' AND (${wafClause}))
+        AND NOT (status = 'offline' AND status_code BETWEEN 400 AND 499)
+    ),
+    marked AS (
+      SELECT *,
+        LAG(off) OVER w AS prev_off,
+        LEAD(timestamp) OVER w AS next_ts
+      FROM probes
+      WINDOW w AS (PARTITION BY website_id ORDER BY timestamp)
+    ),
+    grouped AS (
+      SELECT *,
+        COUNTIF(prev_off IS NULL OR off != prev_off)
+          OVER (PARTITION BY website_id ORDER BY timestamp ROWS UNBOUNDED PRECEDING) AS grp
+      FROM marked
+    )
+    SELECT
+      website_id,
+      MIN(timestamp) AS started_at,
+      MAX(timestamp) AS last_failed_at,
+      ARRAY_AGG(next_ts ORDER BY timestamp DESC LIMIT 1)[OFFSET(0)] AS next_probe_at,
+      COUNT(*) AS probes,
+      APPROX_TOP_COUNT(status_code, 1)[SAFE_OFFSET(0)].value AS status_code,
+      ARRAY_AGG(error IGNORE NULLS ORDER BY timestamp LIMIT 1)[SAFE_OFFSET(0)] AS error,
+      COUNTIF(peer_status = 'offline') AS peer_offline
+    FROM grouped
+    WHERE off
+    GROUP BY website_id, grp
+  `;
+  const params: Record<string, unknown> = { userId, websiteIds, since: new Date(since) };
+  WAF_BLOCK_ERROR_PREFIXES.forEach((p, i) => { params[`prefix${i}`] = p; });
+
+  type Row = {
+    website_id: string;
+    started_at: { value: string } | string;
+    last_failed_at: { value: string } | string;
+    next_probe_at: { value: string } | string | null;
+    probes: number;
+    status_code: number | null;
+    error: string | null;
+    peer_offline: number;
+  };
+  const ms = (v: { value: string } | string | null): number | null => {
+    const raw = typeof v === 'string' ? v : v?.value;
+    const t = raw ? new Date(raw).getTime() : NaN;
+    return Number.isFinite(t) ? t : null;
+  };
+
+  try {
+    const [rows] = await bigquery.query({ query, params });
+    for (const row of rows as Row[]) {
+      const startedAt = ms(row.started_at);
+      const lastFailedAt = ms(row.last_failed_at);
+      if (startedAt == null || lastFailedAt == null) continue;
+      const id = String(row.website_id);
+      const arr = result.get(id) ?? [];
+      arr.push({
+        startedAt,
+        lastFailedAt,
+        nextProbeAt: ms(row.next_probe_at),
+        probes: Number(row.probes) || 0,
+        statusCode: row.status_code != null ? Number(row.status_code) : null,
+        error: typeof row.error === 'string' ? row.error : null,
+        peerOfflineProbes: Number(row.peer_offline) || 0,
+      });
+      result.set(id, arr);
+    }
+    return result;
+  } catch (err) {
+    logger.error('[public-monitors] incident query failed:', err);
+    return null;
+  }
+}
+
+/** Freshly derived incidents per slug over [windowStart, now], or null when the read failed. */
+type FreshIncidents = { windowStart: number; bySlug: Map<string, PublicIncident[]> } | null;
+
+/**
  * Build the full set of public monitor pages + index from Firestore + BigQuery.
  * Pure-ish: returns the artifacts so both the cron and the cold-start fallback
  * can persist them.
  */
-export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[]; pages: MonitorPage[] }> {
+export async function buildPublicMonitors(
+  incidentLookbackMs: number = INCIDENT_LOOKBACK_MS,
+): Promise<{ index: MonitorIndexEntry[]; pages: MonitorPage[]; incidents: FreshIncidents }> {
   const snap = await firestore.collection('checks').where('public', '==', true).get();
 
   type CheckMeta = {
@@ -341,7 +462,7 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
   }
 
   if (!checks.length) {
-    return { index: [], pages: [] };
+    return { index: [], pages: [], incidents: null };
   }
 
   // Resolve unique slugs (explicit publicSlug wins; else hostname; suffix on collision).
@@ -387,6 +508,25 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
   }
   for (const c of checks) {
     c.lastChecked = Math.max(c.lastChecked, lastProbed.get(c.id) ?? 0);
+  }
+
+  // Outage windows. One failed read leaves every stored list untouched.
+  const windowStart = endDate - incidentLookbackMs;
+  const islandsByCheck = new Map<string, IncidentIsland[]>();
+  let incidentsOk = true;
+  for (const [userId, ids] of byUser) {
+    const islands = await fetchIncidentIslands(ids, userId, windowStart);
+    if (!islands) {
+      incidentsOk = false;
+      break;
+    }
+    for (const [id, list] of islands) islandsByCheck.set(id, list);
+  }
+  const incidentsBySlug = new Map<string, PublicIncident[]>();
+  if (incidentsOk) {
+    for (const c of checks) {
+      incidentsBySlug.set(slugOf.get(c.id)!, deriveIncidents(islandsByCheck.get(c.id) ?? [], c.status === 'offline'));
+    }
   }
 
   const sevenDaysAgo = endDate - 7 * DAY_MS;
@@ -449,7 +589,7 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
   }
 
   index.sort((a, b) => a.name.localeCompare(b.name));
-  return { index, pages };
+  return { index, pages, incidents: incidentsOk ? { windowStart, bySlug: incidentsBySlug } : null };
 }
 
 /** Persist the index doc + per-slug page docs, pruning stale page docs. */
@@ -457,6 +597,7 @@ async function persistPublicMonitors(
   index: MonitorIndexEntry[],
   pages: MonitorPage[],
   buildStartedAt: number,
+  incidents: FreshIncidents,
 ): Promise<void> {
   const updatedAt = Date.now();
   await firestore.doc(INDEX_DOC).set({ monitors: index, count: index.length, updatedAt });
@@ -471,6 +612,14 @@ async function persistPublicMonitors(
     const existing = await firestore.getAll(...refs);
     const batch = firestore.batch();
     chunk.forEach((page, j) => {
+      if (incidents) {
+        page.incidents = mergeIncidentHistory(
+          normalizeStoredIncidents(existing[j].get("incidents")),
+          incidents.bySlug.get(page.slug) ?? [],
+          incidents.windowStart,
+          updatedAt,
+        );
+      }
       const pushedAt = existing[j].get("statusChangedAt");
       if (typeof pushedAt === "number" && pushedAt > buildStartedAt) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -494,11 +643,11 @@ async function persistPublicMonitors(
   }
 }
 
-export async function runPublicMonitorsRefresh(): Promise<void> {
+export async function runPublicMonitorsRefresh(incidentLookbackMs: number = INCIDENT_LOOKBACK_MS): Promise<void> {
   try {
     const buildStartedAt = Date.now();
-    const { index, pages } = await buildPublicMonitors();
-    await persistPublicMonitors(index, pages, buildStartedAt);
+    const { index, pages, incidents } = await buildPublicMonitors(incidentLookbackMs);
+    await persistPublicMonitors(index, pages, buildStartedAt, incidents);
     logger.info(`[public-monitors] refreshed ${index.length} public monitors`);
   } catch (error) {
     logger.error("[public-monitors] refresh failed:", error);
@@ -525,7 +674,7 @@ export const getPublicMonitors = onRequest(
       if (!snap.exists) {
         const buildStartedAt = Date.now();
         const built = await buildPublicMonitors();
-        await persistPublicMonitors(built.index, built.pages, buildStartedAt);
+        await persistPublicMonitors(built.index, built.pages, buildStartedAt, built.incidents);
         monitors = built.index;
       }
 
