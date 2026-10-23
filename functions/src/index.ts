@@ -220,6 +220,8 @@ lazy((): typeof import('./public-monitor-follows') => require('./public-monitor-
   'unfollowPublicMonitor',
   'listPublicMonitorFollows',
 ]);
+// Email-only follows from the status pages, no account (double opt-in)
+lazy((): typeof import('./public-email-follows') => require('./public-email-follows'), ['publicFollow']);
 
 // Admin functions
 lazy((): typeof import('./admin') => require('./admin'), [

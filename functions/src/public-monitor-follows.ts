@@ -14,6 +14,7 @@ import {
   type FollowerEvent,
 } from "./public-follow-policy";
 import { isWafBlockError } from "./public-monitor-blocked";
+import { confirmedEmailFollowers, emailFollowUnsubscribeUrl } from "./public-email-follows";
 
 /**
  * Followed services: any exit1 user can follow a public monitor (the curated
@@ -23,6 +24,9 @@ import { isWafBlockError } from "./public-monitor-blocked";
  *
  *   public_monitor_follows/{uid}__{checkId}   one doc per follow
  *   public_monitor_alert_state/{checkId}      last announced event, dedupe key
+ *
+ * People without an account can follow by email too (public-email-follows.ts).
+ * Both kinds get the same transitions from the fan-out below.
  *
  * Fan-out is triggered from triggerAlert (alert.ts), which runs on the VPS.
  */
@@ -223,14 +227,19 @@ async function resolveRecipients(follows: FollowDoc[]): Promise<string[]> {
   return [...out];
 }
 
-function buildEmail(website: Website, event: FollowerEvent, slug: string) {
+/** Who an email goes to decides its footer: account followers manage follows in the app. */
+type Audience = { kind: "account" } | { kind: "email"; unsubscribeUrl: string };
+
+function buildEmail(website: Website, event: FollowerEvent, slug: string, audience: Audience) {
   const name = website.name;
   const isDown = event === "website_down";
   const subject = isDown ? `${name} is down` : `${name} is back up`;
   const utm = "utm_source=follow_email&utm_medium=email&utm_campaign=followed_service";
   const statusUrl = `${SITE_URL}/status/${encodeURIComponent(slug)}?${utm}`;
   const manageUrl = `${APP_URL}/following`;
-  const monitorOwnUrl = `${APP_URL}/checks?${utm}`;
+  const monitorOwnUrl = audience.kind === "account" ? `${APP_URL}/checks?${utm}` : `${APP_URL}/sign-up?${utm}`;
+  const unfollowUrl = audience.kind === "account" ? manageUrl : audience.unsubscribeUrl;
+  const ownCta = audience.kind === "account" ? "Add a check" : "Create a free account";
 
   const when = new Date().toUTCString();
   const code = formatStatusCode(website.lastStatusCode);
@@ -255,7 +264,7 @@ function buildEmail(website: Website, event: FollowerEvent, slug: string) {
     "",
     `Want the same alert for your own site? ${monitorOwnUrl}`,
     "",
-    `You get this because you follow ${name} on exit1. Unfollow: ${manageUrl}`,
+    `You get this because you follow ${name} on exit1. Unfollow: ${unfollowUrl}`,
   ].join("\n");
 
   const detailsHtml = detailLines.map((l) => `<div style="color:#94a3b8;font-size:14px">${escapeHtml(l)}</div>`).join("");
@@ -269,8 +278,8 @@ function buildEmail(website: Website, event: FollowerEvent, slug: string) {
         <div style="margin:16px 0 0 0">
           <a href="${statusUrl}" style="display:inline-block;padding:10px 16px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:12px;font-weight:500">Live status and outage history</a>
         </div>
-        <p style="margin:20px 0 0 0;color:#cbd5e1;font-size:14px">Want this for your own site? <a href="${monitorOwnUrl}" style="color:#38bdf8;text-decoration:none">Add a check</a>. It's free for 50 sites.</p>
-        <p style="margin:16px 0 0 0;color:#64748b;font-size:12px">You get this because you follow ${escapeHtml(name)} on exit1. <a href="${manageUrl}" style="color:#64748b">Unfollow</a></p>
+        <p style="margin:20px 0 0 0;color:#cbd5e1;font-size:14px">Want this for your own site? <a href="${monitorOwnUrl}" style="color:#38bdf8;text-decoration:none">${ownCta}</a>. It's free for 50 sites.</p>
+        <p style="margin:16px 0 0 0;color:#64748b;font-size:12px">You get this because you follow ${escapeHtml(name)} on exit1. <a href="${unfollowUrl}" style="color:#64748b">Unfollow</a></p>
       </div>
     </div>`;
 
@@ -289,20 +298,33 @@ export async function notifyPublicMonitorFollowers(website: Website, eventType: 
   // matching recovery is then skipped as no_prior_down.
   if (eventType === "website_down" && isWafBlockError(website.lastError)) return;
   try {
-    const snap = await firestore.collection(FOLLOWS).where("checkId", "==", website.id).get();
-    if (snap.empty) return;
-
+    // Claim before looking for followers. A down nobody followed still has to
+    // be recorded, or whoever follows mid-outage (the people on the status page
+    // right then) gets no recovery email: it would read as no_prior_down.
     if (!(await claimAnnouncement(website.id, eventType))) return;
 
+    const [snap, emailFollows] = await Promise.all([
+      firestore.collection(FOLLOWS).where("checkId", "==", website.id).get(),
+      confirmedEmailFollowers(website.id),
+    ]);
+    if (snap.empty && emailFollows.length === 0) return;
+
     const follows = snap.docs.map((d) => d.data() as FollowDoc);
-    const slug = follows[0].slug;
-    const recipients = await resolveRecipients(follows);
-    const { subject, text, html } = buildEmail(website, eventType, slug);
+    const slug = follows[0]?.slug ?? emailFollows[0].slug;
+    const accountRecipients = follows.length ? await resolveRecipients(follows) : [];
+    const seen = new Set(accountRecipients);
+    const sends: Array<{ to: string; audience: Audience }> = accountRecipients.map((to) => ({ to, audience: { kind: "account" } }));
+    for (const f of emailFollows) {
+      if (seen.has(f.email)) continue;
+      seen.add(f.email);
+      sends.push({ to: f.email, audience: { kind: "email", unsubscribeUrl: emailFollowUnsubscribeUrl(f.token) } });
+    }
 
     let sent = 0;
     let failed = 0;
-    for (const to of recipients) {
+    for (const { to, audience } of sends) {
       if (await isEmailSuppressedCached(to)) continue;
+      const { subject, text, html } = buildEmail(website, eventType, slug, audience);
       try {
         await sendTransactionalEmail({
           to,
@@ -310,7 +332,7 @@ export async function notifyPublicMonitorFollowers(website: Website, eventType: 
           html,
           text,
           category: "alerts",
-          meta: { checkId: website.id, eventType, kind: "follower" },
+          meta: { checkId: website.id, eventType, kind: audience.kind === "account" ? "follower" : "email_follower" },
         });
         sent += 1;
       } catch (error) {
@@ -319,7 +341,7 @@ export async function notifyPublicMonitorFollowers(website: Website, eventType: 
       }
       await new Promise((resolve) => setTimeout(resolve, SEND_SPACING_MS));
     }
-    logger.info(`[follows] ${website.name} ${eventType}: ${sent} sent, ${failed} failed, ${follows.length} followers`);
+    logger.info(`[follows] ${website.name} ${eventType}: ${sent} sent, ${failed} failed, ${follows.length} account + ${emailFollows.length} email followers`);
   } catch (error) {
     logger.error("[follows] fan-out failed", { checkId: website.id, error: (error as Error)?.message });
   }

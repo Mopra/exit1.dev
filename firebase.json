@@ -58,6 +58,14 @@
         "function": "getPublicMonitor"
       },
       {
+        "source": "/v1/public/follow",
+        "function": "publicFollow"
+      },
+      {
+        "source": "/v1/public/follow/**",
+        "function": "publicFollow"
+      },
+      {
         "source": "/api/probe/generate",
         "function": "probeGenerate"
       },
