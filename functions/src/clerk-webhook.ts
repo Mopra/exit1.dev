@@ -9,6 +9,7 @@ import {
   RESEND_API_KEY,
   DAY3_API_KEY,
   getDay3ApiKey,
+  getClerkSecretKey,
   CLERK_WEBHOOK_SECRET,
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
@@ -50,6 +51,15 @@ import { DAY3_IMPORT_CHUNK_SIZE } from "./day3-config";
 import { IDEMPOTENCY_CONFLICT } from "./day3-client";
 import { requireAdmin } from "./require-admin";
 import { startReverseTrial } from "./reverse-trial";
+import {
+  buildPaymentFailedEmail,
+  shouldSendPaymentFailedEmail,
+  type PaymentAttemptPayload,
+} from "./payment-failed-email";
+import { sendDay3Email } from "./day3-email";
+import { TRIAL_INVITE_FROM, TRIAL_INVITE_REPLY_TO } from "./trial-invite-email";
+import { fetchClerkUserFacts } from "./clerk-users";
+import { getActiveSuppressions } from "./email-suppression";
 
 // Generic Clerk webhook payload — we handle multiple event types
 interface ClerkWebhookPayload {
@@ -398,6 +408,65 @@ export async function syncSignupToEmailProviders(params: {
   return result;
 }
 
+/**
+ * Email the payer about a failed renewal, once per payment attempt. Clerk sends
+ * created and updated events for the same attempt, and redelivers on errors, so
+ * a Firestore marker claims the attempt before sending and is dropped again if
+ * the send fails.
+ */
+async function sendPaymentFailedEmail(
+  attempt: PaymentAttemptPayload,
+): Promise<'sent' | 'duplicate' | 'skipped' | 'failed'> {
+  const day3Key = getDay3ApiKey();
+  if (!day3Key) {
+    logger.error('Payment failed email not sent: Day3 key missing', { attemptId: attempt.id });
+    return 'failed';
+  }
+
+  let email = attempt.payer?.email?.trim() || null;
+  let firstName = attempt.payer?.first_name?.trim() || null;
+  const userId = attempt.payer?.user_id;
+  if (!email && userId) {
+    const secretKey = getClerkSecretKey();
+    const facts = secretKey
+      ? (await fetchClerkUserFacts([userId], secretKey, 'payment-failed')).get(userId)
+      : undefined;
+    email = facts?.email ?? null;
+    firstName = firstName ?? facts?.firstName ?? null;
+  }
+  if (!email) {
+    logger.warn('Payment failed email skipped: no payer email', { attemptId: attempt.id, userId });
+    return 'skipped';
+  }
+  // A hard-bounced or complained address gets nothing. This is an account
+  // notice, so a marketing opt-out does not stop it.
+  if ((await getActiveSuppressions([email])).length > 0) return 'skipped';
+
+  const marker = firestore.collection('paymentFailedEmails').doc(attempt.id as string);
+  try {
+    await marker.create({ email, userId: userId ?? null, organizationId: attempt.payer?.organization_id ?? null, createdAt: Date.now() });
+  } catch (e) {
+    if ((e as { code?: number })?.code === 6) return 'duplicate'; // ALREADY_EXISTS
+    throw e;
+  }
+
+  const body = buildPaymentFailedEmail({ firstName, attempt });
+  const sent = await sendDay3Email(day3Key, {
+    from: TRIAL_INVITE_FROM,
+    to: email,
+    subject: body.subject,
+    text: body.text,
+    replyTo: TRIAL_INVITE_REPLY_TO,
+    idempotencyKey: `payment-failed:${attempt.id}`,
+  });
+  if (!sent.ok) {
+    logger.warn('Payment failed email send failed', { attemptId: attempt.id, status: sent.status, error: sent.error });
+    await marker.delete().catch(() => undefined);
+    return 'failed';
+  }
+  return 'sent';
+}
+
 export const clerkWebhook = onRequest({
   secrets: [RESEND_API_KEY, DAY3_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
   cors: false,
@@ -552,6 +621,21 @@ export const clerkWebhook = onRequest({
       logger.error('Failed to sync tier from subscription webhook', { userId, error: message });
       res.status(200).json({ received: true, processed: false, error: message });
     }
+    return;
+  }
+
+  // A failed renewal charge: send our own email with a link to update the card,
+  // since Clerk's failed-payment template has none.
+  if (payload.type.startsWith('paymentAttempt.')) {
+    const attempt = payload.data as PaymentAttemptPayload;
+    if (!shouldSendPaymentFailedEmail(payload.type, attempt)) {
+      res.status(200).json({ received: true, processed: false });
+      return;
+    }
+    const outcome = await sendPaymentFailedEmail(attempt);
+    logger.info('Payment failed email', { attemptId: attempt.id, outcome });
+    // A failed send answers 500 so Clerk redelivers; the marker makes that safe.
+    res.status(outcome === 'failed' ? 500 : 200).json({ received: true, processed: outcome === 'sent', outcome });
     return;
   }
 
