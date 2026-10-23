@@ -247,6 +247,51 @@ async function fetchBlockedCounts(
   return result;
 }
 
+// How far back to look for a check's last probe. Public checks run every few
+// minutes, so anything older than this means the check has stalled and the
+// Firestore value is as good as anything.
+const LAST_PROBE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Latest probe timestamp per check, from the raw history. The checks doc's
+ * lastChecked is not usable for this: the runner defers routine writes of it
+ * (status-buffer.ts heartbeat defer), so it lags by hours while the status is
+ * current. Scans a few hours of one partition range, clustered on
+ * user_id/website_id. A failure is logged and the caller keeps the doc value.
+ */
+async function fetchLastProbed(
+  websiteIds: string[],
+  userId: string,
+  now: number,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (!websiteIds.length) return result;
+
+  const query = `
+    SELECT website_id, MAX(timestamp) AS last_probe
+    FROM \`${bigquery.projectId}.${DATASET_ID}.${HISTORY_TABLE_ID}\`
+    WHERE user_id = @userId
+      AND website_id IN UNNEST(@websiteIds)
+      AND timestamp >= @since
+    GROUP BY website_id
+  `;
+
+  try {
+    const [rows] = await bigquery.query({
+      query,
+      params: { userId, websiteIds, since: new Date(now - LAST_PROBE_LOOKBACK_MS) },
+    });
+    for (const row of rows as Array<{ website_id: string; last_probe: { value: string } | string | null }>) {
+      const raw = typeof row.last_probe === 'string' ? row.last_probe : row.last_probe?.value;
+      const ms = raw ? new Date(raw).getTime() : NaN;
+      if (Number.isFinite(ms)) result.set(String(row.website_id), ms);
+    }
+  } catch (err) {
+    logger.error('[public-monitors] last-probe query failed:', err);
+  }
+  return result;
+}
+
 /**
  * Build the full set of public monitor pages + index from Firestore + BigQuery.
  * Pure-ish: returns the artifacts so both the cron and the cold-start fallback
@@ -332,6 +377,16 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
     } catch (err) {
       logger.error(`[public-monitors] daily batch failed for user ${userId}:`, err);
     }
+  }
+
+  // The probe time the pages print as "last checked". Take the later of the
+  // history and the doc, since a transition push writes the doc at once.
+  const lastProbed = new Map<string, number>();
+  for (const [userId, ids] of byUser) {
+    for (const [id, ms] of await fetchLastProbed(ids, userId, endDate)) lastProbed.set(id, ms);
+  }
+  for (const c of checks) {
+    c.lastChecked = Math.max(c.lastChecked, lastProbed.get(c.id) ?? 0);
   }
 
   const sevenDaysAgo = endDate - 7 * DAY_MS;
