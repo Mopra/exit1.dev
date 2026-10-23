@@ -216,16 +216,19 @@ type NormalizedStatusData = ReturnType<typeof normalizeStatusData>;
 // (per-consultation timing jitter — the peer verdict fields stay material);
 // the dnsMs/connectMs/tlsMs/ttfbMs phase timings and
 // sslCertificate.lastChecked (per-probe measurements, same staleness class
-// as responseTime). A steady check whose probes only move timing fields
+// as responseTime); targetIp (CDN-fronted targets resolve to a different
+// address on most probes, which forced an hourly write for ~800 checks;
+// alerts read the IP from the live probe, and the address set in
+// targetIpsJson stays material). A steady check whose probes only move timing fields
 // produces an unchanged material hash and skips its flush write (see
 // processBatchEntries).
 const materialHashOf = (n: NormalizedStatusData) => {
   const ssl = n.sslCertificate;
-  return `${n.status}|${n.lastStatusChange}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${n.pendingDownWebhooks}|${n.pendingUpWebhooks}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
+  return `${n.status}|${n.lastStatusChange}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${n.pendingDownWebhooks}|${n.pendingUpWebhooks}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
 };
 
 const timingHashOf = (n: NormalizedStatusData) =>
-  `${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastHistoryAt}|${n.peerCheckedAt}|${n.peerResponseTime}|${n.dnsMs}|${n.connectMs}|${n.tlsMs}|${n.ttfbMs}|${n.sslCertificate?.lastChecked}`;
+  `${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastHistoryAt}|${n.peerCheckedAt}|${n.peerResponseTime}|${n.dnsMs}|${n.connectMs}|${n.tlsMs}|${n.ttfbMs}|${n.sslCertificate?.lastChecked}|${n.targetIp}`;
 
 // Compile-time coverage guard: every key of the normalized payload must be
 // consumed by materialHashOf or timingHashOf. Adding a field to

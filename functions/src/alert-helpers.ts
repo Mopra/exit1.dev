@@ -104,6 +104,10 @@ export interface AlertSettingsCache {
 // Context for the alert run to share cache, throttle, and budget state
 export interface AlertContext {
   settings?: AlertSettingsCache;
+  // Deferred settings source, used only when an alert actually needs them.
+  // Lets a caller on a hot path (every HTTPS probe evaluates SSL alerts)
+  // route through its own cache without paying a read on the noop path.
+  loadSettings?: () => Promise<AlertSettingsCache>;
   throttleCache?: Set<string>;
   budgetCache?: Map<string, number>;
   emailMonthlyBudgetCache?: Map<string, number>;
@@ -418,6 +422,12 @@ export const setCachedAlertSettings = (userId: string, settings: AlertSettingsCa
 export const resolveAlertSettings = async (userId: string, context?: AlertContext): Promise<AlertSettingsCache> => {
   if (context?.settings) {
     return context.settings;
+  }
+
+  if (context?.loadSettings) {
+    const loaded = await context.loadSettings();
+    context.settings = loaded;
+    return loaded;
   }
 
   const cached = getCachedAlertSettings(userId);

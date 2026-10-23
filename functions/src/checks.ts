@@ -1761,8 +1761,8 @@ export async function processOneCheck(
           // this advanced the stored cert across the 30-day / expiry threshold
           // without ever alerting, which is the core of why ssl_warning was
           // silently missed. Decide off the durable sslAlertedState.
-          const settings = await getUserSettings(check.userId);
-          const sslResult = await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+          const loadSettings = () => getUserSettings(check.userId);
+          const sslResult = await triggerSSLAlert(check, checkResult.sslCertificate, { loadSettings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
           if (sslResult.nextAlertedState !== undefined) {
             noChangeUpdate.sslAlertedState = sslResult.nextAlertedState;
           }
@@ -1935,8 +1935,10 @@ export async function processOneCheck(
           ? checkResult.securityMetadataLastChecked
           : check.sslCertificate?.lastChecked ?? now;
       updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
-      const settings = await getUserSettings(check.userId);
-      const sslResult = await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+      // Settings load lazily: almost every probe is an SSL noop, and an
+      // eager read here cost three Firestore reads per cache refill.
+      const loadSettings = () => getUserSettings(check.userId);
+      const sslResult = await triggerSSLAlert(check, checkResult.sslCertificate, { loadSettings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
       // Persist the durable alert state so the next probe (and the scheduled
       // refresh writer) compare against what we actually notified about.
       if (sslResult.nextAlertedState !== undefined) {

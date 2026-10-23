@@ -37,7 +37,7 @@ const { insertCheckHistory, flushBigQueryInserts, markShuttingDown: markBigQuery
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { drainQueuedWebhookRetries, enableDeferredBudgetWrites, flushDeferredBudgetWrites, fetchAlertSettingsFromFirestore } = await import('../../functions/lib/alert.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { invalidatePeerSettingsCache, peekPeerSettings } = await import('../../functions/lib/peer-settings.js');
+const { invalidatePeerSettingsCache, peekPeerSettings, setPeerSettingsFromListener } = await import('../../functions/lib/peer-settings.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { invalidateEmailProviderCache, peekEmailProviderSettings } = await import('../../functions/lib/email-provider-settings.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
@@ -1082,6 +1082,8 @@ const server = createServer((req, res) => {
     // watchdog reads a very stale deployModeLastChecked as "dispatcher
     // wedged inside the deploy-mode read" and would restart mid-pause.
     deployModeLastChecked = Date.now() - DEPLOY_MODE_CACHE_MS;
+    // Force a direct read too, in case the listener is the stale part.
+    deployModeSnapAt = 0;
     console.info('[admin] flags cache invalidated via /admin/refresh-flags');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
@@ -1662,6 +1664,21 @@ const heartbeatDeferUnsub = firestore
     (err: unknown) => console.warn('[heartbeat-defer] onSnapshot error:', err),
   );
 
+// Peer-confirmation flag pushed the same way, so a probe that sees a target
+// down no longer pays a read per 30s cache window. peer-settings.ts keeps a
+// slow backstop read in case the listener goes quiet.
+const peerSettingsUnsub = firestore
+  .doc('system_settings/peer_confirmation')
+  .onSnapshot(
+    (snap: { exists: boolean; data: () => { enabled?: boolean } | undefined }) => {
+      setPeerSettingsFromListener(snap.exists ? snap.data()?.enabled === true : false);
+    },
+    (err: unknown) => {
+      setPeerSettingsFromListener(null);
+      console.warn('[peer-settings] onSnapshot error, falling back to reads:', err);
+    },
+  );
+
 // Periodic flush of the deferred buffer. 60 min per firestore-write-reduction.md
 // Tier 2 (was 15 min in Tier 1, 5 min originally) — heartbeat snapshots are
 // the dominant Firestore write path, and the frontend reads live fields over
@@ -1698,6 +1715,32 @@ const DEPLOY_MODE_CACHE_MS = 30_000;
 // stall.
 const DEPLOY_MODE_READ_TIMEOUT_MS = 10_000;
 
+// The doc is pushed by a listener so the 30s evaluation costs no read. A
+// listener on a wedged channel goes quiet without erroring, so a direct read
+// still runs every DEPLOY_MODE_BACKSTOP_READ_MS as a backstop.
+type DeployModeDoc = { enabled?: boolean; expiresAt?: number; reason?: string; disabledAt?: number };
+type DeployModeSnap = { exists: boolean; data: () => DeployModeDoc | undefined };
+// Short enough that deploy-mode.mjs's propagation wait stays meaningful if
+// the listener has silently wedged.
+const DEPLOY_MODE_BACKSTOP_READ_MS = 2 * 60_000;
+let deployModeSnap: DeployModeSnap | null = null;
+let deployModeSnapAt = 0;
+const deployModeUnsub = firestore
+  .doc('system_settings/deploy_mode')
+  .onSnapshot(
+    (snap: DeployModeSnap) => {
+      deployModeSnap = snap;
+      deployModeSnapAt = Date.now();
+      // Evaluate on the next dispatcher pass instead of waiting out the
+      // cache. Backdated, not zeroed: the watchdog reads this as liveness.
+      deployModeLastChecked = Date.now() - DEPLOY_MODE_CACHE_MS;
+    },
+    (err: unknown) => {
+      deployModeSnap = null;
+      console.warn('[deploy-mode] onSnapshot error, falling back to reads:', err);
+    },
+  );
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
@@ -1714,15 +1757,25 @@ async function checkDeployMode(): Promise<boolean> {
   deployModeLastChecked = now;
   const wasPreviouslyActive = deployModeActive;
   try {
-    type DeployModeDoc = { enabled?: boolean; expiresAt?: number; reason?: string; disabledAt?: number };
-    const doc = await withTimeout(
-      firestore.doc('system_settings/deploy_mode').get() as Promise<{
-        exists: boolean;
-        data: () => DeployModeDoc | undefined;
-      }>,
-      DEPLOY_MODE_READ_TIMEOUT_MS,
-      'deploy_mode read',
-    );
+    let doc: DeployModeSnap;
+    if (deployModeSnap && now - deployModeSnapAt < DEPLOY_MODE_BACKSTOP_READ_MS) {
+      doc = deployModeSnap;
+    } else {
+      const snapAtBeforeRead = deployModeSnapAt;
+      doc = await withTimeout(
+        firestore.doc('system_settings/deploy_mode').get() as Promise<DeployModeSnap>,
+        DEPLOY_MODE_READ_TIMEOUT_MS,
+        'deploy_mode read',
+      );
+      // A listener event that landed while the read was in flight is newer
+      // than the read; keep it.
+      if (deployModeSnapAt !== snapAtBeforeRead) {
+        doc = deployModeSnap ?? doc;
+      } else if (deployModeSnap) {
+        deployModeSnap = doc;
+        deployModeSnapAt = now;
+      }
+    }
     const dm = doc.exists ? doc.data() : undefined;
     const expiresAt = typeof dm?.expiresAt === 'number' ? dm.expiresAt : undefined;
 
@@ -1797,7 +1850,7 @@ drainQueuedWebhookRetries().catch((err: unknown) =>
   console.warn('Failed to drain webhook retries on startup:', err)
 );
 
-// ── Day3 webhook event drain (every 30s) ──────────────────────────────
+// ── Day3 webhook event drain (every 2 min) ──────────────────────────────
 // day3Webhook verifies and persists on the request path, then returns 2xx
 // inside Day3's 10s budget. This is where the events are actually applied.
 // Both regions run this; each doc is claimed transactionally, so a duplicate
@@ -1805,6 +1858,9 @@ drainQueuedWebhookRetries().catch((err: unknown) =>
 // Depth is sampled here rather than read on each /health hit — /health is
 // polled often and a count() per request would be pure waste. A depth that
 // only climbs means the drain is wedged and events are piling up unapplied.
+// Every pass costs at least one billed read even on an empty queue, on both
+// VPSes, so the cadence is minutes: the events are bounces and unsubscribes,
+// and a 2-minute delay applying them changes nothing.
 let lastDay3DrainCount = 0;
 let day3QueueDepth: number | null = null;
 
@@ -1817,7 +1873,7 @@ const day3WebhookTimer = setInterval(() => {
   runDay3Drain().catch((err: unknown) =>
     console.warn('Failed to drain Day3 webhook events:', err)
   );
-}, 30_000);
+}, 2 * 60_000);
 runDay3Drain().catch((err: unknown) =>
   console.warn('Failed to drain Day3 webhook events on startup:', err)
 );
@@ -1978,6 +2034,8 @@ async function shutdown(signal: string) {
   // The watchdog must not exit(1) mid-drain and discard the final flushes.
   clearInterval(watchdogTimer);
   try { heartbeatDeferUnsub(); } catch { /* ignore */ }
+  try { deployModeUnsub(); } catch { /* ignore */ }
+  try { peerSettingsUnsub(); } catch { /* ignore */ }
   schedule.stopRealtimeSync();
   setStatusUpdateHook(null);
 

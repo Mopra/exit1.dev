@@ -202,6 +202,12 @@ export async function applyDay3Event(
 
 let isDraining = false;
 let lastDrainAt = 0;
+// The stale-`processing` sweep only finds anything once a claim outlives its
+// lease, so running it more often than that is a billed empty query.
+let lastStraySweepAt = 0;
+// Set when the last drain's `queued` query came back empty, so the depth
+// probe can answer 0 without a billed count().
+let queuedSeenEmpty = false;
 
 /**
  * Process queued events. Safe to call from both VPS regions concurrently: each
@@ -229,7 +235,11 @@ export async function drainDay3WebhookEvents(options?: { force?: boolean }): Pro
       .limit(DRAIN_BATCH_SIZE)
       .get();
 
+    queuedSeenEmpty = snapshot.empty;
+
     if (snapshot.empty) {
+      if (now - lastStraySweepAt < PROCESSING_LEASE_MS) return 0;
+      lastStraySweepAt = now;
       snapshot = await firestore
         .collection(COLLECTION)
         .where("status", "==", "processing")
@@ -296,6 +306,7 @@ export async function drainDay3WebhookEvents(options?: { force?: boolean }): Pro
 
 /** Queue depth for /health. A number that only grows means the drain is stuck. */
 export async function getDay3QueueDepth(): Promise<number> {
+  if (queuedSeenEmpty) return 0;
   const snapshot = await firestore
     .collection(COLLECTION)
     .where("status", "==", "queued")

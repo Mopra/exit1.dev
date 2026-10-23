@@ -30,6 +30,30 @@ let inFlight: Promise<PeerSettings> | null = null;
 // Bumped on every cache invalidation. Any in-flight fetch that started
 // before the bump must NOT write its (now-stale) result to `cached`.
 let invalidationGeneration = 0;
+// True while a listener (the VPS runner's onSnapshot) is pushing the flag.
+// The cache then lives PEER_SETTINGS_LISTENER_BACKSTOP_MS instead of the
+// short TTL: a listener on a wedged channel goes quiet without erroring, so
+// a slow direct read still runs as a backstop.
+let listenerLive = false;
+const PEER_SETTINGS_LISTENER_BACKSTOP_MS = 10 * 60_000;
+
+/**
+ * Feed the flag from a Firestore listener. Pass null when the listener
+ * errors, which returns to the short-TTL polling path.
+ */
+export function setPeerSettingsFromListener(enabled: boolean | null): void {
+  if (enabled === null) {
+    listenerLive = false;
+    return;
+  }
+  listenerLive = true;
+  invalidationGeneration++;
+  const wasEnabled = cached?.enabled === true;
+  cached = { enabled, checkedAt: Date.now() };
+  if (wasEnabled !== enabled) {
+    logger.info(`[peer-settings] enabled: ${wasEnabled} -> ${enabled}`);
+  }
+}
 
 async function fetchPeerSettings(): Promise<PeerSettings> {
   try {
@@ -48,7 +72,8 @@ async function fetchPeerSettings(): Promise<PeerSettings> {
 
 export async function getPeerSettings(): Promise<PeerSettings> {
   const now = Date.now();
-  if (cached && now - cached.checkedAt < CONFIG.PEER_SETTINGS_CACHE_TTL_MS) {
+  const ttl = listenerLive ? PEER_SETTINGS_LISTENER_BACKSTOP_MS : CONFIG.PEER_SETTINGS_CACHE_TTL_MS;
+  if (cached && now - cached.checkedAt < ttl) {
     return cached;
   }
   // Coalesce concurrent refreshes — without this, a burst of 200 in-flight
