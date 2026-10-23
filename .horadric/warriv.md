@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-23 Round (hourly, at adf468b): nothing to do. adf468b (runner read/write cuts) is the human's own work; its VPS rebuild is theirs to run. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Round (hourly, at 7543dc7): nothing to do. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Round (human left, at f64ad9d): nothing to do. New public monitor commits are the human's own work. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Round (human left, at 21a3895): nothing to do. New commits (public monitor follows) are the human's own work, not a quest. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
