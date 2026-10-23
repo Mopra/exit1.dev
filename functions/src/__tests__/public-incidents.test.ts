@@ -35,8 +35,12 @@ test("a closed island becomes one ended incident", () => {
   assert.equal(i.id, String(T0));
 });
 
-test("a single failed probe is a blip", () => {
-  assert.deepEqual(deriveIncidents([island({ probes: 1 })], false), []);
+test("one confirmed offline row is enough: confirmation already filtered blips", () => {
+  assert.equal(deriveIncidents([island({ probes: 1 })], false).length, 1);
+});
+
+test("an island with no rows is dropped", () => {
+  assert.deepEqual(deriveIncidents([island({ probes: 0 })], false), []);
 });
 
 test("islands split by a short recovery merge into one outage", () => {
@@ -105,7 +109,15 @@ test("an outage clipped by the window keeps its true start and id", () => {
   assert.equal(out.startedAt, T0);
   assert.equal(out.endedAt, windowStart + 30 * MIN);
   assert.equal(out.durationMs, 90 * MIN);
-  assert.equal(out.probes, 18);
+  assert.equal(out.probes, 12);
+});
+
+test("a stored outage that ended well before a fresh one is not continued", () => {
+  const windowStart = T0 + 60 * MIN;
+  const stored = incident({ endedAt: windowStart - 9 * MIN, durationMs: 51 * MIN });
+  const fresh = incident({ id: "f", startedAt: windowStart + 9 * MIN, endedAt: windowStart + 20 * MIN, durationMs: 11 * MIN });
+  const out = mergeIncidentHistory([stored], [fresh], windowStart, windowStart + 60 * MIN);
+  assert.deepEqual(out.map((i) => i.id), ["f", String(T0)]);
 });
 
 test("a stored ongoing outage the fresh read no longer sees gets closed", () => {
@@ -126,5 +138,7 @@ test("stored incidents are read tolerantly", () => {
   assert.deepEqual(normalizeStoredIncidents([null, { startedAt: "x" }]), []);
   const [i] = normalizeStoredIncidents([{ startedAt: T0, durationMs: 5 }]);
   assert.equal(i.id, String(T0));
-  assert.equal(i.endedAt, null);
+  assert.equal(i.endedAt, T0 + 5);
+  const [open] = normalizeStoredIncidents([{ startedAt: T0, durationMs: 5, ongoing: true }]);
+  assert.equal(open.endedAt, null);
 });

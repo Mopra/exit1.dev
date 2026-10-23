@@ -97,7 +97,7 @@ type MonitorPage = MonitorIndexEntry & {
   stats: MonitorStats;
   heartbeat: HeartbeatDay[];      // oldest → newest, up to 90 entries
   updatedAt: number;
-  /** Outage windows, newest first, last 90 days. Merged into the stored list by persistPublicMonitors. */
+  /** Outage windows, newest first, last 365 days. Merged into the stored list by persistPublicMonitors. */
   incidents?: PublicIncident[];
   /** When the status last changed, ms, and to what. Written on transitions by public-monitor-freshness.ts. */
   statusChangedAt?: number;
@@ -310,13 +310,15 @@ async function fetchLastProbed(
 export const INCIDENT_LOOKBACK_MS = 3 * DAY_MS;
 
 /**
- * Runs of consecutive failed probes per check since `since`, as islands
- * (gaps-and-islands over the raw history). Firewall blocks and 4xx answers are
- * dropped before grouping, so neither starts nor splits an outage: a 429 or 404
- * means the service answered and refused our probe (homebrew.sh and
- * producthunt.com rate-limit us, a wrong path 404s), which is not something a
- * page should call an outage. Returns null on failure so the caller keeps the
- * stored incidents untouched.
+ * Islands of confirmed-offline history rows per check since `since`
+ * (gaps-and-islands over the raw history), each closed by the next row of any
+ * kind. Offline here matches the app's own incident calc (bigquery.ts):
+ * confirmed, not in maintenance, legacy DOWN/REACHABLE_WITH_ERROR included.
+ * On top of that, firewall blocks and 4xx answers are not offline: a 429 or
+ * 404 means the service answered and refused our probe (homebrew.sh and
+ * producthunt.com rate-limit us, a wrong path 404s). Those rows still count as
+ * the row after an island, so a 503 followed by hours of 429 ends at the
+ * first 429. Returns null on failure so stored incidents stay untouched.
  */
 async function fetchIncidentIslands(
   websiteIds: string[],
@@ -329,13 +331,16 @@ async function fetchIncidentIslands(
   const wafClause = WAF_BLOCK_ERROR_PREFIXES.map((_, i) => `STARTS_WITH(IFNULL(error, ''), @prefix${i})`).join(' OR ');
   const query = `
     WITH probes AS (
-      SELECT website_id, timestamp, status = 'offline' AS off, status_code, error, peer_status
+      SELECT website_id, timestamp, status_code, error, peer_status,
+        (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR')
+          AND COALESCE(confirmed, TRUE) = TRUE
+          AND COALESCE(maintenance, FALSE) = FALSE
+          AND NOT (${wafClause})
+          AND NOT (IFNULL(status_code, 0) BETWEEN 400 AND 499)) AS off
       FROM \`${bigquery.projectId}.${DATASET_ID}.${HISTORY_TABLE_ID}\`
       WHERE user_id = @userId
         AND website_id IN UNNEST(@websiteIds)
         AND timestamp >= @since
-        AND NOT (status = 'offline' AND (${wafClause}))
-        AND NOT (status = 'offline' AND status_code BETWEEN 400 AND 499)
     ),
     marked AS (
       SELECT *,
@@ -356,8 +361,8 @@ async function fetchIncidentIslands(
       MAX(timestamp) AS last_failed_at,
       ARRAY_AGG(next_ts ORDER BY timestamp DESC LIMIT 1)[OFFSET(0)] AS next_probe_at,
       COUNT(*) AS probes,
-      APPROX_TOP_COUNT(status_code, 1)[SAFE_OFFSET(0)].value AS status_code,
-      ARRAY_AGG(error IGNORE NULLS ORDER BY timestamp LIMIT 1)[SAFE_OFFSET(0)] AS error,
+      ARRAY_AGG(STRUCT(status_code, error)
+        ORDER BY (status_code IS NULL AND error IS NULL), timestamp LIMIT 1)[OFFSET(0)] AS first_failure,
       COUNTIF(peer_status = 'offline') AS peer_offline
     FROM grouped
     WHERE off
@@ -372,8 +377,7 @@ async function fetchIncidentIslands(
     last_failed_at: { value: string } | string;
     next_probe_at: { value: string } | string | null;
     probes: number;
-    status_code: number | null;
-    error: string | null;
+    first_failure: { status_code: number | null; error: string | null } | null;
     peer_offline: number;
   };
   const ms = (v: { value: string } | string | null): number | null => {
@@ -395,8 +399,8 @@ async function fetchIncidentIslands(
         lastFailedAt,
         nextProbeAt: ms(row.next_probe_at),
         probes: Number(row.probes) || 0,
-        statusCode: row.status_code != null ? Number(row.status_code) : null,
-        error: typeof row.error === 'string' ? row.error : null,
+        statusCode: row.first_failure?.status_code != null ? Number(row.first_failure.status_code) : null,
+        error: typeof row.first_failure?.error === 'string' ? row.first_failure.error : null,
         peerOfflineProbes: Number(row.peer_offline) || 0,
       });
       result.set(id, arr);
@@ -510,8 +514,20 @@ export async function buildPublicMonitors(
     c.lastChecked = Math.max(c.lastChecked, lastProbed.get(c.id) ?? 0);
   }
 
-  // Outage windows. One failed read leaves every stored list untouched.
-  const windowStart = endDate - incidentLookbackMs;
+  // Outage windows. One failed read leaves every stored list untouched. No
+  // rows are written while a check stays down, so an outage still open began
+  // with a row that may sit before the lookback: read back to its start.
+  let windowStart = endDate - incidentLookbackMs;
+  for (let i = 0; i < checks.length; i += FIRESTORE_BATCH_LIMIT) {
+    const refs = checks
+      .slice(i, i + FIRESTORE_BATCH_LIMIT)
+      .map((c) => firestore.collection(PAGES_COLLECTION).doc(slugOf.get(c.id)!));
+    for (const doc of await firestore.getAll(...refs)) {
+      for (const inc of normalizeStoredIncidents(doc.get("incidents"))) {
+        if (inc.ongoing && inc.startedAt < windowStart) windowStart = inc.startedAt - 60 * 1000;
+      }
+    }
+  }
   const islandsByCheck = new Map<string, IncidentIsland[]>();
   let incidentsOk = true;
   for (const [userId, ids] of byUser) {
@@ -525,7 +541,10 @@ export async function buildPublicMonitors(
   const incidentsBySlug = new Map<string, PublicIncident[]>();
   if (incidentsOk) {
     for (const c of checks) {
-      incidentsBySlug.set(slugOf.get(c.id)!, deriveIncidents(islandsByCheck.get(c.id) ?? [], c.status === 'offline'));
+      // A vendor_status page reads the vendor's own status API; its "outages"
+      // would be that API's, which the outage pages can't present as ours.
+      const islands = c.source === 'vendor_status' ? [] : islandsByCheck.get(c.id) ?? [];
+      incidentsBySlug.set(slugOf.get(c.id)!, deriveIncidents(islands, c.status === 'offline'));
     }
   }
 

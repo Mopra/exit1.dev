@@ -2,16 +2,17 @@
  * Outage windows for the public status pages (exit1.dev/status/<slug>/outages/<day>).
  * Pure, so the rules are testable without BigQuery or Firestore.
  *
- * BigQuery hands us islands: runs of consecutive failed probes for one check
- * (firewall blocks already removed, since a bot wall says nothing about the
- * service). This turns them into the incidents a page can state as fact:
+ * History is sparse: a row is written on a confirmed status change, an hourly
+ * sample while up, and when the second region is asked to confirm. So BigQuery
+ * hands us islands of confirmed-offline rows, each ending at the next row of
+ * any kind (in practice the confirmed recovery). Firewall blocks, 4xx answers,
+ * maintenance and unconfirmed failures never count as offline. Rules here:
  *
- *   - A single failed probe is a blip, not an outage. It needs two in a row.
  *   - Islands separated by a short recovery are one outage. A service that
  *     flaps for an hour had one bad hour, not twelve outages.
- *   - The hourly run only re-reads a few days of history. Incidents older than
- *     that window are kept as stored; an outage that began before the window
- *     keeps its true start instead of the window edge.
+ *   - The hourly run only re-reads a few days of history (further back for an
+ *     outage still open). Incidents older than that window are kept as stored.
+ *   - `probes` counts history rows, not probes. Never show it as a probe count.
  */
 
 export interface IncidentIsland {
@@ -37,10 +38,12 @@ export interface PublicIncident {
   confirmedFromTwoRegions: boolean;
 }
 
-export const MIN_FAILED_PROBES = 2;
+/** A confirmed offline row already passed the runner's confirmation gate, so one is enough. */
+export const MIN_FAILED_PROBES = 1;
 /** Islands closer than this merge into one outage. */
 export const MERGE_GAP_MS = 10 * 60 * 1000;
-export const INCIDENT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+/** Longer than the heartbeat: an indexed outage page should not 404 after 90 days. */
+export const INCIDENT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 export const MAX_INCIDENTS_PER_PAGE = 200;
 const MAX_ERROR_LENGTH = 200;
 
@@ -111,7 +114,7 @@ export function normalizeStoredIncidents(raw: unknown): PublicIncident[] {
     out.push({
       id: typeof d.id === "string" ? d.id : String(d.startedAt),
       startedAt: d.startedAt,
-      endedAt: typeof d.endedAt === "number" ? d.endedAt : null,
+      endedAt: typeof d.endedAt === "number" ? d.endedAt : d.ongoing === true ? null : d.startedAt + d.durationMs,
       durationMs: d.durationMs,
       ongoing: d.ongoing === true,
       probes: typeof d.probes === "number" ? d.probes : 0,
@@ -145,7 +148,7 @@ export function mergeIncidentHistory(
       (s) =>
         !consumed.has(s.id) &&
         f.startedAt - windowStart < MERGE_GAP_MS &&
-        (s.endedAt == null || s.endedAt >= windowStart - MERGE_GAP_MS),
+        (s.endedAt == null || f.startedAt - s.endedAt < MERGE_GAP_MS),
     );
     if (continued) {
       consumed.add(continued.id);
@@ -155,7 +158,8 @@ export function mergeIncidentHistory(
         id: continued.id,
         startedAt: continued.startedAt,
         durationMs: (end ?? f.startedAt + f.durationMs) - continued.startedAt,
-        probes: continued.probes + f.probes,
+        // Both reads can cover the same rows, so a sum would double count.
+        probes: Math.max(continued.probes, f.probes),
         statusCode: continued.statusCode ?? f.statusCode,
         error: continued.error ?? f.error,
         confirmedFromTwoRegions: continued.confirmedFromTwoRegions || f.confirmedFromTwoRegions,
