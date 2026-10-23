@@ -966,6 +966,22 @@ function buildCheckCtx(signal: AbortSignal): Record<string, unknown> {
   };
 }
 
+// State the HTTP handlers read. Declared before the server starts: the
+// server listens before the top-level awaits below finish, and a request
+// that touches a `let` still in its temporal dead zone throws inside the
+// handler and crashes the process (PM2 then restart-loops it).
+let lastDay3DrainCount = 0;
+let day3QueueDepth: number | null = null;
+// Deploy mode (see checkDeployMode).
+let deployModeActive = false;
+let deployModeDisabledAt = 0;
+let deployModeLastChecked = 0;
+const DEPLOY_MODE_CACHE_MS = 30_000;
+type DeployModeDoc = { enabled?: boolean; expiresAt?: number; reason?: string; disabledAt?: number };
+type DeployModeSnap = { exists: boolean; data: () => DeployModeDoc | undefined };
+let deployModeSnap: DeployModeSnap | null = null;
+let deployModeSnapAt = 0;
+
 // ── Health endpoint ────────────────────────────────────────────────────
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -1704,10 +1720,6 @@ const heartbeatDeferFlushTimer = setInterval(() => {
 // the dispatcher skips all check processing. The `disabledAt` timestamp
 // is exposed via checkCtx so processOneCheck can treat the first probe
 // of each check after the lift as a silent re-baseline (no alerts).
-let deployModeActive = false;
-let deployModeDisabledAt = 0;
-let deployModeLastChecked = 0;
-const DEPLOY_MODE_CACHE_MS = 30_000;
 // The dispatcher awaits this read inline. Untimed, a wedged gRPC channel
 // (the 2026-05-24 failure mode) would park dispatch() forever — and with
 // deployModeActive latched true the watchdog would stay suppressed too.
@@ -1718,13 +1730,9 @@ const DEPLOY_MODE_READ_TIMEOUT_MS = 10_000;
 // The doc is pushed by a listener so the 30s evaluation costs no read. A
 // listener on a wedged channel goes quiet without erroring, so a direct read
 // still runs every DEPLOY_MODE_BACKSTOP_READ_MS as a backstop.
-type DeployModeDoc = { enabled?: boolean; expiresAt?: number; reason?: string; disabledAt?: number };
-type DeployModeSnap = { exists: boolean; data: () => DeployModeDoc | undefined };
 // Short enough that deploy-mode.mjs's propagation wait stays meaningful if
 // the listener has silently wedged.
 const DEPLOY_MODE_BACKSTOP_READ_MS = 2 * 60_000;
-let deployModeSnap: DeployModeSnap | null = null;
-let deployModeSnapAt = 0;
 const deployModeUnsub = firestore
   .doc('system_settings/deploy_mode')
   .onSnapshot(
@@ -1861,8 +1869,6 @@ drainQueuedWebhookRetries().catch((err: unknown) =>
 // Every pass costs at least one billed read even on an empty queue, on both
 // VPSes, so the cadence is minutes: the events are bounces and unsubscribes,
 // and a 2-minute delay applying them changes nothing.
-let lastDay3DrainCount = 0;
-let day3QueueDepth: number | null = null;
 
 const runDay3Drain = async () => {
   lastDay3DrainCount = await drainDay3WebhookEvents();
