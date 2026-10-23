@@ -7,13 +7,14 @@
  * wrong: openai.com, medium.com and friends challenge every datacenter IP, so
  * "down" there only means "we could not see", never "the site is down".
  *
+ * The same goes for a 4xx answer. homebrew.sh rate-limits us (429), codepen.io
+ * and grok.com refuse datacenter IPs (403), a wrong probe path 404s. The
+ * service answered and refused the probe, which is not an outage.
+ *
  * These helpers turn those observations into "no data" for the public pages:
  * blocked rows leave the uptime math and a day made only of blocked rows is
  * "unknown" (grey), not "offline" (red). Pure so it can be unit-tested.
  */
-
-/** First day a blocked probe could be recorded as offline (VPS rollout of 351183a). */
-export const WAF_BLOCK_RECORDED_SINCE_MS = Date.UTC(2026, 9, 10);
 
 /** Error prefixes written by describeWafBlock() in waf-block.ts. Keep in sync. */
 export const WAF_BLOCK_ERROR_PREFIXES = [
@@ -23,6 +24,13 @@ export const WAF_BLOCK_ERROR_PREFIXES = [
 
 export const isWafBlockError = (error: unknown): boolean =>
   typeof error === "string" && WAF_BLOCK_ERROR_PREFIXES.some((p) => error.startsWith(p));
+
+export const isRefusedStatusCode = (code: unknown): boolean =>
+  typeof code === "number" && code >= 400 && code <= 499;
+
+/** The probe was refused (firewall block or 4xx), so it says nothing about the service. */
+export const isProbeRefusal = (error: unknown, statusCode: unknown): boolean =>
+  isWafBlockError(error) || isRefusedStatusCode(statusCode);
 
 export type PublicDay = {
   day: number;
@@ -41,7 +49,7 @@ export type DayCounts = {
 
 /**
  * Build a heartbeat day from the daily summary counts minus the blocked
- * observations. `blocked` rows are always offline rows, so they come off both
+ * observations (firewall blocks and 4xx). `blocked` rows are always offline rows, so they come off both
  * total and offline. Whatever offline rows remain are real downtime.
  */
 export function buildPublicDay(
@@ -72,9 +80,9 @@ export function buildPublicDay(
 
 /**
  * Current status for the public page. A check whose latest observation is a
- * firewall block is "unknown": we genuinely do not know if the site is up.
+ * refused probe is "unknown": we genuinely do not know if the site is up.
  */
-export function publicCurrentStatus(status: string, lastError: unknown): string {
-  if (status === "offline" && isWafBlockError(lastError)) return "unknown";
+export function publicCurrentStatus(status: string, lastError: unknown, lastStatusCode?: unknown): string {
+  if (status === "offline" && isProbeRefusal(lastError, lastStatusCode)) return "unknown";
   return status;
 }

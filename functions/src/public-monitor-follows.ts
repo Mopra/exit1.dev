@@ -13,7 +13,7 @@ import {
   normalizeFollowerAlertState,
   type FollowerEvent,
 } from "./public-follow-policy";
-import { isWafBlockError } from "./public-monitor-blocked";
+import { isProbeRefusal } from "./public-monitor-blocked";
 import { confirmedEmailFollowers, emailFollowUnsubscribeUrl } from "./public-email-follows";
 
 /**
@@ -293,10 +293,11 @@ function buildEmail(website: Website, event: FollowerEvent, slug: string, audien
  */
 export async function notifyPublicMonitorFollowers(website: Website, eventType: WebhookEvent): Promise<void> {
   if (eventType !== "website_down" && eventType !== "website_up") return;
-  // A bot firewall refusing our probe says nothing about the service. Never
-  // tell followers openai.com is down because Cloudflare challenged us. The
-  // matching recovery is then skipped as no_prior_down.
-  if (eventType === "website_down" && isWafBlockError(website.lastError)) return;
+  // A bot firewall or a 4xx refusing our probe says nothing about the service.
+  // Never tell followers openai.com is down because Cloudflare challenged us,
+  // or homebrew.sh because it rate-limited us. The matching recovery is then
+  // skipped as no_prior_down.
+  if (eventType === "website_down" && isProbeRefusal(website.lastError, website.lastStatusCode)) return;
   try {
     // Claim before looking for followers. A down nobody followed still has to
     // be recorded, or whoever follows mid-outage (the people on the status page

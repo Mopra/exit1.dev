@@ -4,7 +4,6 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { firestore } from "./init";
 import {
   WAF_BLOCK_ERROR_PREFIXES,
-  WAF_BLOCK_RECORDED_SINCE_MS,
   buildPublicDay,
   publicCurrentStatus,
 } from "./public-monitor-blocked";
@@ -210,10 +209,10 @@ async function fetchDailyBatch(
 }
 
 /**
- * Count firewall-blocked observations per check per day, keyed `${id}|YYYY-MM-DD`.
- * The daily summary table has no error column, so this reads the raw history,
- * clustered on user_id/website_id and only from the day blocks started being
- * recorded. A failure here is logged and treated as "nothing blocked".
+ * Count refused-probe observations (firewall blocks and 4xx answers) per check
+ * per day, keyed `${id}|YYYY-MM-DD`. The daily summary table has no error or
+ * status code column, so this reads the raw history, clustered on
+ * user_id/website_id. A failure here is logged and treated as "nothing blocked".
  */
 async function fetchBlockedCounts(
   websiteIds: string[],
@@ -222,8 +221,6 @@ async function fetchBlockedCounts(
   endDate: number,
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
-  const since = Math.max(startDate, WAF_BLOCK_RECORDED_SINCE_MS);
-  if (since > endDate) return result;
 
   const query = `
     SELECT website_id, DATE(timestamp) AS day, COUNT(*) AS blocked
@@ -233,13 +230,14 @@ async function fetchBlockedCounts(
       AND timestamp >= @since
       AND timestamp <= @endDate
       AND status = 'offline'
-      AND (${WAF_BLOCK_ERROR_PREFIXES.map((_, i) => `STARTS_WITH(error, @prefix${i})`).join(' OR ')})
+      AND (status_code BETWEEN 400 AND 499
+        OR ${WAF_BLOCK_ERROR_PREFIXES.map((_, i) => `STARTS_WITH(error, @prefix${i})`).join(' OR ')})
     GROUP BY website_id, day
   `;
   const params: Record<string, unknown> = {
     userId,
     websiteIds,
-    since: new Date(since),
+    since: new Date(startDate),
     endDate: new Date(endDate),
   };
   WAF_BLOCK_ERROR_PREFIXES.forEach((p, i) => { params[`prefix${i}`] = p; });
@@ -457,7 +455,7 @@ export async function buildPublicMonitors(
       url,
       name: typeof d.name === 'string' && d.name.trim() ? d.name : hostFromUrl(url),
       type: typeof d.type === 'string' ? d.type : 'website',
-      status: publicCurrentStatus(typeof d.status === 'string' ? d.status : 'unknown', d.lastError),
+      status: publicCurrentStatus(typeof d.status === 'string' ? d.status : 'unknown', d.lastError, d.lastStatusCode),
       lastChecked: typeof d.lastChecked === 'number' ? d.lastChecked : 0,
       responseTime: source === 'direct' && typeof d.responseTime === 'number' ? d.responseTime : null,
       source,

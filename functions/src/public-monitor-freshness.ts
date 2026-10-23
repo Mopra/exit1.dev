@@ -46,7 +46,7 @@ export async function pushPublicMonitorTransition(website: Website, eventType: W
     const doc = snap.docs[0];
     const slug = doc.id;
 
-    const status = publicCurrentStatus(eventType === "website_down" ? "offline" : "online", website.lastError);
+    const status = publicCurrentStatus(eventType === "website_down" ? "offline" : "online", website.lastError, website.lastStatusCode);
     // triggerAlert is re-driven for one transition (retries, pending states).
     // Only the first call moves statusChangedAt, or "down since" drifts later
     // with every retry, and only it pings the site and IndexNow.

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { describeWafBlock } from "../waf-block";
-import { buildPublicDay, isWafBlockError, publicCurrentStatus } from "../public-monitor-blocked";
+import { buildPublicDay, isProbeRefusal, isWafBlockError, publicCurrentStatus } from "../public-monitor-blocked";
 
 const UA = "Exit1-Website-Monitor/1.0";
 const DAY = Date.UTC(2026, 9, 11);
@@ -56,4 +56,14 @@ test("current status is unknown only when offline because of a block", () => {
   assert.equal(publicCurrentStatus("offline", blocked), "unknown");
   assert.equal(publicCurrentStatus("offline", "CONNECT timeout after 30000ms"), "offline");
   assert.equal(publicCurrentStatus("online", blocked), "online");
+});
+
+test("a 4xx answer is a refused probe, not downtime", () => {
+  assert.equal(publicCurrentStatus("offline", "HTTP 429", 429), "unknown");
+  assert.equal(publicCurrentStatus("offline", "HTTP 404", 404), "unknown");
+  assert.equal(publicCurrentStatus("offline", "HTTP 503", 503), "offline");
+  assert.equal(publicCurrentStatus("offline", "CONNECT timeout after 30000ms", undefined), "offline");
+  assert.equal(isProbeRefusal(undefined, 403), true);
+  assert.equal(isProbeRefusal(undefined, 500), false);
+  assert.equal(isProbeRefusal(undefined, null), false);
 });
