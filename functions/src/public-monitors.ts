@@ -35,8 +35,13 @@ const FIRESTORE_BATCH_LIMIT = 450; // under the 500 hard cap, leaves headroom
 
 // HTTP response cache headers — CDN caches for s-maxage; cron refreshes hourly.
 const CACHE_CONTROL = "public, max-age=600, s-maxage=3600, stale-while-revalidate=86400";
+// One page is what exit1.dev re-reads when a monitor changes state
+// (public-monitor-freshness.ts), so it must not hide behind an hour of CDN.
+// Its only caller is the site's ISR, so a short TTL costs next to nothing.
+const PAGE_CACHE_CONTROL = "public, max-age=60, s-maxage=60, stale-while-revalidate=300";
 // In-memory cache survives within a warm instance between requests.
 const MEM_TTL_MS = 10 * 60 * 1000;
+const PAGE_MEM_TTL_MS = 60 * 1000;
 
 type HeartbeatDay = {
   day: number;            // start-of-day UTC, ms
@@ -84,6 +89,9 @@ type MonitorPage = MonitorIndexEntry & {
   stats: MonitorStats;
   heartbeat: HeartbeatDay[];      // oldest → newest, up to 90 entries
   updatedAt: number;
+  /** When the status last changed, ms, and to what. Written on transitions by public-monitor-freshness.ts. */
+  statusChangedAt?: number;
+  statusChangedTo?: string;
 };
 
 type DailyRow = {
@@ -390,16 +398,33 @@ export async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[
 }
 
 /** Persist the index doc + per-slug page docs, pruning stale page docs. */
-async function persistPublicMonitors(index: MonitorIndexEntry[], pages: MonitorPage[]): Promise<void> {
+async function persistPublicMonitors(
+  index: MonitorIndexEntry[],
+  pages: MonitorPage[],
+  buildStartedAt: number,
+): Promise<void> {
   const updatedAt = Date.now();
   await firestore.doc(INDEX_DOC).set({ monitors: index, count: index.length, updatedAt });
 
-  // Upsert page docs in chunks.
+  // Upsert page docs in chunks. Merge keeps statusChangedAt/To, which only the
+  // transition push writes. A push that landed while this build was reading
+  // BigQuery is newer than our snapshot of the check, so its status and
+  // lastChecked win.
   for (let i = 0; i < pages.length; i += FIRESTORE_BATCH_LIMIT) {
+    const chunk = pages.slice(i, i + FIRESTORE_BATCH_LIMIT);
+    const refs = chunk.map((page) => firestore.collection(PAGES_COLLECTION).doc(page.slug));
+    const existing = await firestore.getAll(...refs);
     const batch = firestore.batch();
-    for (const page of pages.slice(i, i + FIRESTORE_BATCH_LIMIT)) {
-      batch.set(firestore.collection(PAGES_COLLECTION).doc(page.slug), page);
-    }
+    chunk.forEach((page, j) => {
+      const pushedAt = existing[j].get("statusChangedAt");
+      if (typeof pushedAt === "number" && pushedAt > buildStartedAt) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { status, lastChecked, ...rest } = page;
+        batch.set(refs[j], rest, { merge: true });
+      } else {
+        batch.set(refs[j], page, { merge: true });
+      }
+    });
     await batch.commit();
   }
 
@@ -416,8 +441,9 @@ async function persistPublicMonitors(index: MonitorIndexEntry[], pages: MonitorP
 
 export async function runPublicMonitorsRefresh(): Promise<void> {
   try {
+    const buildStartedAt = Date.now();
     const { index, pages } = await buildPublicMonitors();
-    await persistPublicMonitors(index, pages);
+    await persistPublicMonitors(index, pages, buildStartedAt);
     logger.info(`[public-monitors] refreshed ${index.length} public monitors`);
   } catch (error) {
     logger.error("[public-monitors] refresh failed:", error);
@@ -442,8 +468,9 @@ export const getPublicMonitors = onRequest(
 
       // Cold path: index doc missing (first deploy before cron runs).
       if (!snap.exists) {
+        const buildStartedAt = Date.now();
         const built = await buildPublicMonitors();
-        await persistPublicMonitors(built.index, built.pages);
+        await persistPublicMonitors(built.index, built.pages, buildStartedAt);
         monitors = built.index;
       }
 
@@ -460,7 +487,7 @@ export const getPublicMonitors = onRequest(
 const pageMemCache = new Map<string, { data: MonitorPage; expiresAt: number }>();
 
 export const getPublicMonitor = onRequest(
-  { cors: true, memory: "256MiB", timeoutSeconds: 30 },
+  { cors: true, memory: "256MiB", timeoutSeconds: 30, maxInstances: 20 },
   async (req, res) => {
     try {
       const slugParam = (req.query.slug ?? req.path.replace(/^\/+/, '')) as string;
@@ -471,9 +498,12 @@ export const getPublicMonitor = onRequest(
       }
 
       const now = Date.now();
-      const cached = pageMemCache.get(slug);
+      // ?fresh=<anything> is the site's status-refresh route checking a
+      // transition push: skip this cache and the CDN's (the value varies).
+      const fresh = req.query.fresh != null;
+      const cached = fresh ? undefined : pageMemCache.get(slug);
       if (cached && cached.expiresAt > now) {
-        res.set("Cache-Control", CACHE_CONTROL);
+        res.set("Cache-Control", PAGE_CACHE_CONTROL);
         res.json({ monitor: cached.data });
         return;
       }
@@ -485,8 +515,8 @@ export const getPublicMonitor = onRequest(
       }
 
       const monitor = doc.data() as MonitorPage;
-      pageMemCache.set(slug, { data: monitor, expiresAt: now + MEM_TTL_MS });
-      res.set("Cache-Control", CACHE_CONTROL);
+      pageMemCache.set(slug, { data: monitor, expiresAt: now + PAGE_MEM_TTL_MS });
+      res.set("Cache-Control", fresh ? "no-store" : PAGE_CACHE_CONTROL);
       res.json({ monitor });
     } catch (error) {
       logger.error("[public-monitors] getPublicMonitor failed:", error);

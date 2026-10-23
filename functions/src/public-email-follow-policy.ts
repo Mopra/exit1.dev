@@ -11,6 +11,13 @@
 export const MAX_CONFIRM_SENDS_PER_EMAIL = 5;
 export const CONFIRM_SEND_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Confirmation emails per window for the whole form. The per-IP limit trusts
+ * X-Forwarded-For, which a script can rotate, so this is the real ceiling on
+ * what the form can cost in Resend quota and sender reputation.
+ */
+export const MAX_CONFIRM_SENDS_GLOBAL = 1000;
+
 /** Pending follows nobody confirmed stop being confirmable after this. */
 export const CONFIRM_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -40,11 +47,15 @@ export function normalizeEmailSendWindow(raw: unknown): EmailSendWindow | null {
   return { windowStart: d.windowStart, count: d.count };
 }
 
-export function decideConfirmSend(window: EmailSendWindow | null, now: number): ConfirmSendDecision {
+export function decideConfirmSend(
+  window: EmailSendWindow | null,
+  now: number,
+  max: number = MAX_CONFIRM_SENDS_PER_EMAIL,
+): ConfirmSendDecision {
   if (!window || now - window.windowStart >= CONFIRM_SEND_WINDOW_MS) {
     return { allowed: true, next: { windowStart: now, count: 1 } };
   }
-  if (window.count >= MAX_CONFIRM_SENDS_PER_EMAIL) return { allowed: false };
+  if (window.count >= max) return { allowed: false };
   return { allowed: true, next: { windowStart: window.windowStart, count: window.count + 1 } };
 }
 

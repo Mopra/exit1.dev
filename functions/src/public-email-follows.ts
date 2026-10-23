@@ -7,6 +7,7 @@ import { sendTransactionalEmail } from "./email-send";
 import { isEmailSuppressedCached } from "./email-suppression";
 import { FixedWindowRateLimiter, getClientIp } from "./rate-limit";
 import {
+  MAX_CONFIRM_SENDS_GLOBAL,
   normalizeEmail,
   decideConfirmSend,
   normalizeEmailSendWindow,
@@ -23,19 +24,25 @@ import {
  *   public_follow_email_limits/{emailHash}                confirm-send window
  *
  * Double opt-in: nothing but the confirmation email goes out until the link in
- * it is clicked. The same token later unsubscribes.
+ * it is used. The same token later unsubscribes.
+ *
+ * Email links never change state on GET. Corporate link scanners (Microsoft
+ * Safe Links and friends) fetch every link on arrival, so a GET confirm would
+ * defeat the opt-in and a GET unsubscribe would silently drop the follower on
+ * the first alert. Links open exit1.dev/follow, whose button POSTs here.
  *
  * Routes (hosting rewrites /v1/public/follow and /v1/public/follow/**):
- *   POST /v1/public/follow                 { email, slug, company }
- *   GET  /v1/public/follow/confirm?token=  302 to exit1.dev/follow
- *   GET|POST /v1/public/follow/unsubscribe?token=
+ *   POST /v1/public/follow               { email, slug, company }
+ *   POST /v1/public/follow/confirm       { token }  -> { ok, slug, name }
+ *   POST /v1/public/follow/unsubscribe   { token }  -> { ok, slug, name }
+ *   GET  either of the last two          302 to the exit1.dev/follow page
  */
 
 export const EMAIL_FOLLOWS = "public_monitor_email_follows";
 const EMAIL_LIMITS = "public_follow_email_limits";
 const PAGES = "public_monitor_pages";
+const GLOBAL_LIMIT_DOC = "_global";
 
-const API_URL = process.env.FRONTEND_URL || "https://app.exit1.dev";
 const SITE_URL = "https://exit1.dev";
 
 const MAX_FOLLOWS_PER_IP_PER_HOUR = 20;
@@ -72,17 +79,12 @@ function slugify(raw: string): string {
     .replace(/-{2,}/g, "-");
 }
 
-export function emailFollowUnsubscribeUrl(token: string): string {
-  return `${API_URL}/v1/public/follow/unsubscribe?token=${encodeURIComponent(token)}`;
+function actionUrl(action: "confirm" | "unsubscribe", token: string): string {
+  return `${SITE_URL}/follow?${new URLSearchParams({ action, token }).toString()}`;
 }
 
-function landingUrl(state: "confirmed" | "unsubscribed" | "invalid", follow?: Pick<EmailFollowDoc, "slug" | "name">): string {
-  const params = new URLSearchParams({ state });
-  if (follow) {
-    params.set("slug", follow.slug);
-    params.set("name", follow.name);
-  }
-  return `${SITE_URL}/follow?${params.toString()}`;
+export function emailFollowUnsubscribeUrl(token: string): string {
+  return actionUrl("unsubscribe", token);
 }
 
 /** Confirmed email followers of one check. Read by the fan-out in public-monitor-follows.ts. */
@@ -91,21 +93,28 @@ export async function confirmedEmailFollowers(checkId: string): Promise<EmailFol
   return snap.docs.map((d) => d.data() as EmailFollowDoc).filter((f) => f.confirmed);
 }
 
-/** Atomically spend one confirmation send for this address, or refuse. */
+/** Atomically spend one confirmation send for this address and from the global budget, or refuse. */
 async function claimConfirmSend(emailHash: string): Promise<boolean> {
   const ref = firestore.collection(EMAIL_LIMITS).doc(emailHash);
+  const globalRef = firestore.collection(EMAIL_LIMITS).doc(GLOBAL_LIMIT_DOC);
   return firestore.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const decision = decideConfirmSend(normalizeEmailSendWindow(snap.data()), Date.now());
-    if (!decision.allowed) return false;
-    tx.set(ref, decision.next);
+    const [snap, globalSnap] = await Promise.all([tx.get(ref), tx.get(globalRef)]);
+    const now = Date.now();
+    const perEmail = decideConfirmSend(normalizeEmailSendWindow(snap.data()), now);
+    const global = decideConfirmSend(normalizeEmailSendWindow(globalSnap.data()), now, MAX_CONFIRM_SENDS_GLOBAL);
+    if (!perEmail.allowed || !global.allowed) {
+      if (!global.allowed) logger.warn("[email-follows] global confirmation budget spent");
+      return false;
+    }
+    tx.set(ref, perEmail.next);
+    tx.set(globalRef, global.next);
     return true;
   });
 }
 
 function buildConfirmEmail(follow: EmailFollowDoc, isDown: boolean) {
   const name = follow.name;
-  const confirmUrl = `${API_URL}/v1/public/follow/confirm?token=${encodeURIComponent(follow.token)}`;
+  const confirmUrl = actionUrl("confirm", follow.token);
   const subject = isDown ? `Confirm: email me when ${name} is back up` : `Confirm: email me when ${name} goes down`;
   const lead = isDown
     ? `${name} (${follow.host}) is down right now. Confirm and we'll email you the moment it responds again, and again the next time it breaks.`
@@ -167,8 +176,10 @@ async function handleFollow(req: Request, res: Response) {
   const ref = firestore.collection(EMAIL_FOLLOWS).doc(`${emailHash}__${p.checkId}`);
   const existing = await ref.get();
   const prev = existing.exists ? (existing.data() as EmailFollowDoc) : null;
+  // Answer like a fresh follow, so the form can't tell a stranger whether an
+  // address already follows a service.
   if (prev?.confirmed) {
-    res.json({ ok: true, status: "already_confirmed" });
+    res.json({ ok: true, status: "pending" });
     return;
   }
 
@@ -224,36 +235,42 @@ export const publicFollow = onRequest(
     try {
       const path = req.path.replace(/\/+$/, "");
 
-      if (path.endsWith("/confirm") && req.method === "GET") {
-        const doc = await findByToken(req.query.token);
-        const follow = doc?.data() as EmailFollowDoc | undefined;
-        if (!doc || !follow) {
-          res.redirect(302, landingUrl("invalid"));
-          return;
-        }
-        if (!follow.confirmed) {
-          if (isConfirmTokenExpired(follow.createdAt, Date.now())) {
-            await doc.ref.delete();
-            res.redirect(302, landingUrl("invalid"));
-            return;
-          }
-          await doc.ref.update({ confirmed: true, confirmedAt: Date.now() });
-          logger.info("[email-follows] confirmed", { slug: follow.slug });
-        }
-        res.redirect(302, landingUrl("confirmed", follow));
+      const action = path.endsWith("/confirm") ? "confirm" : path.endsWith("/unsubscribe") ? "unsubscribe" : null;
+      const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+
+      // A GET here is an old or hand-typed link: hand it to the page that asks first.
+      if (action && req.method === "GET") {
+        const token = typeof req.query.token === "string" ? req.query.token : "";
+        res.redirect(302, actionUrl(action, token));
         return;
       }
 
-      if (path.endsWith("/unsubscribe") && (req.method === "GET" || req.method === "POST")) {
-        const doc = await findByToken(req.query.token);
+      if (action === "confirm" && req.method === "POST") {
+        const doc = await findByToken(body.token);
         const follow = doc?.data() as EmailFollowDoc | undefined;
-        if (doc) await doc.ref.delete();
-        if (follow) logger.info("[email-follows] unsubscribed", { slug: follow.slug });
-        if (req.method === "POST") {
-          res.json({ ok: true });
+        if (!doc || !follow || (!follow.confirmed && isConfirmTokenExpired(follow.createdAt, Date.now()))) {
+          if (doc && follow && !follow.confirmed) await doc.ref.delete();
+          res.status(404).json({ ok: false, error: "invalid_token" });
           return;
         }
-        res.redirect(302, follow ? landingUrl("unsubscribed", follow) : landingUrl("invalid"));
+        if (!follow.confirmed) {
+          await doc.ref.update({ confirmed: true, confirmedAt: Date.now() });
+          logger.info("[email-follows] confirmed", { slug: follow.slug });
+        }
+        res.json({ ok: true, slug: follow.slug, name: follow.name });
+        return;
+      }
+
+      if (action === "unsubscribe" && req.method === "POST") {
+        const doc = await findByToken(body.token ?? req.query.token);
+        const follow = doc?.data() as EmailFollowDoc | undefined;
+        if (!doc || !follow) {
+          res.status(404).json({ ok: false, error: "invalid_token" });
+          return;
+        }
+        await doc.ref.delete();
+        logger.info("[email-follows] unsubscribed", { slug: follow.slug });
+        res.json({ ok: true, slug: follow.slug, name: follow.name });
         return;
       }
 
