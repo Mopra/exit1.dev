@@ -225,7 +225,10 @@ const SuccessfulChecks: React.FC = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
     return () => {
+      // The visibility handler may have replaced the first interval with a
+      // new one; clear whichever is live or it keeps polling BigQuery forever.
       clearInterval(interval);
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       pollingIntervalRef.current = null;
     };
