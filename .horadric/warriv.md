@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-29 Round (human left, first after 04:00, at d07e0ae): the day was clean (0 quests, nothing repeated). Filed the owed live cold-start after-numbers quest (Model: haiku), its 2026-10-26 date passed. WhatsApp go-live still with the human; no aim open.
 - 2026-10-23 Round (hourly, at adf468b): nothing to do. adf468b (runner read/write cuts) is the human's own work; its VPS rebuild is theirs to run. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Round (hourly, at 7543dc7): nothing to do. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
 - 2026-10-23 Round (human left, at f64ad9d): nothing to do. New public monitor commits are the human's own work. WhatsApp go-live still with the human; cold-start re-measure waits until 2026-10-26; no aim open.
@@ -47,4 +48,4 @@
 
 ## Open
 - WhatsApp go-live: waits on the human for Meta setup + approved templates, then token + phone number ID. Resume the quest when they come. Once live: file a quest to email the Belgian and Japanese users a WhatsApp how-to (human's wish), and later compare WhatsApp vs SMS usage.
-- On or after 2026-10-26: file a quest to re-run `node scripts/cold-start-report.mjs 3` for live mcpoauth/publicapi after-numbers following 225f8ad (Model: haiku).
+- Cold-start after-numbers quest filed 2026-10-29: read its result; if mcpoauth/publicapi are still slower than pre-lazy-load, decide on a fix quest.
