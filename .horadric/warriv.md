@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-29 Round (hourly, at 121a1cb): nothing to do. WhatsApp go-live still with the human; no aim open.
 - 2026-10-29 Round (hourly, at d013ae2): nothing to do. WhatsApp go-live still with the human; no aim open.
 - 2026-10-29 Round (human left, at 2c4823a): cold-start after-numbers landed; mcpoauth 1591 ms and publicapi 1517 ms mean, about half the pre lazy-load numbers, so no fix quest. Closed that Open item. WhatsApp go-live still with the human; no aim open.
 - 2026-10-29 Round (human left, first after 04:00, at d07e0ae): the day was clean (0 quests, nothing repeated). Filed the owed live cold-start after-numbers quest (Model: haiku), its 2026-10-26 date passed. WhatsApp go-live still with the human; no aim open.
