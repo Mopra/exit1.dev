@@ -1136,6 +1136,7 @@ export const getCheckHistoryDailySummary = async (
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp < @startDate
+          AND timestamp >= TIMESTAMP_SUB(@startDate, INTERVAL 7 DAY)
         ORDER BY timestamp DESC
         LIMIT 1
       ),
@@ -1346,6 +1347,13 @@ const MAX_STATS_FALLBACK_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 // ERRORS instead of silently scanning hundreds of GB. Callers treat the error as "no data".
 const STATS_MAX_BYTES_BILLED = String(3 * 1024 * 1024 * 1024); // 3 GiB
 
+// Every seed-row lookup (the last row before a window, `prior_row`/`prior_rows`) is bounded
+// to 7 days before the window start. Unbounded, it read every partition of the table
+// (~1.1 GiB per call, even for a today-only slice), since the day partitions are too small
+// for clustering to prune. Active checks write a row at least every few hours whether up or
+// down (the longest gap over 60 days, measured 2026-10-29, was under 3 days), so only a
+// check disabled for a week loses its seed.
+
 // In-memory negative cache: website_ids known to have no summary rows (new/idle checks).
 // Keyed `userId|websiteId` → expiry ms. Skips the raw fallback for these so an empty check
 // isn't re-scanned on every dashboard refresh. Per-instance (warm instances absorb most
@@ -1393,6 +1401,7 @@ export const getCheckStats = async (
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp < @startDate
+          AND timestamp >= TIMESTAMP_SUB(@startDate, INTERVAL 7 DAY)
         ORDER BY timestamp DESC
         LIMIT 1
       ),
@@ -1647,6 +1656,7 @@ const _runMultiRangeRawScan = async (
       WHERE website_id = @websiteId
         AND user_id = @userId
         AND timestamp < @widestStartDate
+        AND timestamp >= TIMESTAMP_SUB(@widestStartDate, INTERVAL 7 DAY)
       ORDER BY timestamp DESC
       LIMIT 1
     ),
@@ -1967,6 +1977,7 @@ export const getCheckStatsBatch = async (
         WHERE website_id IN UNNEST(@websiteIds)
           AND user_id = @userId
           AND timestamp < @startDate
+          AND timestamp >= TIMESTAMP_SUB(@startDate, INTERVAL 7 DAY)
         QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
       ),
       seeded AS (
@@ -2286,6 +2297,7 @@ export const getIncidentIntervals = async (
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp < @startDate
+          AND timestamp >= TIMESTAMP_SUB(@startDate, INTERVAL 7 DAY)
         ORDER BY timestamp DESC
         LIMIT 1
       ),
@@ -2485,6 +2497,7 @@ export const getReportMetricsCombined = async (
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp < @startDate
+          AND timestamp >= TIMESTAMP_SUB(@startDate, INTERVAL 7 DAY)
         ORDER BY timestamp DESC
         LIMIT 1
       ),
@@ -2903,6 +2916,7 @@ export const getCheckHistoryDailySummaryBatch = async (
         WHERE website_id IN UNNEST(@websiteIds)
           AND user_id = @userId
           AND timestamp < @startDate
+          AND timestamp >= TIMESTAMP_SUB(@startDate, INTERVAL 7 DAY)
         QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
       ),
       seeded AS (

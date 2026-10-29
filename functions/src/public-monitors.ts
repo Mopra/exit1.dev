@@ -208,18 +208,53 @@ async function fetchDailyBatch(
   return result;
 }
 
-/**
- * Count refused-probe observations (firewall blocks and 4xx answers) per check
- * per day, keyed `${id}|YYYY-MM-DD`. The daily summary table has no error or
- * status code column, so this reads the raw history, clustered on
- * user_id/website_id. A failure here is logged and treated as "nothing blocked".
- */
+// Past days' blocked counts never change, and the full window scans ~0.8 GB of
+// raw history (the daily partitions are too small for clustering to prune).
+// The refresh runs hourly in the long-lived VPS process, so keep the counts per
+// user and rescan the whole window once a day; other runs read only the last
+// two days (yesterday can still gain late rows).
+const BLOCKED_FULL_RESCAN_MS = 24 * 60 * 60 * 1000;
+const BLOCKED_RECENT_DAYS = 2;
+const blockedCache = new Map<string, { fullAt: number; startDate: number; counts: Map<string, number> }>();
+
 async function fetchBlockedCounts(
   websiteIds: string[],
   userId: string,
   startDate: number,
   endDate: number,
 ): Promise<Map<string, number>> {
+  const cached = blockedCache.get(userId);
+  if (!cached || cached.startDate > startDate || endDate - cached.fullAt > BLOCKED_FULL_RESCAN_MS) {
+    const counts = await queryBlockedCounts(websiteIds, userId, startDate, endDate);
+    if (counts) blockedCache.set(userId, { fullAt: endDate, startDate, counts });
+    return counts ?? new Map();
+  }
+
+  const recentStart = getDayStartUtc(endDate - (BLOCKED_RECENT_DAYS - 1) * DAY_MS);
+  const recent = await queryBlockedCounts(websiteIds, userId, recentStart, endDate);
+  if (recent) {
+    const recentFirstDay = new Date(recentStart).toISOString().slice(0, 10);
+    for (const key of [...cached.counts.keys()]) {
+      if (key.slice(key.lastIndexOf('|') + 1) >= recentFirstDay) cached.counts.delete(key);
+    }
+    for (const [key, n] of recent) cached.counts.set(key, n);
+  }
+  return cached.counts;
+}
+
+/**
+ * Count refused-probe observations (firewall blocks and 4xx answers) per check
+ * per day, keyed `${id}|YYYY-MM-DD`. The daily summary table has no error or
+ * status code column, so this reads the raw history, clustered on
+ * user_id/website_id. A failure is logged and returns null, which the caller
+ * treats as "nothing blocked" (or keeps its cached counts).
+ */
+async function queryBlockedCounts(
+  websiteIds: string[],
+  userId: string,
+  startDate: number,
+  endDate: number,
+): Promise<Map<string, number> | null> {
   const result = new Map<string, number>();
 
   const query = `
@@ -251,6 +286,7 @@ async function fetchBlockedCounts(
     }
   } catch (err) {
     logger.error('[public-monitors] blocked-count query failed:', err);
+    return null;
   }
   return result;
 }

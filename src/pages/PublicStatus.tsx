@@ -616,11 +616,21 @@ const PublicStatus: React.FC = () => {
       return;
     }
 
+    // Hidden tabs skip the poll (each one is a billed function call) and
+    // catch up when shown again, if the last load is older than one interval.
+    let lastLoad = Date.now();
+    const poll = () => {
+      if (document.hidden || Date.now() - lastLoad < REFRESH_INTERVAL - 1000) return;
+      lastLoad = Date.now();
+      loadStatuses();
+    };
     loadStatuses();
-    const interval = setInterval(loadStatuses, REFRESH_INTERVAL);
+    const interval = setInterval(poll, REFRESH_INTERVAL);
+    document.addEventListener('visibilitychange', poll);
 
     return () => {
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', poll);
     };
   }, [mode, statusPageError, checkIdsKey, statusPage, loadStatuses, isPageDisabled]);
 
@@ -635,8 +645,9 @@ const PublicStatus: React.FC = () => {
       return;
     }
 
+    const poll = () => { if (!document.hidden) loadHeartbeat(); };
     loadHeartbeat();
-    const interval = setInterval(loadHeartbeat, HEARTBEAT_REFRESH_INTERVAL);
+    const interval = setInterval(poll, HEARTBEAT_REFRESH_INTERVAL);
 
     return () => {
       clearInterval(interval);
