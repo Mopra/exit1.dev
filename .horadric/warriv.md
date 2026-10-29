@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-10-29 Round (human left, at a9a23ba): nothing to do. WhatsApp go-live still with the human; no aim open.
 - 2026-10-29 Round (hourly, at 3810184): nothing to do. WhatsApp go-live still with the human; no aim open.
 - 2026-10-29 Round (hourly, at 254f756): nothing to do. WhatsApp go-live still with the human; no aim open.
 - 2026-10-29 Round (human left, at de6dc3b): nothing to do. WhatsApp go-live still with the human; no aim open.
