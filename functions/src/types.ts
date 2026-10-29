@@ -85,6 +85,9 @@ export interface Website {
   requestHeaders?: Record<string, string>; // Custom headers for REST requests
   requestBody?: string; // JSON string for POST/PUT requests
   cacheControlNoCache?: boolean;
+  // Skip TLS certificate verification (expired, self-signed, wrong host) and
+  // mute SSL alerts. For targets the user knows have a bad cert.
+  ignoreSslErrors?: boolean;
   // Semantics live in response-validation.ts.
   responseValidation?: ResponseValidation;
 

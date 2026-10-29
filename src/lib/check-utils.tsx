@@ -4,7 +4,7 @@ import {
   Server,
   Radio,
   Activity,
-  ShieldCheck,
+  ShieldCheck, ShieldOff,
   AlertTriangle,
   Zap,
   ArrowRight,
@@ -115,6 +115,10 @@ export const getSSLCertificateStatus = (check: Website) => {
   }
   if (!check.url.startsWith('https://')) {
     return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
+  }
+
+  if (check.ignoreSslErrors) {
+    return { valid: true, icon: ShieldOff, color: 'text-muted-foreground', text: 'SSL errors ignored' };
   }
 
   if (!check.sslCertificate) {

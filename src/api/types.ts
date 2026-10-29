@@ -47,6 +47,7 @@ export interface Website {
   requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
   requestBody?: string; // JSON string for POST/PUT requests
   cacheControlNoCache?: boolean;
+  ignoreSslErrors?: boolean;
   responseValidation?: ResponseValidation;
   
   // NEW FIELDS for SSL certificate validation
@@ -319,6 +320,7 @@ export interface AddWebsiteRequest {
   responseTimeLimit?: number | null;
   downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;
+  ignoreSslErrors?: boolean;
   type?: 'website' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
@@ -351,6 +353,7 @@ export interface UpdateWebsiteRequest {
   requestHeaders?: { [key: string]: string };
   requestBody?: string;
   cacheControlNoCache?: boolean;
+  ignoreSslErrors?: boolean;
   responseValidation?: ResponseValidation;
   redirectValidation?: {
     expectedTarget: string;

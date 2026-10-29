@@ -852,7 +852,7 @@ async function handleCreateCheck(
     redirectValidation,
     maxRedirects,
     responseTimeLimit, downConfirmationAttempts,
-    cacheControlNoCache, checkRegionOverride,
+    cacheControlNoCache, ignoreSslErrors, checkRegionOverride,
     pingPackets, timezone, folder: rawFolder,
   } = body;
 
@@ -892,6 +892,10 @@ async function handleCreateCheck(
   }
   if (checkFrequency !== undefined && checkFrequency !== null && (typeof checkFrequency !== 'number' || !Number.isFinite(checkFrequency) || checkFrequency <= 0)) {
     res.status(400).json({ error: 'checkFrequency must be a positive number (minutes)' });
+    return;
+  }
+  if (ignoreSslErrors !== undefined && ignoreSslErrors !== null && typeof ignoreSslErrors !== 'boolean') {
+    res.status(400).json({ error: 'ignoreSslErrors must be a boolean' });
     return;
   }
   if (cacheControlNoCache !== undefined && cacheControlNoCache !== null && typeof cacheControlNoCache !== 'boolean') {
@@ -1202,6 +1206,7 @@ async function handleCreateCheck(
           requestBody: requestBody || '',
           responseValidation: validatedResponseValidation,
           cacheControlNoCache: cacheControlNoCache === true,
+          ignoreSslErrors: ignoreSslErrors === true,
           ...(validatedRedirectValidation ? { redirectValidation: validatedRedirectValidation } : {}),
           ...(typeof maxRedirects === 'number' ? { maxRedirects } : {}),
         }
@@ -1256,7 +1261,7 @@ async function handleUpdateCheck(
     responseValidation, redirectValidation, maxRedirects,
     immediateRecheckEnabled,
     downConfirmationAttempts, responseTimeLimit,
-    cacheControlNoCache, checkRegionOverride,
+    cacheControlNoCache, ignoreSslErrors, checkRegionOverride,
     pingPackets, timezone,
   } = body;
 
@@ -1271,6 +1276,10 @@ async function handleUpdateCheck(
   }
   if (checkFrequency !== undefined && checkFrequency !== null && (typeof checkFrequency !== 'number' || !Number.isFinite(checkFrequency) || checkFrequency <= 0)) {
     res.status(400).json({ error: 'checkFrequency must be a positive number (minutes)' });
+    return;
+  }
+  if (ignoreSslErrors !== undefined && ignoreSslErrors !== null && typeof ignoreSslErrors !== 'boolean') {
+    res.status(400).json({ error: 'ignoreSslErrors must be a boolean' });
     return;
   }
   if (cacheControlNoCache !== undefined && cacheControlNoCache !== null && typeof cacheControlNoCache !== 'boolean') {
@@ -1448,7 +1457,7 @@ async function handleUpdateCheck(
     url !== undefined || type !== undefined || checkFrequency !== undefined
     || httpMethod !== undefined || expectedStatusCodes !== undefined || requestHeaders !== undefined
     || requestBody !== undefined || responseValidation !== undefined || redirectValidation !== undefined
-    || maxRedirects !== undefined || checkRegionOverride !== undefined || cacheControlNoCache !== undefined || pingPackets !== undefined
+    || maxRedirects !== undefined || checkRegionOverride !== undefined || cacheControlNoCache !== undefined || ignoreSslErrors !== undefined || pingPackets !== undefined
   );
   if (requiresRecheck) {
     updateData.lastChecked = 0;
@@ -1485,6 +1494,7 @@ async function handleUpdateCheck(
   }
   if (maxRedirects !== undefined) updateData.maxRedirects = typeof maxRedirects === 'number' ? maxRedirects : null;
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache === true;
+  if (ignoreSslErrors !== undefined) updateData.ignoreSslErrors = ignoreSslErrors === true;
   if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;
 

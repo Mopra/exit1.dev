@@ -397,6 +397,7 @@ const Checks: React.FC = () => {
     downConfirmationAttempts?: number;
     peerConfirmDisabled?: boolean;
     cacheControlNoCache?: boolean;
+    ignoreSslErrors?: boolean;
     checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
@@ -428,6 +429,7 @@ const Checks: React.FC = () => {
             requestBody: data.requestBody || '',
             responseValidation: data.responseValidation || {},
             cacheControlNoCache: data.cacheControlNoCache === true,
+            ignoreSslErrors: data.ignoreSslErrors === true,
             ...(data.redirectValidation !== undefined ? { redirectValidation: data.redirectValidation } : {}),
           }
           : {}),
@@ -457,6 +459,7 @@ const Checks: React.FC = () => {
             requestBody: data.requestBody || '',
             responseValidation: data.responseValidation || {},
             cacheControlNoCache: data.cacheControlNoCache === true,
+            ignoreSslErrors: data.ignoreSslErrors === true,
             ...(data.redirectValidation !== undefined ? { redirectValidation: data.redirectValidation ?? undefined } : {}),
           } : {}),
           ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),

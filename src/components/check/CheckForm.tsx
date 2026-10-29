@@ -190,6 +190,7 @@ const formSchema = z.object({
   peerConfirmDisabled: z.boolean().optional(),
   responseTimeLimit: z.union([z.number().min(1).max(30000), z.literal(''), z.undefined()]).optional(),
   cacheControlNoCache: z.boolean().optional(),
+  ignoreSslErrors: z.boolean().optional(),
   redirectExpectedTarget: z.string().optional(),
   redirectMatchMode: z.enum(['contains', 'exact']).optional(),
   maxRedirects: z.union([z.number().min(0).max(10), z.literal('')]).optional(),
@@ -397,6 +398,7 @@ interface CheckFormProps {
     downConfirmationAttempts?: number;
     peerConfirmDisabled?: boolean;
     cacheControlNoCache?: boolean;
+    ignoreSslErrors?: boolean;
     checkRegionOverride?: 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
@@ -461,6 +463,7 @@ export default function CheckForm({
 
       responseTimeLimit: '', // Empty = disabled
       cacheControlNoCache: false,
+      ignoreSslErrors: false,
       maxRedirects: 0,
       checkRegionOverride: 'vps-eu-1',
       timezone: '_utc',
@@ -607,6 +610,7 @@ export default function CheckForm({
       peerConfirmDisabled: (source as { peerConfirmDisabled?: boolean }).peerConfirmDisabled === true,
       responseTimeLimit: source.responseTimeLimit || '',
       cacheControlNoCache: source.cacheControlNoCache === true,
+      ignoreSslErrors: source.ignoreSslErrors === true,
       redirectExpectedTarget: source.redirectValidation?.expectedTarget ?? '',
       redirectMatchMode: source.redirectValidation?.matchMode ?? 'contains',
       maxRedirects: source.maxRedirects ?? 0,
@@ -986,6 +990,7 @@ export default function CheckForm({
           requestBody: data.requestBody,
           responseValidation: validation,
           cacheControlNoCache: data.cacheControlNoCache === true,
+          ignoreSslErrors: data.ignoreSslErrors === true,
           ...(data.type === 'redirect' && data.redirectExpectedTarget?.trim()
             ? {
               redirectValidation: {
@@ -2040,6 +2045,34 @@ export default function CheckForm({
                                     </TooltipTrigger>
                                     <TooltipContent side="top" className="max-w-[220px]">
                                       <p className="text-xs">Adds Cache-Control: no-cache to requests. Use when your site is heavily cached.</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </FormLabel>
+                                <FormControl>
+                                  <Switch
+                                    checked={field.value === true}
+                                    onCheckedChange={(checked) => field.onChange(checked)}
+                                  />
+                                </FormControl>
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="ignoreSslErrors"
+                          render={({ field }) => (
+                            <FormItem>
+                              <div className="flex items-center justify-between">
+                                <FormLabel className="text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                                  Ignore SSL errors
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-[220px]">
+                                      <p className="text-xs">Accepts expired, self-signed or mismatched certificates and turns off SSL alerts for this check. Use for internal or home servers.</p>
                                     </TooltipContent>
                                   </Tooltip>
                                 </FormLabel>

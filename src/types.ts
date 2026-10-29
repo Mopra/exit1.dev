@@ -98,6 +98,7 @@ export interface Website {
   requestHeaders?: Record<string, string>;
   requestBody?: string;
   cacheControlNoCache?: boolean;
+  ignoreSslErrors?: boolean;
   responseValidation?: ResponseValidation;
 
   // Redirect validation (for redirect check type)

@@ -2364,6 +2364,7 @@ export const addCheck = onCall({
       responseTimeLimit,
       downConfirmationAttempts,
       cacheControlNoCache,
+      ignoreSslErrors,
       checkRegionOverride,
       pingPackets,
       timezone,
@@ -2659,6 +2660,7 @@ export const addCheck = onCall({
             requestBody,
             responseValidation,
             cacheControlNoCache: cacheControlNoCache === true,
+            ignoreSslErrors: ignoreSslErrors === true,
             ...(resolvedType === 'redirect' && redirectValidation && typeof redirectValidation === 'object' && redirectValidation.expectedTarget
               ? { redirectValidation: { expectedTarget: String(redirectValidation.expectedTarget).slice(0, 2000), matchMode: redirectValidation.matchMode === 'exact' ? 'exact' : 'contains' } }
               : {}),
@@ -2737,6 +2739,7 @@ export const addCheck = onCall({
               requestBody,
               responseValidation,
               cacheControlNoCache: cacheControlNoCache === true,
+              ignoreSslErrors: ignoreSslErrors === true,
             }
             : {}),
           ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
@@ -2892,6 +2895,7 @@ export const bulkAddChecks = onCall({
           responseTimeLimit,
           downConfirmationAttempts,
           cacheControlNoCache,
+          ignoreSslErrors,
         } = item;
 
         const resolvedType = normalizeCheckType(type);
@@ -3024,6 +3028,7 @@ export const bulkAddChecks = onCall({
                 requestBody,
                 responseValidation,
                 cacheControlNoCache: cacheControlNoCache === true,
+                ignoreSslErrors: ignoreSslErrors === true,
                 ...(validatedRedirectValidation ? { redirectValidation: validatedRedirectValidation } : {}),
               }
               : {}),
@@ -3142,6 +3147,7 @@ export const updateCheck = onCall({
     peerConfirmDisabled,
     responseTimeLimit,
     cacheControlNoCache,
+    ignoreSslErrors,
     checkRegionOverride,
     pingPackets,
     timezone,
@@ -3352,6 +3358,7 @@ export const updateCheck = onCall({
     }
   }
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
+  if (ignoreSslErrors !== undefined) updateData.ignoreSslErrors = ignoreSslErrors === true;
   if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;
   if (severity !== undefined) updateData.severity = severity; // P1–P5 importance; null clears back to default

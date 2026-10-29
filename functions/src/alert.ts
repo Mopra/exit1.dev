@@ -774,6 +774,12 @@ export async function triggerSSLAlert(
     return { delivered: false, reason: 'maintenance_mode' };
   }
 
+  // The user opted out of certificate checks for this target. Leave
+  // sslAlertedState untouched so turning the option off alerts on a bad cert.
+  if (website.ignoreSslErrors === true) {
+    return { delivered: false, reason: 'settings' };
+  }
+
   // System health gate: suppress if infrastructure is failing. Leave
   // sslAlertedState untouched so we retry once the gate clears.
   if (isSystemHealthGateTripped()) {

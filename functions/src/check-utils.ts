@@ -244,6 +244,7 @@ export const performHttpRequest = async ({
   readBody,
   totalTimeoutMs,
   onResolved,
+  ignoreSslErrors,
 }: {
   url: string;
   method: string;
@@ -257,6 +258,8 @@ export const performHttpRequest = async ({
   // paths get it too — that's the whole point: an EHOSTUNREACH alert should
   // name the IP that was unreachable, not a cached one from days ago.
   onResolved?: (ip: string, family: number) => void;
+  // Accept any certificate. The cert is still captured for display.
+  ignoreSslErrors?: boolean;
 }): Promise<HttpRequestResult> => {
   const urlObj = new URL(url);
   const transport = urlObj.protocol === "https:" ? https : http;
@@ -307,6 +310,7 @@ export const performHttpRequest = async ({
         headers: requestHeaders,
         agent: false,
         lookup: cachedLookup as unknown as typeof import("dns").lookup,
+        ...(ignoreSslErrors ? { rejectUnauthorized: false } : {}),
       },
       async (res) => {
         responseAt = Date.now();
@@ -966,6 +970,7 @@ export async function checkRestEndpoint(
         useRange,
         readBody,
         totalTimeoutMs: timeoutMs,
+        ignoreSslErrors: website.ignoreSslErrors === true,
         // First observation only. Later hops (redirect chain, https fallback)
         // can point at a different host, and targetIp/targetHostname must stay
         // describing the URL the user actually monitors.
@@ -1926,7 +1931,7 @@ export async function checkWebSocketEndpoint(website: Website): Promise<SocketCh
       };
 
       const req = secure
-        ? https.request({ ...options, rejectUnauthorized: true }, handler)
+        ? https.request({ ...options, rejectUnauthorized: website.ignoreSslErrors !== true }, handler)
         : http.request(options, handler);
 
       req.on('upgrade', (_res: http.IncomingMessage, socket: net.Socket) => {
