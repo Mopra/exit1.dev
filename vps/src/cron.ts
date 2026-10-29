@@ -92,6 +92,14 @@ const JOBS: JobSpec[] = [
     // @ts-expect-error: functions/lib has no .d.ts
     run: async () => (await import('../../functions/lib/agent-signup.js')).runAgentSignupExpiry(),
   },
+  {
+    // Emails when yesterday's cost per service, function or BigQuery query
+    // shape jumped, or a free tier is on course to run out; Mondays also send
+    // a digest. 08:40 so the billing export has most of yesterday.
+    name: 'costWatch', hours: [8], minute: 40, leaseMs: 15 * MIN,
+    // @ts-expect-error: functions/lib has no .d.ts
+    run: async () => (await import('../../functions/lib/cost-watch.js')).runCostWatch(),
+  },
 ];
 
 /** Start of the most recent slot at or before `now`, in ms. */

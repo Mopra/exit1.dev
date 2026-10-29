@@ -4,7 +4,7 @@ import * as logger from "firebase-functions/logger";
 import { Webhook } from 'svix';
 import { Resend } from 'resend';
 import { createClerkClient } from '@clerk/backend';
-import { BigQuery } from '@google-cloud/bigquery';
+import { createBigQuery } from './bigquery-client';
 import {
   RESEND_API_KEY,
   DAY3_API_KEY,
@@ -1244,7 +1244,7 @@ async function loadUserInfoBatch(userIds: string[]): Promise<Map<string, CachedU
  * canonical store for these answers. Returns a map keyed by Clerk user id.
  */
 async function loadLatestOnboardingFromBigQuery(): Promise<Map<string, OnboardingAnswers>> {
-  const bigquery = new BigQuery({ projectId: 'exit1-dev' });
+  const bigquery = createBigQuery();
   const map = new Map<string, OnboardingAnswers>();
 
   try {

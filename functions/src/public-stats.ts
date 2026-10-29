@@ -1,9 +1,9 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { BigQuery } from "@google-cloud/bigquery";
+import { createBigQuery } from "./bigquery-client";
 import { firestore } from "./init";
 
-const bigquery = new BigQuery({ projectId: "exit1-dev" });
+const bigquery = createBigQuery();
 const DATASET_ID = "checks";
 const DAILY_SUMMARY_TABLE_ID = "check_daily_summaries";
 const STATS_DOC = "stats/public_checks";

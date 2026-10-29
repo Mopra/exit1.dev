@@ -4,14 +4,11 @@ import { firestore } from "./init";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 import { requireAdmin } from "./require-admin";
 import { createClerkClient } from '@clerk/backend';
-import { BigQuery } from '@google-cloud/bigquery';
+import { createBigQuery } from './bigquery-client';
 import type { BigQueryCheckHistoryRow } from "./bigquery";
 import { Query } from "firebase-admin/firestore";
 
-const bigquery = new BigQuery({
-  projectId: 'exit1-dev',
-  keyFilename: undefined, // Use default credentials
-});
+const bigquery = createBigQuery();
 
 const ADMIN_STATS_CACHE_COLLECTION = 'admin_metadata';
 const ADMIN_STATS_CACHE_DOC_ID = 'stats_cache';

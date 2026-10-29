@@ -1,12 +1,9 @@
-import { BigQuery } from '@google-cloud/bigquery';
+import { createBigQuery } from './bigquery-client';
 import * as logger from 'firebase-functions/logger';
 import { CONFIG } from './config';
 import { chunkIds, capWebsiteIds, SUMMARY_QUERY_CHUNK, MAX_SUMMARY_WEBSITES } from './summary-batching';
 
-const bigquery = new BigQuery({
-  projectId: 'exit1-dev',
-  keyFilename: undefined, // Use default credentials
-});
+const bigquery = createBigQuery();
 
 // Table configuration
 const DATASET_ID = 'checks';
@@ -2734,6 +2731,10 @@ export const getIncidentsForHour = async (
  *   issue one DELETE per tier here; the backstop query at the end cleans up
  *   anything older than the widest tier anyway.
  */
+// The purge reads every partition older than free retention, which grows with Pro
+// history (kept 1095 days), so it gets more room than the client default.
+const PURGE_MAX_BYTES_BILLED = String(20 * 1024 * 1024 * 1024); // 20 GiB
+
 export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void> => {
   const now = Date.now();
   const paidSet = new Set(nanoUserIds ?? []);
@@ -2754,6 +2755,7 @@ export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void
       await bigquery.query({
         query: freeQuery,
         params: { cutoffDate: freeCutoff, nanoUserIds: Array.from(paidSet) },
+        maximumBytesBilled: PURGE_MAX_BYTES_BILLED,
       });
     } else {
       // No paid users – purge everything older than free retention
@@ -2764,6 +2766,7 @@ export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void
       await bigquery.query({
         query: allQuery,
         params: { cutoffDate: freeCutoff },
+        maximumBytesBilled: PURGE_MAX_BYTES_BILLED,
       });
     }
 
@@ -2779,6 +2782,7 @@ export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void
     await bigquery.query({
       query: maxQuery,
       params: { cutoffDate: maxCutoff },
+      maximumBytesBilled: PURGE_MAX_BYTES_BILLED,
     });
 
     logger.info(`BigQuery retention purge completed (free cutoff=${freeCutoff.toISOString()}, max cutoff=${maxCutoff.toISOString()}, paid users=${paidSet.size})`);

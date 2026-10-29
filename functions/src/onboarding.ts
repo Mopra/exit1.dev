@@ -1,6 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { BigQuery } from "@google-cloud/bigquery";
+import { createBigQuery } from "./bigquery-client";
 import { createClerkClient } from "@clerk/backend";
 import { firestore, getUserTier } from "./init";
 import { fetchClerkEmails } from "./clerk-users";
@@ -16,7 +16,7 @@ import { buildPropertiesForUser, formatSignupDate } from "./contact-model";
 import { syncContactToProviders } from "./contact-sync";
 import { requireAdmin } from "./require-admin";
 
-const bigquery = new BigQuery({ projectId: "exit1-dev" });
+const bigquery = createBigQuery();
 const DATASET_ID = "checks";
 const TABLE_ID = "onboarding_responses";
 
