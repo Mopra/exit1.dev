@@ -1,9 +1,9 @@
 // Webhooks vs Integrations: same Firestore collection, two UI views.
 // "Webhook" = user pasted an endpoint URL we POST to (generic, Slack, Discord,
 // Teams, Pumble). "Integration" = user gave us API credentials and we POST to
-// a fixed third-party API (Pushover, PagerDuty, Opsgenie). Splitting the UI
-// leaves room for OAuth-based integrations later without forcing the URL form
-// shape onto them.
+// a fixed third-party API (Pushover, PagerDuty, Opsgenie), or linked a chat
+// through our bot (Telegram). Splitting the UI keeps the URL form shape off
+// integrations that never show a URL.
 
 import {
   TIER_DISPLAY_NAME,
@@ -20,6 +20,7 @@ export type WebhookPlatformType =
   | 'pagerduty'
   | 'opsgenie'
   | 'pushover'
+  | 'telegram'
   | 'generic';
 
 export type IntegrationScope = 'webhook' | 'integration';
@@ -34,6 +35,7 @@ export const WEBHOOK_SCOPE_TYPES = [
 
 export const INTEGRATION_SCOPE_TYPES = [
   'pushover',
+  'telegram',
   'pagerduty',
   'opsgenie',
 ] as const satisfies readonly WebhookPlatformType[];
@@ -125,7 +127,7 @@ const WEBHOOK_LABELS: ScopeLabels = {
   deleteSingleTitle: (name) => `Delete "${name}"?`,
   deleteBulkTitle: (n) => `Delete ${n} webhook${n !== 1 ? 's' : ''}?`,
   failureEmailSubject: 'Webhook',
-  crossLinkLabel: 'Looking for Pushover, PagerDuty, or Opsgenie? Find them under Integrations →',
+  crossLinkLabel: 'Looking for Pushover, Telegram, PagerDuty, or Opsgenie? Find them under Integrations →',
   crossLinkPath: '/integrations',
   upgradeLimitMessage: channelLimitMessage,
   downgradeMessage: channelDowngradeMessage('webhooks'),
@@ -148,7 +150,7 @@ const INTEGRATION_LABELS: ScopeLabels = {
   formEditSubtitle: 'Update your integration configuration',
   testMenu: 'Test integration',
   emptyTitle: 'No integrations configured',
-  emptyDescription: 'Connect Pushover, PagerDuty, or Opsgenie to receive alerts on the tools your team already uses.',
+  emptyDescription: 'Connect Pushover, Telegram, PagerDuty, or Opsgenie to receive alerts on the tools your team already uses.',
   emptyAction: 'Add Your First Integration',
   bulkItemLabel: 'integration',
   deleteSingleTitle: (name) => `Delete "${name}"?`,

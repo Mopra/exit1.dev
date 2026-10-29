@@ -4,7 +4,7 @@ import { firestore, getUserEmailFromClerk, getUserTierLive } from "./init";
 import { WebhookSettings, WebhookCheckFilter } from "./types";
 import { normalizeEventList } from "./webhook-events";
 import { CONFIG } from "./config";
-import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY } from "./env";
+import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY, TELEGRAM_BOT_TOKEN } from "./env";
 import {
   PAGERDUTY_EVENTS_URL,
   buildPagerDutyEnvelope,
@@ -16,6 +16,8 @@ import {
   buildPushoverFormBody,
   extractPushoverCredentials,
 } from "./alert-pushover";
+import { sendTelegramAlert } from "./alert-telegram";
+import { assertTelegramChatLinked } from "./telegram-link";
 import { triggerResendEvent } from "./resend-sync";
 import { notifySettingsEdit } from "./check-helpers";
 import { resolveAccountId } from "./team-access";
@@ -33,6 +35,7 @@ export const saveWebhookSettings = onCall({
   } catch {
     throw new Error("Invalid webhook URL");
   }
+  if (webhookType === 'telegram') await assertTelegramChatLinked(uid, url);
 
   if (!name || !events || events.length === 0) {
     throw new Error("Name and events are required");
@@ -171,6 +174,9 @@ export const updateWebhookSettings = onCall(async (request) => {
       throw new Error("Invalid webhook URL");
     }
   }
+  if ((url || webhookType) && (webhookType ?? webhookData.webhookType) === 'telegram') {
+    await assertTelegramChatLinked(uid, url || webhookData.url);
+  }
 
   const updateData: Record<string, unknown> = {
     updatedAt: Date.now(),
@@ -240,7 +246,7 @@ export const deleteWebhook = onCall(async (request) => {
 });
 
 // Callable function to test webhook
-export const testWebhook = onCall(async (request) => {
+export const testWebhook = onCall({ secrets: [TELEGRAM_BOT_TOKEN] }, async (request) => {
   const { id } = request.data || {};
   const uid = await resolveAccountId(request, "write");
   if (!id) {
@@ -264,6 +270,16 @@ export const testWebhook = onCall(async (request) => {
   const isPagerDutyWebhook = webhookData.webhookType === 'pagerduty';
   const isOpsgenieWebhook = webhookData.webhookType === 'opsgenie';
   const isPushoverWebhook = webhookData.webhookType === 'pushover';
+
+  if (webhookData.webhookType === 'telegram') {
+    try {
+      await sendTelegramAlert(webhookData.url, 'Exit1 test', ['Your Telegram integration is working. Real alerts will arrive here.']);
+      return { success: true, status: 200, message: 'Test message sent. Check your Telegram chat.' };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, error: errorMessage, message: `Failed to send test message: ${errorMessage}` };
+    }
+  }
 
   // Pushover needs a form-encoded body to a fixed endpoint, not the JSON
   // pipeline below — short-circuit with a dedicated fetch.

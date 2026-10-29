@@ -33,6 +33,10 @@ export const TWILIO_MESSAGING_SERVICE_SID = defineSecret('TWILIO_MESSAGING_SERVI
 // secret versions), and put the same values in each VPS .env.
 export const WHATSAPP_ACCESS_TOKEN = defineSecret('WHATSAPP_ACCESS_TOKEN');
 export const WHATSAPP_PHONE_NUMBER_ID = defineSecret('WHATSAPP_PHONE_NUMBER_ID');
+// Telegram bot token from @BotFather (alert-telegram.ts). The same value goes in
+// each VPS .env as TELEGRAM_BOT_TOKEN. The webhook's secret_token is derived from
+// it, so there is no second secret to pay for.
+export const TELEGRAM_BOT_TOKEN = defineSecret('TELEGRAM_BOT_TOKEN');
 export const VPS_MANUAL_CHECK_SECRET = defineSecret('VPS_MANUAL_CHECK_SECRET');
 // Shared secret for the probe generator endpoint (probe PLAN.md §6). probe signs
 // every request as HMAC-SHA256(secret, timestamp + "." + rawBody), and probe

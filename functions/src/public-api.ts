@@ -2123,7 +2123,7 @@ async function deliverWebhookTest(
   // Pushover, PagerDuty and Opsgenie need bespoke envelopes; the public API keeps
   // to the formats it can build without the incident-specific helpers, and tells
   // the caller to use the dashboard for the rest.
-  if (type === 'pushover' || type === 'pagerduty' || type === 'opsgenie') {
+  if (type === 'pushover' || type === 'pagerduty' || type === 'opsgenie' || type === 'telegram') {
     return {
       success: false,
       message: `Test delivery for ${type} integrations is only available from the dashboard (https://app.exit1.dev/integrations).`,

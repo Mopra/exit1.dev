@@ -68,6 +68,7 @@ import {
   extractPushoverCredentials,
   mapEventToPushoverPriority,
 } from './alert-pushover';
+import { sendTelegramAlert } from './alert-telegram';
 
 // ============================================================================
 // FAILURE TRACKER
@@ -776,6 +777,7 @@ export async function sendWebhook(
   const isPagerDuty = webhook.webhookType === 'pagerduty';
   const isOpsgenie = webhook.webhookType === 'opsgenie';
   const isPushover = webhook.webhookType === 'pushover';
+  const isTelegram = webhook.webhookType === 'telegram';
 
   // Optional response time (informational only)
   const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
@@ -786,11 +788,12 @@ export async function sendWebhook(
   const errorMessage = (website.lastError && eventType === 'website_down') ? website.lastError : '';
   const targetIpMessage = website.targetIp ? `Target IP: ${website.targetIp}` : '';
 
-  // Pushover uses a form-encoded body to a fixed endpoint, so it takes its
-  // own short-circuit path that bypasses the JSON.stringify pipeline below.
-  if (isPushover) {
-    const credentials = extractPushoverCredentials(webhook.url);
-    if (!credentials) {
+  // Pushover uses a form-encoded body to a fixed endpoint, and Telegram goes
+  // through our bot, so both short-circuit the JSON.stringify pipeline below.
+  // They share the title and detail lines.
+  if (isPushover || isTelegram) {
+    const credentials = isPushover ? extractPushoverCredentials(webhook.url) : null;
+    if (isPushover && !credentials) {
       throw new Error('Pushover webhook URL is missing token or user key');
     }
     // Mirror the emoji convention used in the Slack/Discord/Teams messages so
@@ -814,12 +817,16 @@ export async function sendWebhook(
     // vocabulary as the title so "online"/"offline" don't read inconsistently.
     const prevStatus = formatPreviousStatusLabel(previousStatus);
     if (prevStatus) lines.push(`Previous Status: ${prevStatus}`);
-    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
     // The supplementary link goes to the in-app incident, not website.url:
     // ping/tcp/udp/websocket checks have non-HTTP urls (e.g. ping://host) that a
     // phone can't open, and HTTP urls are already clickable in the body anyway.
     const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
     const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
+    if (!credentials) {
+      await sendTelegramAlert(webhook.url, title, lines, { url: incidentUrl, label: 'Go to incident' });
+      return;
+    }
+    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
     await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, incidentUrl, 'Go to Incident');
     return;
   }
@@ -1089,23 +1096,28 @@ export async function sendSSLWebhook(
   const isPagerDuty = webhook.webhookType === 'pagerduty';
   const isOpsgenie = webhook.webhookType === 'opsgenie';
   const isPushover = webhook.webhookType === 'pushover';
+  const isTelegram = webhook.webhookType === 'telegram';
 
-  // Pushover short-circuit: form-encoded body to a fixed endpoint.
-  if (isPushover) {
-    const credentials = extractPushoverCredentials(webhook.url);
-    if (!credentials) {
+  // Pushover (form-encoded, fixed endpoint) and Telegram (our bot) short-circuit.
+  if (isPushover || isTelegram) {
+    const credentials = isPushover ? extractPushoverCredentials(webhook.url) : null;
+    if (isPushover && !credentials) {
       throw new Error('Pushover webhook URL is missing token or user key');
     }
     const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
     const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
-    const title = `${emoji} ${website.name} — ${statusText}`;
+    const title = `${emoji} ${website.name}: ${statusText}`;
     const lines: string[] = [`URL: ${website.url}`];
     if (sslCertificate.error) lines.push(`Error: ${sslCertificate.error}`);
     if (sslCertificate.daysUntilExpiry !== undefined) lines.push(`Expires in: ${sslCertificate.daysUntilExpiry} days`);
     if (sslCertificate.issuer) lines.push(`Issuer: ${sslCertificate.issuer}`);
-    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
     const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
     const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
+    if (!credentials) {
+      await sendTelegramAlert(webhook.url, title, lines, { url: incidentUrl, label: 'Go to incident' });
+      return;
+    }
+    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
     await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, incidentUrl, 'Go to Incident');
     return;
   }

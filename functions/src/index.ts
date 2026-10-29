@@ -88,6 +88,13 @@ lazy((): typeof import('./webhooks') => require('./webhooks'), [
   'bulkUpdateWebhookStatus',
 ]);
 
+// Telegram integration: one-time connect links and the bot's webhook
+lazy((): typeof import('./telegram-link') => require('./telegram-link'), [
+  'createTelegramLink',
+  'getTelegramLink',
+  'telegramWebhook',
+]);
+
 // Email settings functions
 lazy((): typeof import('./email') => require('./email'), [
   'saveEmailSettings',

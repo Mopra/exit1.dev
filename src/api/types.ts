@@ -217,7 +217,7 @@ export interface WebhookSettings {
   checkFilter?: WebhookCheckFilter;
   secret?: string;
   headers?: { [key: string]: string };
-  webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'pushover' | 'generic';
+  webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'pushover' | 'telegram' | 'generic';
   createdAt: number;
   updatedAt: number;
   // Health tracking

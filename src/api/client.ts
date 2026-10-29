@@ -446,6 +446,20 @@ export class Exit1ApiClient {
     );
   }
 
+  // Telegram: mint a one-time bot deep link, then poll until the user presses
+  // Start (or adds the bot to a group). The returned url is saved as a webhook.
+  createTelegramLink() {
+    return this.call<{ code: string; url: string; groupUrl: string; expiresAt: number }>(
+      "createTelegramLink", {}, 'Failed to create Telegram link',
+    );
+  }
+
+  getTelegramLink(code: string) {
+    return this.call<
+      { linked: false; expired: boolean } | { linked: true; chatTitle: string | null; url: string }
+    >("getTelegramLink", { code }, 'Failed to check Telegram link');
+  }
+
   // ---- System ----
 
   getSystemStatus() {

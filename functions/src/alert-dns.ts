@@ -18,6 +18,7 @@ import {
   extractPushoverCredentials,
   mapEventToPushoverPriority,
 } from "./alert-pushover";
+import { buildTelegramText, extractTelegramChatId, getTelegramBotToken } from "./alert-telegram";
 
 interface DnsAlertPayload {
   event: WebhookEvent;
@@ -185,6 +186,8 @@ async function dispatchDnsWebhooks(
           ? 'PagerDuty webhook URL is missing the routing_key query parameter'
           : webhook.webhookType === 'pushover'
           ? 'Pushover webhook URL is missing the token or user key'
+          : webhook.webhookType === 'telegram'
+          ? 'Telegram integration is missing its chat. Reconnect it in Integrations.'
           : `Webhook is missing required credentials for "${webhook.webhookType ?? 'generic'}"`;
         await firestore.collection('webhooks').doc(doc.id).update({
           lastDeliveryStatus: 'failed',
@@ -245,9 +248,9 @@ function formatDnsWebhookPayload(
   webhookUrl: string,
   payload: DnsAlertPayload | DnsResolutionFailedPayload,
 ): FormattedDnsDelivery | null {
-  if (webhookType === 'pushover') {
-    const credentials = extractPushoverCredentials(webhookUrl);
-    if (!credentials) return null;
+  if (webhookType === 'pushover' || webhookType === 'telegram') {
+    const credentials = webhookType === 'pushover' ? extractPushoverCredentials(webhookUrl) : null;
+    if (webhookType === 'pushover' && !credentials) return null;
     const title = payload.event === 'dns_resolution_failed'
       ? `DNS resolution failed — ${payload.domain}`
       : payload.event === 'dns_record_missing'
@@ -260,6 +263,15 @@ function formatDnsWebhookPayload(
       ).join('\n');
     } else {
       message = `Error: ${payload.error}`;
+    }
+    if (!credentials) {
+      const chatId = extractTelegramChatId(webhookUrl);
+      const token = getTelegramBotToken();
+      if (!chatId || !token) return null;
+      return {
+        url: `https://api.telegram.org/bot${token}/sendMessage`,
+        body: { chat_id: chatId, text: buildTelegramText(title, message.split('\n')), parse_mode: 'HTML', disable_web_page_preview: true },
+      };
     }
     const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0, payload.checkSeverity);
     const form = buildPushoverFormBody({

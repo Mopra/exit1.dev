@@ -42,9 +42,11 @@ import {
   Settings,
   Info,
   Zap,
+  Loader2,
 } from 'lucide-react';
 
 import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
+import { apiClient } from '../../api/client';
 import type { Website } from '../../types';
 import type { WebhookCheckFilter } from '../../api/types';
 import type { IntegrationScope, WebhookPlatformType } from '../../lib/integration-scope';
@@ -153,6 +155,19 @@ function parsePushoverUrl(url: string): PushoverFields {
   }
 }
 
+// Telegram integrations store the bot deep link with the linked chat_id; the
+// form never shows it, the Connect flow fills it in.
+const TELEGRAM_URL_PREFIX = 'https://t.me/';
+const TELEGRAM_POLL_MS = 2500;
+
+type TelegramLinkState =
+  | { status: 'idle' }
+  | { status: 'creating' }
+  | { status: 'waiting'; code: string; url: string; groupUrl: string; expiresAt: number }
+  | { status: 'linked'; chatTitle: string | null }
+  | { status: 'expired' }
+  | { status: 'error'; error: string };
+
 const formSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   url: z.string().optional(),
@@ -162,7 +177,7 @@ const formSchema = z.object({
   folderPaths: z.array(z.string()).optional(),
   secret: z.string().optional(),
   customHeaders: z.string().optional(),
-  webhookType: z.enum(['slack', 'discord', 'teams', 'pumble', 'pagerduty', 'opsgenie', 'pushover', 'generic']),
+  webhookType: z.enum(['slack', 'discord', 'teams', 'pumble', 'pagerduty', 'opsgenie', 'pushover', 'telegram', 'generic']),
   pushoverToken: z.string().optional(),
   pushoverUserKey: z.string().optional(),
   pushoverPriority: z.enum(PUSHOVER_PRIORITY_VALUES).optional(),
@@ -230,6 +245,14 @@ const formSchema = z.object({
         });
       }
     }
+  } else if (data.webhookType === 'telegram') {
+    if (!(data.url || '').startsWith(TELEGRAM_URL_PREFIX)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['url'],
+        message: 'Connect a Telegram chat first',
+      });
+    }
   } else {
     const url = (data.url || '').trim();
     if (!url) {
@@ -295,6 +318,7 @@ const PLATFORM_LABEL: Record<WebhookPlatformType, string> = {
   pagerduty: 'PagerDuty',
   opsgenie: 'Opsgenie',
   pushover: 'Pushover',
+  telegram: 'Telegram',
 };
 
 export default function WebhookForm({
@@ -310,6 +334,7 @@ export default function WebhookForm({
   const [checkSearch, setCheckSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(!!editingWebhook);
   const [targetOpen, setTargetOpen] = useState(false);
+  const [telegramLink, setTelegramLink] = useState<TelegramLinkState>({ status: 'idle' });
 
   const labels = labelsForScope(scope);
   // When editing, allow the platform dropdown to surface whatever type the
@@ -368,6 +393,7 @@ export default function WebhookForm({
     if (!isOpen) {
       setSettingsOpen(false);
       setTargetOpen(false);
+      setTelegramLink({ status: 'idle' });
     }
   }, [isOpen]);
 
@@ -384,6 +410,7 @@ export default function WebhookForm({
 
   // Reset form when editing webhook changes
   React.useEffect(() => {
+    setTelegramLink({ status: 'idle' });
     if (isOpen && editingWebhook) {
       const mode = editingWebhook.checkFilter?.mode === 'include' ? 'include' : 'all';
       const ids = editingWebhook.checkFilter?.checkIds ?? [];
@@ -452,6 +479,7 @@ export default function WebhookForm({
     setCheckSearch('');
     setSettingsOpen(false);
     setTargetOpen(false);
+    setTelegramLink({ status: 'idle' });
     onClose();
   };
 
@@ -504,6 +532,48 @@ export default function WebhookForm({
   const watchFilterMode = form.watch('checkFilterMode');
   const watchWebhookType = form.watch('webhookType');
   const watchPushoverPriority = form.watch('pushoverPriority');
+
+  // Poll the pending link until the user presses Start in Telegram. Stops on
+  // link, expiry, close, or a platform switch (the effect cleanup).
+  React.useEffect(() => {
+    if (telegramLink.status !== 'waiting' || !isOpen || watchWebhookType !== 'telegram') return;
+    const { code, expiresAt } = telegramLink;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      if (Date.now() > expiresAt) {
+        setTelegramLink({ status: 'expired' });
+        return;
+      }
+      const res = await apiClient.getTelegramLink(code);
+      if (cancelled || !res.success || !res.data) return;
+      if (res.data.linked) {
+        form.setValue('url', res.data.url, { shouldDirty: true, shouldValidate: true });
+        setTelegramLink({ status: 'linked', chatTitle: res.data.chatTitle });
+      } else if (res.data.expired) {
+        setTelegramLink({ status: 'expired' });
+      }
+    }, TELEGRAM_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [telegramLink, isOpen, watchWebhookType, form]);
+
+  const startTelegramLink = async () => {
+    // Open the tab inside the click so popup blockers allow it, then point it
+    // at the deep link once the callable returns.
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    setTelegramLink({ status: 'creating' });
+    const res = await apiClient.createTelegramLink();
+    if (!res.success || !res.data) {
+      tab?.close();
+      setTelegramLink({ status: 'error', error: res.error || 'Failed to create Telegram link' });
+      return;
+    }
+    if (tab) tab.location.href = res.data.url;
+    setTelegramLink({ status: 'waiting', code: res.data.code, url: res.data.url, groupUrl: res.data.groupUrl, expiresAt: res.data.expiresAt });
+  };
 
   const urlHint: { placeholder: string; description: React.ReactNode } = (() => {
     switch (watchWebhookType) {
@@ -688,7 +758,90 @@ export default function WebhookForm({
                     )}
                   />
 
-                  {watchWebhookType !== 'pushover' ? (
+                  {watchWebhookType === 'telegram' ? (
+                    <FormField
+                      control={form.control}
+                      name="url"
+                      render={({ field }) => {
+                        const hasLink = (field.value || '').startsWith(TELEGRAM_URL_PREFIX);
+                        const connected = telegramLink.status === 'linked'
+                          || ((telegramLink.status === 'idle' || telegramLink.status === 'error') && hasLink);
+                        return (
+                          <FormItem className="space-y-3 rounded-xl border border-border/30 bg-muted/10 p-4">
+                            <p className="text-xs text-muted-foreground">
+                              Free alerts in a Telegram chat or group through the exit1 bot.
+                            </p>
+                            {connected ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="flex items-center gap-2 text-sm">
+                                  <Check className="w-4 h-4 text-primary" />
+                                  {telegramLink.status === 'linked' && telegramLink.chatTitle
+                                    ? `Connected to ${telegramLink.chatTitle}`
+                                    : 'Connected'}
+                                </span>
+                                <Button type="button" variant="outline" size="sm" onClick={startTelegramLink}>
+                                  Reconnect
+                                </Button>
+                              </div>
+                            ) : telegramLink.status === 'waiting' ? (
+                              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span>
+                                  Waiting for you to press Start in Telegram...{' '}
+                                  <a
+                                    href={telegramLink.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-primary hover:underline"
+                                  >
+                                    Open Telegram
+                                  </a>
+                                </span>
+                              </p>
+                            ) : telegramLink.status === 'expired' ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">Link expired</span>
+                                <Button type="button" variant="outline" size="sm" onClick={startTelegramLink}>
+                                  Try again
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                type="button"
+                                onClick={startTelegramLink}
+                                disabled={telegramLink.status === 'creating'}
+                              >
+                                {telegramLink.status === 'creating' && <Loader2 className="w-4 h-4 animate-spin" />}
+                                Connect Telegram
+                              </Button>
+                            )}
+                            {telegramLink.status === 'error' && (
+                              <p className="text-xs text-destructive">{telegramLink.error}</p>
+                            )}
+                            <FormDescription className="text-xs">
+                              {telegramLink.status === 'waiting' ? (
+                                <>
+                                  Alerts for a group instead?{' '}
+                                  <a
+                                    href={telegramLink.groupUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-primary hover:underline"
+                                  >
+                                    Add the bot to a group
+                                  </a>
+                                  .
+                                </>
+                              ) : (
+                                'Works with a private chat or a group.'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
+                    />
+                  ) : watchWebhookType !== 'pushover' ? (
                     <FormField
                       control={form.control}
                       name="url"

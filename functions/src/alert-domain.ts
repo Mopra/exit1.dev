@@ -27,6 +27,7 @@ import {
   extractPushoverCredentials,
   mapEventToPushoverPriority,
 } from './alert-pushover';
+import { sendTelegramAlert } from './alert-telegram';
 
 // ============================================================================
 // TYPES
@@ -205,6 +206,7 @@ async function sendDomainWebhook(
   const isPagerDuty = webhook.webhookType === 'pagerduty';
   const isOpsgenie = webhook.webhookType === 'opsgenie';
   const isPushover = webhook.webhookType === 'pushover';
+  const isTelegram = webhook.webhookType === 'telegram';
 
   let body: string;
   let requestUrl = webhook.url;
@@ -212,9 +214,9 @@ async function sendDomainWebhook(
   // platform stays application/json so the existing pipeline is unchanged.
   let contentType = 'application/json';
 
-  if (isPushover) {
-    const credentials = extractPushoverCredentials(webhook.url);
-    if (!credentials) {
+  if (isPushover || isTelegram) {
+    const credentials = isPushover ? extractPushoverCredentials(webhook.url) : null;
+    if (isPushover && !credentials) {
       throw new Error('Pushover webhook URL is missing token or user key');
     }
     const emoji = payload.event === 'domain_expired' ? '🚨'
@@ -230,6 +232,10 @@ async function sendDomainWebhook(
     if ('newExpiryDate' in payload) lines.push(`New expiry: ${new Date(payload.newExpiryDate).toLocaleDateString()}`);
     if ('registrar' in payload && payload.registrar) lines.push(`Registrar: ${payload.registrar}`);
     lines.push(`Check: ${payload.checkName}`);
+    if (!credentials) {
+      await sendTelegramAlert(webhook.url, title, lines);
+      return;
+    }
     const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0, payload.checkSeverity);
     const form = buildPushoverFormBody({
       credentials,
