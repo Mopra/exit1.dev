@@ -1,0 +1,18 @@
+{
+  "name": "status-domain-proxy",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare for SaaS origin Worker: serves exit1 status pages on customer custom hostnames by proxying app.exit1.dev.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit && wrangler deploy --dry-run",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.158.0"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Origin for Cloudflare for SaaS custom hostnames on the exit1.dev zone.
+  // See docs/plans/custom-status-domain.md section 8. No secrets or bindings:
+  // the account comes from `wrangler login` (or CLOUDFLARE_ACCOUNT_ID), and
+  // routes are resolved against the zone by name.
+  "name": "status-domain-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    // Every custom hostname (Cloudflare for SaaS catch-all on the SaaS zone).
+    // No exit1.dev hostname is orange-clouded today. If one ever is, add a
+    // bypass route for it with Worker set to None in the dashboard.
+    { "pattern": "*/*", "zone_name": "exit1.dev" },
+    // Fallback origin, which is also the CNAME target. Covers customers who
+    // orange-cloud their CNAME (O2O).
+    { "pattern": "domains.exit1.dev/*", "zone_name": "exit1.dev" }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

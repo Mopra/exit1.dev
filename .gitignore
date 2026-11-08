@@ -71,3 +71,7 @@ vps-check-runner-key.json
 
 # Artifacts
 nul
+
+# Cloudflare Workers
+workers/**/.wrangler
+workers/**/node_modules
