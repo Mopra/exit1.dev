@@ -176,6 +176,68 @@ function formatCheck(check: RawCheck) {
   };
 }
 
+// ── SLA report formatting ──
+
+interface SlaReportBody {
+  reportId: string;
+  name: string;
+  period: string;
+  timezone: string;
+  status: string;
+  dataThrough: string | null;
+  targetPercent: number;
+  overall: { availability: number | null; status: string; downMs: number; budgetMs: number; budgetUsed: number; coverage: number; maintenanceMs: number; blockedMs: number; noDataMs: number };
+  checks: Array<{ checkId: string; name: string; availability: number | null; downMs: number; incidents: number; status: string }>;
+  incidents: Array<{ checkId: string; start: string; end: string | null; durationMs: number }>;
+  incidentsTotal: number;
+}
+
+function inZone(isoTime: string | null, timeZone: string): string | null {
+  if (!isoTime) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone, year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "short",
+    }).format(new Date(isoTime));
+  } catch {
+    return isoTime;
+  }
+}
+
+const pct = (v: number | null) => (v === null ? null : Math.floor(v * 100000) / 1000);
+
+function formatSlaReport(r: SlaReportBody) {
+  const names = new Map(r.checks.map((c) => [c.checkId, c.name]));
+  const top = [...r.incidents].sort((a, b) => b.durationMs - a.durationMs).slice(0, 20);
+  return {
+    reportId: r.reportId,
+    name: r.name,
+    period: r.period,
+    timezone: r.timezone,
+    final: r.status === "final",
+    dataThrough: inZone(r.dataThrough, r.timezone),
+    targetPercent: r.targetPercent,
+    availabilityPercent: pct(r.overall.availability),
+    status: r.overall.status,
+    downtimeMinutes: Math.round(r.overall.downMs / 60000),
+    errorBudgetMinutes: Math.round(r.overall.budgetMs / 60000),
+    errorBudgetUsedPercent: Math.round(r.overall.budgetUsed * 100),
+    coveragePercent: Math.round(r.overall.coverage * 100),
+    excludedMinutes: {
+      maintenance: Math.round(r.overall.maintenanceMs / 60000),
+      blocked: Math.round(r.overall.blockedMs / 60000),
+      noData: Math.round(r.overall.noDataMs / 60000),
+    },
+    checks: r.checks.map((c) => ({ id: c.checkId, name: c.name, availabilityPercent: pct(c.availability), downtimeMinutes: Math.round(c.downMs / 60000), incidents: c.incidents, status: c.status })),
+    incidentsTotal: r.incidentsTotal,
+    longestIncidents: top.map((i) => ({
+      check: names.get(i.checkId) ?? i.checkId,
+      start: inZone(i.start, r.timezone),
+      end: i.end ? inZone(i.end, r.timezone) : "ongoing",
+      durationMinutes: Math.round(i.durationMs / 60000),
+    })),
+  };
+}
+
 // ── Shared schema fragments ──
 
 const CHECK_ID_PROP = {
@@ -327,6 +389,33 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     },
     handler: async (args, api) =>
       data(await api.call("GET", `/status-pages/${encodeURIComponent(String(args.status_page_id))}/snapshot`)),
+  },
+
+  {
+    name: "get_sla_report",
+    title: "Get SLA report",
+    readOnly: true,
+    scope: API_SCOPES.CHECKS_READ,
+    description:
+      "SLA reports (Pro plan). Without report_id, list the account's SLA reports with this month's availability, target and status. With report_id, get one month: availability vs target, error budget, per-check numbers and the 20 longest incidents, with times in the report's time zone. Availability counts confirmed downtime only; maintenance, firewall-blocked probes and unmonitored time are excluded.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        report_id: { type: "string", description: "The SLA report ID from a list call. Omit to list reports." },
+        period: { type: "string", pattern: "^\\d{4}-\\d{2}$", description: "Month as YYYY-MM in the report's time zone (default: the current month)" },
+      },
+      additionalProperties: false,
+    },
+    handler: async (args, api) => {
+      if (!args.report_id) {
+        const body = unwrap(await api.call("GET", "/sla-reports")) as { data: unknown[] };
+        return { reports: body.data ?? [] };
+      }
+      const report = data(
+        await api.call("GET", `/sla-reports/${encodeURIComponent(String(args.report_id))}`, { query: { period: args.period } })
+      ) as SlaReportBody;
+      return formatSlaReport(report);
+    },
   },
 
   {

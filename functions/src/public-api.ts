@@ -64,6 +64,7 @@ import {
 } from "./public-api-status";
 import { normalizeFolderParam, folderRange, folderMatches, folderPathError, compareByOrder, pageInMemory } from "./public-api-folder";
 import { canAccessCheck, canCreateInFolder, isKeyExpired, readStoredAccess, type KeyAccess } from "./public-api-access";
+import { handleGetSlaReport, handleListSlaReports } from "./public-api-sla";
 import { JSON_PATH_OPERATORS, parseJsonPath, type JsonPathOperator } from "./json-path";
 import { parseIncludeParam, UptimeCache, type Window24h } from "./public-api-uptime";
 
@@ -418,6 +419,10 @@ function getRouteName(segments: string[], method: string): string {
       if (segments.length === 4) return method === 'POST' ? 'alerts_webhook_create' : 'alerts_webhooks_list';
     }
     return 'alerts_default';
+  }
+  // /v1/public/sla-reports[/:id]
+  if (segments[2] === 'sla-reports') {
+    return segments.length === 4 ? 'sla_reports_detail' : 'sla_reports_list';
   }
   // /v1/public/account
   if (segments.length === 3 && segments[2] === 'account') {
@@ -2632,6 +2637,16 @@ export const publicApi = onRequest({
 
     if (req.method !== 'GET') {
       res.status(405).json({ error: 'Method not allowed for this endpoint' });
+      return;
+    }
+
+    // GET /v1/public/sla-reports[/:id] (Pro, Firestore only)
+    if (segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'sla-reports') {
+      await handleListSlaReports(res, userId, access);
+      return;
+    }
+    if (segments.length === 4 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'sla-reports') {
+      await handleGetSlaReport(res, userId, segments[3], req.query.period, access);
       return;
     }
 
