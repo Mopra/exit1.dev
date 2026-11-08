@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { Component, StrictMode, Suspense, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ClerkProvider } from '@clerk/clerk-react';
 import { dark } from '@clerk/themes';
@@ -8,6 +8,22 @@ import './style.css';
 import './icon-motion.css';
 import './motion.css';
 import { customHostFromLocation } from './lib/app-hosts';
+import { lazyWithRetry } from './utils/lazyWithRetry';
+
+class LoadFailureBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div style={{ fontFamily: 'system-ui, sans-serif', padding: '48px 16px', textAlign: 'center', color: '#a1a1aa' }}>
+        <p>This status page could not load. Please refresh to try again.</p>
+      </div>
+    );
+  }
+}
 
 // On a customer's custom status page domain, render only the status page:
 // no Clerk (the production instance refuses foreign hosts), no Clarity.
@@ -16,13 +32,18 @@ const customHost = customHostFromLocation();
 if (customHost) {
   const rootElement = document.getElementById('root');
   if (!rootElement) throw new Error('Root element not found');
-  void import('./CustomDomainApp').then(({ default: CustomDomainApp }) => {
-    createRoot(rootElement).render(
-      <StrictMode>
-        <CustomDomainApp host={customHost} />
-      </StrictMode>,
-    );
-  });
+  // lazyWithRetry reloads once on a stale chunk; if that also fails, show a
+  // plain notice instead of a blank page.
+  const CustomDomainApp = lazyWithRetry(() => import('./CustomDomainApp'));
+  createRoot(rootElement).render(
+    <StrictMode>
+      <LoadFailureBoundary>
+        <Suspense fallback={null}>
+          <CustomDomainApp host={customHost} />
+        </Suspense>
+      </LoadFailureBoundary>
+    </StrictMode>,
+  );
 } else {
   bootApp();
 }

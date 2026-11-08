@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { decideSlaSends, duePeriodOf, nextSendAfterPeriod } from "../sla-email-policy";
+import { decideSlaSends, duePeriodOf, nextSendAfterPeriod, sendPointAfterZoneChange, slaEntitlementOf } from "../sla-email-policy";
 import { signSlaUnsubscribe, slaUnsubscribeUrl, verifySlaUnsubscribe } from "../sla-unsubscribe-token";
 import { finalizeAt } from "../sla-time";
 
@@ -45,6 +45,44 @@ test("already sent, owner not Pro, nobody left: skip and advance", () => {
       assert.equal(d.nextSendAfter, finalizeAt("2026-12", "Europe/Copenhagen"));
     }
   }
+});
+
+test("a failed tier lookup waits and keeps the send point; only a confirmed tier skips", () => {
+  const d = decideSlaSends(report(), finalDoc, null, now);
+  assert.equal(d.kind, "wait");
+  if (d.kind === "wait") {
+    assert.equal(d.reason, "tier_unknown");
+    assert.equal(d.period, "2026-11");
+  }
+  assert.equal(slaEntitlementOf({ tier: "free", failedOpen: true }), null);
+  assert.equal(slaEntitlementOf({ tier: "pro", failedOpen: true }), null);
+  assert.equal(slaEntitlementOf({ tier: "free", failedOpen: false }), false);
+  assert.equal(slaEntitlementOf({ tier: "pro", failedOpen: false }), true);
+});
+
+test("a zone change after month end keeps the just-ended month owed", () => {
+  // November ended in Copenhagen; the user moves to New York before the send.
+  const existing = { timezone: "Europe/Copenhagen", nextSendAfter: finalizeAt("2026-11", "Europe/Copenhagen"), lastSentPeriod: "2026-10" };
+  const t = at("2026-12-01T10:00:00Z");
+  const next = sendPointAfterZoneChange(existing, "America/New_York", t);
+  assert.equal(next, finalizeAt("2026-11", "America/New_York"));
+  assert.equal(duePeriodOf(next, "America/New_York"), "2026-11");
+  const d = decideSlaSends({ ...report(), ...existing, timezone: "America/New_York", nextSendAfter: next }, { status: "final", timezone: "America/New_York" }, true, t);
+  assert.equal(d.kind, "send");
+  if (d.kind === "send") assert.equal(d.period, "2026-11");
+
+  // Already sent, or past the 7-day window, or the old point was for a later month: current month.
+  assert.equal(sendPointAfterZoneChange({ ...existing, lastSentPeriod: "2026-11" }, "America/New_York", t), finalizeAt("2026-12", "America/New_York"));
+  assert.equal(sendPointAfterZoneChange(existing, "America/New_York", at("2026-12-20T00:00:00Z")), finalizeAt("2026-12", "America/New_York"));
+  assert.equal(
+    sendPointAfterZoneChange({ ...existing, nextSendAfter: finalizeAt("2026-12", "Europe/Copenhagen"), lastSentPeriod: "2026-11" }, "UTC", at("2026-12-10T00:00:00Z")),
+    finalizeAt("2026-12", "UTC"),
+  );
+  // Mid-month change: plain end of the current month.
+  assert.equal(
+    sendPointAfterZoneChange({ ...existing, nextSendAfter: finalizeAt("2026-12", "Europe/Copenhagen"), lastSentPeriod: "2026-11" }, "UTC", at("2026-12-15T00:00:00Z")),
+    finalizeAt("2026-12", "UTC"),
+  );
 });
 
 test("unsubscribed recipients are left out", () => {

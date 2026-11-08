@@ -11,14 +11,14 @@
 // ============================================================================
 
 import * as logger from "firebase-functions/logger";
-import { firestore, getUserEmailFromClerk } from "./init";
+import { firestore, getUserEmailFromClerk, getUserTierDetailed } from "./init";
 import { sendTransactionalEmail } from "./email-send";
 import { isEmailSuppressedCached } from "./email-suppression";
 import { getSlaUnsubscribeSecret } from "./env";
 import { buildSlaEmail, type SlaEmail } from "./sla-email-html";
-import { decideSlaSends, slaAppUrl } from "./sla-email-policy";
+import { decideSlaSends, slaAppUrl, slaEntitlementOf } from "./sla-email-policy";
 import { slaUnsubscribeUrl } from "./sla-unsubscribe-token";
-import { ownerHasSlaReporting, periodDocRef } from "./sla-snapshot";
+import { periodDocRef } from "./sla-snapshot";
 import { SLA_REPORTS_COLLECTION, type SlaPeriodDoc, type SlaReportDoc, type SlaSentRecord } from "./sla-types";
 
 const SEND_SPACING_MS = 600;
@@ -60,6 +60,19 @@ export function buildSlaEmailFor(
   );
 }
 
+/**
+ * True or false only for a confirmed tier; null when Firestore or Clerk
+ * failed, so a blip on the 1st makes the report wait instead of losing its
+ * month (getUserTier would have said 'free' and the job would skip).
+ */
+async function ownerSlaEntitlement(uid: string): Promise<boolean | null> {
+  try {
+    return slaEntitlementOf(await getUserTierDetailed(uid));
+  } catch {
+    return null;
+  }
+}
+
 export interface SlaEmailRunResult {
   due: number;
   sent: number;
@@ -85,14 +98,14 @@ export async function runSlaMonthlyEmails(nowMs: number = Date.now()): Promise<S
     return result;
   }
 
-  const proByOwner = new Map<string, Promise<boolean>>();
+  const proByOwner = new Map<string, Promise<boolean | null>>();
   for (const doc of snap.docs) {
     const report = doc.data() as SlaReportDoc;
     const ref = doc.ref;
     try {
       let pro = proByOwner.get(report.userId);
       if (!pro) {
-        pro = ownerHasSlaReporting(report.userId).catch(() => false);
+        pro = ownerSlaEntitlement(report.userId);
         proByOwner.set(report.userId, pro);
       }
       const ownerPro = await pro;

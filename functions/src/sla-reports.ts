@@ -45,10 +45,10 @@ import {
   resolveReportChecks,
 } from "./sla-snapshot";
 import { SLA_ROLLUP_VERSION, computePeriod } from "./sla-math";
-import { comparePeriods, currentPeriod, isValidPeriod, previousPeriod } from "./sla-time";
+import { comparePeriods, currentPeriod, isValidPeriod, isValidTimeZone, previousPeriod } from "./sla-time";
 import { buildSlaEmail } from "./sla-email-html";
 import { buildSlaEmailFor, slaSenderLabel } from "./sla-email";
-import { slaAppUrl } from "./sla-email-policy";
+import { sendPointAfterZoneChange, slaAppUrl } from "./sla-email-policy";
 import {
   SLA_PERIODS_SUBCOLLECTION,
   SLA_REPORTS_COLLECTION,
@@ -173,6 +173,13 @@ export const upsertSlaReport = onCall({ cors: true, maxInstances: 10, secrets: C
     }
 
     const keepSendPoint = existing?.schedule?.enabled && input.schedule.enabled && !zoneChanged && typeof existing.nextSendAfter === "number";
+    // A zone change between a month's end and its send must not skip that month.
+    const moveSendPoint = existing?.schedule?.enabled && input.schedule.enabled && zoneChanged;
+    const nextSendAfter = keepSendPoint
+      ? existing!.nextSendAfter
+      : moveSendPoint
+        ? sendPointAfterZoneChange(existing!, input.timezone, now)
+        : nextSendAfterFor(input.schedule.enabled, input.timezone, now);
     const doc: SlaReportDoc = {
       userId: accountId,
       name: input.name,
@@ -184,7 +191,7 @@ export const upsertSlaReport = onCall({ cors: true, maxInstances: 10, secrets: C
       schedule: input.schedule,
       branding: input.branding,
       unsubscribed: existing?.unsubscribed ?? [],
-      nextSendAfter: keepSendPoint ? existing!.nextSendAfter : nextSendAfterFor(input.schedule.enabled, input.timezone, now),
+      nextSendAfter,
       lastSentPeriod: existing?.lastSentPeriod ?? null,
       lastSentAt: existing?.lastSentAt ?? null,
       lastSendError: existing?.lastSendError ?? null,
@@ -196,7 +203,27 @@ export const upsertSlaReport = onCall({ cors: true, maxInstances: 10, secrets: C
     };
 
     const ref = reportId ? reportsCol().doc(reportId) : reportsCol().doc();
-    await ref.set(doc);
+    if (existing) {
+      // Write only the fields the editor owns. `unsubscribed` (the unsubscribe
+      // endpoint) and the send/rollup bookkeeping (the cron jobs) can change
+      // between our read and this write; a full overwrite would undo them.
+      // update() replaces each named field whole, so nested maps do not merge.
+      await ref.update({
+        name: doc.name,
+        targetPercent: doc.targetPercent,
+        checkIds: doc.checkIds,
+        folderPaths: doc.folderPaths,
+        timezone: doc.timezone,
+        countBlockedAsDown: doc.countBlockedAsDown,
+        schedule: doc.schedule,
+        branding: doc.branding,
+        nextSendAfter: doc.nextSendAfter,
+        updatedAt: doc.updatedAt,
+        updatedBy: doc.updatedBy,
+      });
+    } else {
+      await ref.create(doc);
+    }
 
     // A zone change can move the current month id near a month boundary; the
     // old open doc would otherwise linger. Final months are recomputed lazily.
@@ -344,6 +371,7 @@ export const previewSlaReportEmail = onCall({ cors: true, maxInstances: 10, secr
     const draft = data.draft ?? {};
     const name = typeof draft.name === "string" && draft.name.trim() ? draft.name.trim().slice(0, 80) : report?.name ?? "New SLA report";
     const timezone = typeof draft.timezone === "string" && draft.timezone ? draft.timezone : report?.timezone ?? "UTC";
+    if (!isValidTimeZone(timezone)) throw new HttpsError("invalid-argument", "timezone must be an IANA time zone");
     const targetPercent = typeof draft.targetPercent === "number" ? draft.targetPercent : report?.targetPercent ?? 99.9;
     let branding = report?.branding ?? null;
     if (draft.branding !== undefined) branding = normalizeBranding(draft.branding);
