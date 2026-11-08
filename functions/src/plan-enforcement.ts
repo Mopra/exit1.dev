@@ -83,22 +83,48 @@ export async function backfillCheckUserTier(userId: string, newTier: UserTier): 
 }
 
 /**
- * Disable SLA reporting and custom status domains — both Pro-only. Called when
+ * Disable SLA reporting and custom status domains, both Pro-only. Called when
  * a user lands on a tier whose TIER_LIMITS lack those flags. No-ops for users
- * that don't have them enabled — idempotent.
+ * that don't have them enabled, so it is idempotent.
+ *
+ * Custom domains: both the custom_domains/{host} reservation and the page
+ * mirror go to `disabled` / `plan_downgrade`. No Cloudflare call here (keeps
+ * enforcement fast and retry-safe): the hostname stays registered for the
+ * 14-day grace period so Reconnect after a re-upgrade is instant, then the
+ * hourly reconciler (runCustomDomainReconcile) deletes it.
  */
-async function disableSlaAndCustomDomain(userId: string): Promise<{ statusPagesUpdated: number }> {
-  const statusSnap = await firestore.collection('status_pages').where('userId', '==', userId).get();
+async function disableSlaAndCustomDomain(userId: string): Promise<{ statusPagesUpdated: number; domainsDisabled: number }> {
+  const [statusSnap, domainSnap] = await Promise.all([
+    firestore.collection('status_pages').where('userId', '==', userId).get(),
+    firestore.collection('custom_domains').where('userId', '==', userId).get(),
+  ]);
   const batcher = createBatcher();
+  const now = Date.now();
   let statusPagesUpdated = 0;
+  let domainsDisabled = 0;
+
+  for (const doc of domainSnap.docs) {
+    if (doc.data().status === 'disabled') continue;
+    batcher.add(doc.ref, {
+      status: 'disabled',
+      disabledReason: 'plan_downgrade',
+      failedReason: null,
+      movedSince: null,
+      statusChangedAt: now,
+      updatedAt: now,
+    });
+    domainsDisabled++;
+  }
 
   for (const doc of statusSnap.docs) {
     const data = doc.data();
     const updates: Record<string, unknown> = {};
-    // Disable custom status domain if present (field shape may vary by version).
     const customDomain = data.customDomain as { status?: unknown } | undefined;
     if (customDomain && customDomain.status && customDomain.status !== 'disabled') {
       updates['customDomain.status'] = 'disabled';
+      updates['customDomain.disabledReason'] = 'plan_downgrade';
+      updates['customDomain.failedReason'] = null;
+      updates['customDomain.statusChangedAt'] = now;
     }
     if (data.slaReporting?.enabled === true) {
       updates['slaReporting.enabled'] = false;
@@ -110,7 +136,10 @@ async function disableSlaAndCustomDomain(userId: string): Promise<{ statusPagesU
   }
 
   await batcher.commit('disableSlaAndCustomDomain', userId);
-  return { statusPagesUpdated };
+  if (domainsDisabled > 0) {
+    logger.info(`[plan-enforcement] Disabled ${domainsDisabled} custom domain(s) for ${userId}`);
+  }
+  return { statusPagesUpdated, domainsDisabled };
 }
 
 /**
@@ -415,6 +444,13 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
 
   const totalBatches = await batcher.commit('downgrade→free', userId);
 
+  // Free has neither SLA reporting nor custom status domains. Every path into
+  // Free comes through here, so the Pro-only features are torn down here too.
+  // Own batcher, after the main commit, like the branding strip below.
+  if (!freeLimits.slaReporting || !freeLimits.customStatusDomain) {
+    await disableSlaAndCustomDomain(userId);
+  }
+
   // Free has no status page builder — clear persisted branding / custom layouts
   // so a downgraded page stops rendering entitlements the plan no longer covers.
   // Runs on its own batcher, after the main commit, so a failure here cannot
@@ -619,9 +655,8 @@ export async function handleProToNanoDowngrade(userId: string): Promise<CeilingR
  */
 export async function handleProToFreeDowngrade(userId: string): Promise<EnforcementResult> {
   logger.info(`[plan-enforcement] Starting Pro→Free enforcement for ${userId}`);
-  await disableSlaAndCustomDomain(userId);
-  // handlePlanDowngrade already: clamps every check to the Free interval floor
-  // and prunes checks / API keys / webhooks / status pages to the Free caps,
+  // handlePlanDowngrade already: disables SLA reporting and custom domains,
+  // clamps every check to the Free interval floor and prunes checks / API keys / webhooks / status pages to the Free caps,
   // resets pinned regions, disables SMS, and strips status-page branding.
   // That covers Pro→Free.
   const result = await handlePlanDowngrade(userId);
