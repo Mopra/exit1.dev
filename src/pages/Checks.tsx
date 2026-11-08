@@ -800,7 +800,7 @@ const Checks: React.FC = () => {
             {!isMobile && (
               <TabsContent value="map" className="h-full">
                 <Suspense fallback={<LoadingSkeleton />}>
-                  <CheckMapView checks={filteredChecks} />
+                  <CheckMapView checks={filteredChecks} onOpenCheck={(id) => navigate(`/checks/${id}`)} />
                 </Suspense>
               </TabsContent>
             )}
