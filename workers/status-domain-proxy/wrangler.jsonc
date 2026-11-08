@@ -11,8 +11,9 @@
   "preview_urls": false,
   "routes": [
     // Every custom hostname (Cloudflare for SaaS catch-all on the SaaS zone).
-    // No exit1.dev hostname is orange-clouded today. If one ever is, add a
-    // bypass route for it with Worker set to None in the dashboard.
+    // probe.exit1.dev is orange-clouded (Vercel), so the zone has a bypass
+    // route `probe.exit1.dev/*` with Worker set to None (added 2026-11-08).
+    // Any newly proxied exit1.dev hostname needs the same bypass.
     { "pattern": "*/*", "zone_name": "exit1.dev" },
     // Fallback origin, which is also the CNAME target. Covers customers who
     // orange-cloud their CNAME (O2O).
