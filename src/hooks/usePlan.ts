@@ -161,6 +161,8 @@ export function usePlan() {
     allAlertChannels: limits.allAlertChannels,
     regionChoice: limits.regionChoice,
     customStatusDomain: limits.customStatusDomain,
+    slaReporting: limits.slaReporting,
+    maxSlaReports: limits.maxSlaReports,
     retentionDays: limits.retentionDays,
     // Back-compat booleans:
     paid,

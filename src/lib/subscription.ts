@@ -123,6 +123,10 @@ export type TierLimitsRow = {
   regionChoice: boolean
   /** Custom hostname on a status page (Cloudflare for SaaS). Pro only. */
   customStatusDomain: boolean
+  /** SLA reports with a monthly email. Pro only. */
+  slaReporting: boolean
+  /** How many SLA reports an account can keep. */
+  maxSlaReports: number
 }
 
 const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
@@ -134,6 +138,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     maintenanceMode: false, smsAlerts: false, csvExport: false,
     allAlertChannels: false, regionChoice: false,
     customStatusDomain: false,
+    slaReporting: false, maxSlaReports: 0,
   },
   indie: {
     emailsPerHour: 100, emailsPerMonth: 800, maxStatusPages: 1,
@@ -143,6 +148,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     maintenanceMode: false, smsAlerts: false, csvExport: false,
     allAlertChannels: false, regionChoice: false,
     customStatusDomain: false,
+    slaReporting: false, maxSlaReports: 0,
   },
   nano: {
     emailsPerHour: 250, emailsPerMonth: 2500, maxStatusPages: 5,
@@ -152,6 +158,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     maintenanceMode: true, smsAlerts: false, csvExport: false,
     allAlertChannels: false, regionChoice: true,
     customStatusDomain: false,
+    slaReporting: false, maxSlaReports: 0,
   },
   pro: {
     emailsPerHour: 1000, emailsPerMonth: 10000, maxStatusPages: 50,
@@ -161,6 +168,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     maintenanceMode: true, smsAlerts: true, csvExport: true,
     allAlertChannels: true, regionChoice: true,
     customStatusDomain: true,
+    slaReporting: true, maxSlaReports: 50,
   },
 }
 
@@ -236,6 +244,7 @@ type CountableDimension =
   | "retentionDays"
   | "emailsPerMonth"
   | "emailsPerHour"
+  | "maxSlaReports"
 
 type BooleanDimension = {
   [K in keyof TierLimitsRow]: TierLimitsRow[K] extends boolean ? K : never
