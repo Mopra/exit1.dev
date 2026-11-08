@@ -32,6 +32,8 @@ import { decideSSLAlertTransition, normalizeSSLAlertState, type SSLAlertState } 
 import { sendTransactionalEmail } from './email-send';
 import { notifyPublicMonitorFollowers } from './public-monitor-follows';
 import { pushPublicMonitorTransition } from './public-monitor-freshness';
+import { eventAllowedForCheck } from './email-gate';
+import { DOWN_REMINDER_BUDGET_SHARE } from './down-reminder';
 
 // Re-exported so external consumers can `import { SSLAlertState } from './alert'`.
 export type { SSLAlertState } from './ssl-alert-state';
@@ -381,7 +383,11 @@ export async function triggerAlert(
   newStatus: string,
   counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number },
   context?: helpers.AlertContext,
-  options?: { skipWebhooks?: boolean; skipEmail?: boolean; skipSms?: boolean; isRetry?: boolean }
+  options?: {
+    skipWebhooks?: boolean; skipEmail?: boolean; skipSms?: boolean; isRetry?: boolean;
+    /** Recovery only: when the outage began (ms), so the UP email can say how long it lasted. */
+    downSince?: number;
+  }
 ): Promise<helpers.AlertResult> {
   // Suppress all alerts during maintenance mode
   if (website.maintenanceMode) {
@@ -554,7 +560,8 @@ export async function triggerAlert(
                     if (i > 0) {
                       await new Promise(resolve => setTimeout(resolve, 600));
                     }
-                    await emailModule.sendEmailNotification(recipient, website, eventType, oldStatus, emailSettings.emailFormat || 'html');
+                    await emailModule.sendEmailNotification(recipient, website, eventType, oldStatus, emailSettings.emailFormat || 'html',
+                      eventType === 'website_up' && options?.downSince ? { downSince: options.downSince } : undefined);
                   }
                 },
               });
@@ -751,6 +758,61 @@ export async function triggerAlert(
 // ============================================================================
 // TRIGGER SSL ALERT
 // ============================================================================
+
+/**
+ * "Still down" reminder email (opt-in, emailSettings.downReminderIntervalMinutes).
+ *
+ * Email only: SMS and webhooks keep their one-alert-per-transition contract.
+ * Goes to exactly the recipients that got the DOWN email for this check (same
+ * per-check / per-folder / filter gate on `website_down`), respects
+ * maintenance, disabled checks (fresh Firestore read), the system health gate,
+ * bounce suppression, the per-check throttle and the user's budgets. Reminders
+ * may only use DOWN_REMINDER_BUDGET_SHARE of the hourly and monthly budgets so
+ * they can never starve a real alert. Never retried: a blocked reminder simply
+ * waits for the next interval (the caller advances the clock).
+ */
+export async function triggerDownReminderEmail(
+  website: Website,
+  downSince: number | undefined,
+  context?: helpers.AlertContext,
+): Promise<'sent' | 'skipped' | 'throttled' | 'error'> {
+  if (website.maintenanceMode) return 'skipped';
+  if (isSystemHealthGateTripped()) return 'skipped';
+  try {
+    const suppression = await verifyAlertable(website);
+    if (suppression) return 'skipped';
+
+    const settings = await helpers.resolveAlertSettings(website.userId, context);
+    const emailSettings = settings.email || null;
+    if (!emailSettings) return 'skipped';
+    if (!eventAllowedForCheck(emailSettings, { id: website.id, folder: website.folder }, 'website_down')) {
+      return 'skipped';
+    }
+    const recipients = helpers.getEmailRecipientsForCheck(emailSettings, website.id, website.folder);
+    if (recipients.length === 0) return 'skipped';
+
+    const result = await emailModule.deliverEmailAlert({
+      website,
+      eventType: 'website_down',
+      context,
+      budgetShare: DOWN_REMINDER_BUDGET_SHARE,
+      send: async () => {
+        for (let i = 0; i < recipients.length; i++) {
+          if (i > 0) await new Promise(resolve => setTimeout(resolve, 600));
+          await emailModule.sendEmailNotification(recipients[i], website, 'website_down', 'offline',
+            emailSettings.emailFormat || 'html', { downSince, reminder: true });
+        }
+      },
+    });
+    if (result === 'sent') {
+      logger.info(`ALERT: ${website.name} still down (reminder) email=sent`);
+    }
+    return result;
+  } catch (error) {
+    logger.error('Error in triggerDownReminderEmail:', error);
+    return 'error';
+  }
+}
 
 export type SSLAlertResult = {
   delivered: boolean;

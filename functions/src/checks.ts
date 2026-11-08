@@ -24,8 +24,10 @@ import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStat
 import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { compareDnsResults } from "./dns-normalize";
-import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
+import { triggerAlert, triggerSSLAlert, triggerDownReminderEmail, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
 import { applyPendingRetryFlags } from "./alert-retry-flags";
+import { isPostDeployBaseline as isPostDeployBaselineProbe } from "./deploy-baseline";
+import { DOWN_REMINDER_INTERVALS_MINUTES, clearDownReminder, getLastDownEmail, isDownReminderDue, noteDownEmail, noteRemindersOff, normalizeDownReminderInterval, remindersKnownOff, resolveDownSince } from "./down-reminder";
 import { triggerDnsRecordAlert } from "./alert-dns";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
@@ -1076,6 +1078,59 @@ export interface ProcessOneCheckResult {
   error?: string;
 }
 
+/**
+ * Optional "still down" reminder email for a check that stays confirmed
+ * offline (see down-reminder.ts). Called from the steady-state offline paths
+ * of processOneCheck, so it rides the existing probe cycle. Everything before
+ * the send is in-memory (the settings come from the caller's cache); only a
+ * due reminder touches Firestore.
+ */
+async function maybeSendDownReminder(args: {
+  check: Website;
+  website: Website;
+  now: number;
+  deployModeDisabledAt: number;
+  getUserSettings: (userId: string) => Promise<AlertSettingsCache>;
+  context: AlertContext;
+}): Promise<void> {
+  const { check, website, now, deployModeDisabledAt, getUserSettings, context } = args;
+  // The original DOWN email is still owed (budget, throttle, gate): the retry
+  // path delivers that first. A reminder before it would be confusing.
+  if ((check as Website & { pendingDownEmail?: boolean }).pendingDownEmail === true) return;
+  if (check.disabled || check.maintenanceMode) return;
+  if (isPostDeployBaselineProbe(check.lastChecked, deployModeDisabledAt)) return;
+  const lastReminderAt = getLastDownEmail(check.id);
+  // Cheap in-memory gates first, so a down check costs no settings lookup
+  // until even the shortest interval could be due.
+  if (!isDownReminderDue({
+    now,
+    intervalMinutes: DOWN_REMINDER_INTERVALS_MINUTES[0],
+    lastStatusChange: check.lastStatusChange,
+    lastReminderAt,
+  })) return;
+  if (remindersKnownOff(check.userId, now)) return;
+  try {
+    const settings = await getUserSettings(check.userId);
+    const intervalMinutes = normalizeDownReminderInterval(settings.email?.downReminderIntervalMinutes);
+    if (!intervalMinutes) {
+      noteRemindersOff(check.userId, now);
+      return;
+    }
+    if (!isDownReminderDue({
+      now,
+      intervalMinutes,
+      lastStatusChange: check.lastStatusChange,
+      lastReminderAt,
+    })) return;
+    // Advance the clock before sending: a reminder blocked by a budget or a
+    // send error waits a full interval instead of retrying on every probe.
+    noteDownEmail(check.id, now);
+    await triggerDownReminderEmail(website, resolveDownSince(check, now), { ...context, settings });
+  } catch (error) {
+    logger.warn(`Down reminder failed for ${check.id}`, error);
+  }
+}
+
 export async function processOneCheck(
   check: Website,
   ctx: ProcessOneCheckContext,
@@ -1726,6 +1781,18 @@ export async function processOneCheck(
           { skipWebhooks: !ncDownWebhooksPending, skipEmail: !ncDownEmailPending, skipSms: !ncDownSmsPending, isRetry: true }
         );
         applyPendingRetryFlags(noChangeUpdate, result, "offline", now, check as Website & { pendingDownSince?: number });
+      } else if (status === "offline" && check.status === "offline") {
+        await maybeSendDownReminder({
+          check, now, deployModeDisabledAt, getUserSettings,
+          website: {
+            ...(check as Website),
+            status, detailedStatus: checkResult.detailedStatus,
+            targetIp: checkResult.targetIp ?? check.targetIp,
+            lastStatusCode: checkResult.statusCode, lastError: checkResult.error ?? null,
+            ...peerFieldsForWebsite,
+          },
+          context: { throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+        });
       }
       const ncUpEmailPending = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail === true;
       const ncUpSmsPending = (check as Website & { pendingUpSms?: boolean }).pendingUpSms === true;
@@ -1989,8 +2056,9 @@ export async function processOneCheck(
     // 13:09:46 was suppressed by a deploy window that had closed at 13:06:50.
     // Fix is to track "probed since resume" in runner memory instead.
     // Full write-up: Docs/deploy-baseline-missed-alerts.md (gitignored).
-    const lastChecked = Number(check.lastChecked ?? 0);
-    const isPostDeployBaseline = deployModeDisabledAt > 0 && lastChecked < deployModeDisabledAt;
+    // lastChecked === 0 (an edited or re-enabled check) is not "before the
+    // deploy": see deploy-baseline.ts for the 2026-11-06 swallowed recovery.
+    const isPostDeployBaseline = isPostDeployBaselineProbe(check.lastChecked, deployModeDisabledAt);
 
     if (isPostDeployBaseline) {
       updateData.pendingDownEmail = false;
@@ -2080,10 +2148,19 @@ export async function processOneCheck(
         tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
         ...peerFieldsForWebsite,
       };
+      // Recovery emails say how long the check was down. Read before this
+      // update clears lastFailureTime.
+      const recoveryDownSince = status === "online" && oldStatus === "offline"
+        ? resolveDownSince(check, now)
+        : undefined;
       const result = await triggerAlert(websiteForAlert, oldStatus, status,
         { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+        recoveryDownSince !== undefined ? { downSince: recoveryDownSince } : undefined
       );
+      // Start (or stop) the "still down" reminder clock for this check.
+      if (status === "offline") noteDownEmail(check.id, now);
+      else clearDownReminder(check.id);
       // Stamp alert_sent onto the transition row that's about to be enqueued.
       // Only transition rows carry meaningful alert_sent (heartbeats/peer-
       // audit rows leave it null so the UI can tell them apart).
@@ -2130,6 +2207,18 @@ export async function processOneCheck(
           { skipWebhooks: !sdDownWebhooksPending, skipEmail: !sdDownEmailPending, skipSms: !sdDownSmsPending, isRetry: true }
         );
         applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
+      } else if (status === "offline" && oldStatus === "offline") {
+        await maybeSendDownReminder({
+          check, now, deployModeDisabledAt, getUserSettings,
+          website: {
+            ...(check as Website),
+            status, detailedStatus: checkResult.detailedStatus,
+            targetIp: checkResult.targetIp ?? check.targetIp,
+            lastStatusCode: checkResult.statusCode, lastError: checkResult.error ?? null,
+            ...peerFieldsForWebsite,
+          },
+          context: { throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+        });
       }
       const sdUpEmailPending = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail === true;
       const sdUpSmsPending = (check as Website & { pendingUpSms?: boolean }).pendingUpSms === true;
@@ -2274,8 +2363,7 @@ export async function processOneCheck(
     // this check since deploy_mode lifted (see processOneCheck main path for
     // rationale). The status update still writes "offline" so the DB matches
     // observation, but no alert fires.
-    const errLastChecked = Number(check.lastChecked ?? 0);
-    const errIsPostDeployBaseline = deployModeDisabledAt > 0 && errLastChecked < deployModeDisabledAt;
+    const errIsPostDeployBaseline = isPostDeployBaselineProbe(check.lastChecked, deployModeDisabledAt);
 
     if (errIsPostDeployBaseline) {
       updateData.pendingDownEmail = false;
@@ -2309,6 +2397,7 @@ export async function processOneCheck(
         { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
       );
       pendingErrorAlertSent = result.delivered;
+      noteDownEmail(check.id, now);
       // This is a down transition — abandon any in-flight recovery retry, then
       // let applyPendingRetryFlags set the per-channel down-retry flags (incl.
       // pendingDownSms) so a deferred SMS isn't dropped (the recovery-SMS bug

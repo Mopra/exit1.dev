@@ -1446,6 +1446,7 @@ setStatusUpdateHook((checkId: string, data: {
   userTier?: string;
   disabled?: boolean;
   status?: string;
+  lastStatusChange?: number;
   detailedStatus?: string;
   consecutiveFailures?: number;
   consecutiveSuccesses?: number;
@@ -1494,6 +1495,10 @@ setStatusUpdateHook((checkId: string, data: {
   const patch: Record<string, unknown> = {};
   if (data.disabled != null) patch.disabled = data.disabled;
   if (data.status != null) patch.status = data.status;
+  // The "still down" reminder clock and the recovery email's downtime both
+  // read lastStatusChange; left at its load-time value it would point at an
+  // older transition.
+  if (data.lastStatusChange != null) patch.lastStatusChange = data.lastStatusChange;
   if (data.detailedStatus != null) patch.detailedStatus = data.detailedStatus;
   // processOneCheck's `hasChanges` compares the probe against these. Left at
   // their load-time values, any check whose latency drifted >100ms (or whose

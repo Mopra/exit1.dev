@@ -86,6 +86,27 @@ export default function Emails() {
   pendingCheckUpdatesRef.current = n.pendingCheckUpdates;
 
   // -------------------------------------------------------------------------
+  // Email-specific: "still down" reminder interval
+  //
+  // Saved on its own (reminder-only call) so it never races the hook's
+  // debounced recipients/filter save. The settings snapshot echoes it back.
+  // -------------------------------------------------------------------------
+
+  const handleDownReminderChange = useCallback(async (minutes: number) => {
+    const previous = settingsRef.current?.downReminderIntervalMinutes ?? 0;
+    if (previous === minutes) return;
+    setSettings((prev) => (prev ? { ...prev, downReminderIntervalMinutes: minutes } : prev));
+    try {
+      await saveEmailSettingsFn({ downReminderIntervalMinutes: minutes });
+      toast.success(minutes > 0 ? 'Still-down reminders on' : 'Still-down reminders off', { duration: 2000 });
+    } catch (error: unknown) {
+      setSettings((prev) => (prev ? { ...prev, downReminderIntervalMinutes: previous } : prev));
+      const msg = error instanceof Error ? error.message : 'Failed to save reminder setting';
+      toast.error('Failed to save reminder setting', { description: msg, duration: 4000 });
+    }
+  }, [setSettings]);
+
+  // -------------------------------------------------------------------------
   // Email-specific: per-check recipients
   // -------------------------------------------------------------------------
 
@@ -393,6 +414,9 @@ export default function Emails() {
           onRecipientsChange={n.setRecipients}
           emailFormat={n.emailFormat}
           onEmailFormatChange={n.setEmailFormat}
+          downReminderMinutes={n.settings?.downReminderIntervalMinutes ?? 0}
+          onDownReminderChange={handleDownReminderChange}
+          downReminderDisabled={!n.isInitialized || !n.settings || n.recipients.length === 0}
           usage={n.usage}
           monthlyPercent={n.monthlyPercent}
           monthlyReached={n.monthlyReached}

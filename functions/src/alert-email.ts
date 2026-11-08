@@ -25,6 +25,7 @@ import {
 } from './alert-throttle';
 import { isEmailSuppressedCached } from './email-suppression';
 import { sendTransactionalEmail } from './email-send';
+import { formatDowntime } from './down-reminder';
 
 // ============================================================================
 // BOUNCE SUPPRESSION GATE
@@ -98,12 +99,21 @@ export const deliverEmailAlert = async ({
   eventType,
   context,
   send,
+  budgetShare = 1,
 }: {
   website: Website;
   eventType: WebhookEvent;
   context?: AlertContext;
   send: EmailSendFn;
+  /**
+   * Share (0 to 1) of the hourly and monthly budgets this send may use. Real
+   * alerts use all of it; "still down" reminders pass less so they stop early
+   * and leave room for the alerts that matter.
+   */
+  budgetShare?: number;
 }): Promise<'sent' | 'throttled' | 'error'> => {
+  const share = budgetShare > 0 && budgetShare < 1 ? budgetShare : 1;
+  const capFor = (max: number) => (share < 1 ? Math.max(1, Math.floor(max * share)) : max);
   const throttleAllowed = await acquireEmailThrottleSlot(
     website.userId,
     website.id,
@@ -127,7 +137,7 @@ export const deliverEmailAlert = async ({
   const budgetAllowed = await acquireUserEmailBudget(
     website.userId,
     CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
-    CONFIG.getEmailBudgetMaxPerWindowForTier(emailTier),
+    capFor(CONFIG.getEmailBudgetMaxPerWindowForTier(emailTier)),
     context?.budgetCache
   );
   if (!budgetAllowed) {
@@ -138,11 +148,13 @@ export const deliverEmailAlert = async ({
   const monthlyAllowed = await acquireUserEmailMonthlyBudget(
     website.userId,
     CONFIG.EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS,
-    CONFIG.getEmailMonthlyBudgetMaxPerWindowForTier(emailTier),
+    capFor(CONFIG.getEmailMonthlyBudgetMaxPerWindowForTier(emailTier)),
     context?.emailMonthlyBudgetCache
   );
   if (!monthlyAllowed) {
     emitAlertMetric('email_monthly_budget_blocked', { userId: website.userId, eventType });
+    // A reminder stopping at its reduced cap is not the user's limit: no notice.
+    if (share < 1) return 'throttled';
     // Fire-and-forget: notify user they hit their monthly email limit
     sendLimitReachedEmail(
       website.userId,
@@ -172,18 +184,40 @@ export async function sendEmailNotification(
   website: Website,
   eventType: WebhookEvent,
   previousStatus: string,
-  emailFormat: 'html' | 'text' = 'html'
+  emailFormat: 'html' | 'text' = 'html',
+  extras?: {
+    /** When the outage began (ms). Recovery: total downtime. Reminder: time down so far. */
+    downSince?: number;
+    /** A "still down" reminder rather than the DOWN transition alert. */
+    reminder?: boolean;
+  }
 ): Promise<void> {
   if (await skipIfSuppressed(toEmail, eventType)) return;
 
   const statusLabel = website.detailedStatus || website.status;
+  const isReminder = extras?.reminder === true && eventType === 'website_down';
+  const downtimeLabel = typeof extras?.downSince === 'number' && extras.downSince > 0
+    && (isReminder || eventType === 'website_up')
+    ? formatDowntime(Date.now() - extras.downSince)
+    : null;
+  const downtimeFieldLabel = isReminder ? 'Down for' : 'Downtime';
+  const reminderFooter = 'This is a reminder because the check is still down. You will get one more email when it recovers. Turn reminders off under Email Alerts in your Exit1 settings.';
 
-  const subject =
-    eventType === 'website_down'
+  const subject = isReminder
+    ? (downtimeLabel
+      ? `STILL DOWN: ${website.name} has been down for ${downtimeLabel}`
+      : `STILL DOWN: ${website.name} is still DOWN`)
+    : eventType === 'website_down'
       ? `ALERT: ${website.name} is DOWN`
       : eventType === 'website_up'
-        ? `RESOLVED: ${website.name} is UP`
+        ? (downtimeLabel
+          ? `RESOLVED: ${website.name} is UP (down for ${downtimeLabel})`
+          : `RESOLVED: ${website.name} is UP`)
         : `NOTICE: ${website.name} alert`;
+
+  const downtimeHtml = downtimeLabel
+    ? `<div><strong>${downtimeFieldLabel}:</strong> <span style="color:${isReminder ? '#f87171' : '#86efac'}">${downtimeLabel}</span> <span style="color:#94a3b8">(since ${formatDateForCheck(new Date(extras!.downSince!), website.timezone)})</span></div>`
+    : '';
 
   // Build response time info (informational only)
   let responseTimeHtml = '';
@@ -288,6 +322,9 @@ export async function sendEmailNotification(
       `URL: ${website.url}`,
       `Current Status: ${statusLabel}`,
     ];
+    if (downtimeLabel) {
+      lines.push(`${downtimeFieldLabel}: ${downtimeLabel} (since ${formatDateForCheck(new Date(extras!.downSince!), website.timezone)})`);
+    }
     if (website.responseTime) lines.push(`Response Time: ${website.responseTime}ms`);
     if (statusCodeLabel) lines.push(`Status Code: ${statusCodeLabel}`);
     if (website.lastError && eventType === 'website_down') lines.push(`Error: ${website.lastError}`);
@@ -323,6 +360,7 @@ export async function sendEmailNotification(
     }
 
     lines.push('', `View incident: ${incidentUrl}`);
+    if (isReminder) lines.push('', reminderFooter);
     lines.push('', 'Manage email alerts in your Exit1 settings.');
 
     const text = lines.join('\n');
@@ -343,6 +381,7 @@ export async function sendEmailNotification(
           <div><strong>Site:</strong> ${website.name}</div>
           <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
           <div><strong>Current Status:</strong> ${statusLabel}</div>
+          ${downtimeHtml}
           ${responseTimeHtml}
           ${statusCodeHtml}
           ${errorHtml}
@@ -367,6 +406,7 @@ export async function sendEmailNotification(
         <div style="margin:16px 0 0 0;padding:12px;border-radius:8px;background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.1)">
           <p style="margin:0;color:#94a3b8;font-size:14px"><strong style="color:#e2e8f0">Tip:</strong> You can add a comment to this incident to track what happened or note the resolution. <a href="${incidentUrl}" style="color:#38bdf8;text-decoration:none">Add a comment on the logs page</a>.</p>
         </div>
+        ${isReminder ? `<p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">${reminderFooter}</p>` : ''}
         <p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">Manage email alerts in your Exit1 settings.</p>
       </div>
     </div>

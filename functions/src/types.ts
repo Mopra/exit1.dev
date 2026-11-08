@@ -457,6 +457,9 @@ export interface EmailSettings {
   };
   // Email format: 'html' (default, rich styled emails) or 'text' (plain text, useful for ticket systems)
   emailFormat?: 'html' | 'text';
+  // "Still down" reminder interval in minutes: 10, 30 or 60. Absent or 0 = off
+  // (the default). See down-reminder.ts.
+  downReminderIntervalMinutes?: number;
   createdAt: number;
   updatedAt: number;
 }

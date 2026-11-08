@@ -47,6 +47,12 @@ export interface SettingsSummaryStripProps {
   emailFormat: 'html' | 'text';
   /** Called when email format changes */
   onEmailFormatChange: (value: 'html' | 'text') => void;
+  /** "Still down" reminder interval in minutes, 0 = off */
+  downReminderMinutes: number;
+  /** Called when the reminder interval changes */
+  onDownReminderChange: (minutes: number) => void;
+  /** True while the reminder control can't save (no settings saved yet) */
+  downReminderDisabled?: boolean;
   /** Usage data (null while loading) */
   usage: NotificationUsage | null;
   /** Pre-computed monthly percent (0–100) */
@@ -83,6 +89,13 @@ function progressColor(percent: number): string {
   return '';
 }
 
+// Mirrors DOWN_REMINDER_INTERVALS_MINUTES in functions/src/down-reminder.ts.
+const DOWN_REMINDER_OPTIONS = [0, 10, 30, 60] as const;
+
+function formatReminderInterval(minutes: number): string {
+  return minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} hour${minutes === 60 ? '' : 's'}` : `${minutes} min`;
+}
+
 // ---------------------------------------------------------------------------
 // Collapsed strip
 // ---------------------------------------------------------------------------
@@ -94,6 +107,7 @@ interface CollapsedStripProps extends SettingsSummaryStripProps {
 const CollapsedStrip = memo(function CollapsedStrip({
   recipients,
   emailFormat,
+  downReminderMinutes,
   usage,
   monthlyPercent,
   onExpand,
@@ -134,6 +148,16 @@ const CollapsedStrip = memo(function CollapsedStrip({
           {emailFormat === 'html' ? 'HTML' : 'Plain text'}
         </span>
 
+        {/* Still-down reminders, only when on */}
+        {downReminderMinutes > 0 && (
+          <>
+            <div className="hidden sm:block h-3 w-px bg-border/60 shrink-0" />
+            <span className="text-xs text-muted-foreground shrink-0">
+              Reminders every {formatReminderInterval(downReminderMinutes)}
+            </span>
+          </>
+        )}
+
         {/* Usage mini indicator */}
         {usage && (
           <>
@@ -164,6 +188,9 @@ const ExpandedPanel = memo(function ExpandedPanel({
   onRecipientsChange,
   emailFormat,
   onEmailFormatChange,
+  downReminderMinutes,
+  onDownReminderChange,
+  downReminderDisabled,
   usage,
   monthlyPercent,
   monthlyReached,
@@ -336,6 +363,30 @@ const ExpandedPanel = memo(function ExpandedPanel({
               <span className="text-xs text-muted-foreground">useful for ticket systems</span>
             </div>
           </div>
+
+          {/* Still-down reminders */}
+          <div className="space-y-1.5">
+            <Label htmlFor="strip-down-reminder" className="text-xs">Still-down Reminders</Label>
+            <div className="flex items-center gap-2">
+              <Select
+                value={String(downReminderMinutes)}
+                onValueChange={(value) => onDownReminderChange(Number(value))}
+                disabled={downReminderDisabled}
+              >
+                <SelectTrigger id="strip-down-reminder" className="w-36 h-9 cursor-pointer">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DOWN_REMINDER_OPTIONS.map((minutes) => (
+                    <SelectItem key={minutes} value={String(minutes)}>
+                      {minutes === 0 ? 'Off' : `Every ${formatReminderInterval(minutes)}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-xs text-muted-foreground">re-send while a check stays down</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -381,7 +432,9 @@ const ExpandedPanel = memo(function ExpandedPanel({
             <div className="px-3 pb-3 text-sm text-muted-foreground space-y-3">
               <p>Quick refresher so you always know why (and when) we send an email.</p>
               <ul className="list-disc pl-4 space-y-2">
-                <li>We email only when a check flips states, so steady checks stay quiet.</li>
+                <li>We email when a check flips states, so steady checks stay quiet.</li>
+                <li>The recovery email says how long the check was down.</li>
+                <li>Turn on still-down reminders to get the down email again while a check stays down. They go to the same people as the down alert and stop when it recovers.</li>
                 <li>Down/up alerts can resend roughly a minute after the last one.</li>
                 <li>Your plan's caps: {formatEmailBudgetForTier(tier)}.</li>
                 <li>The hourly cap always covers every monitor on your plan at once, so a full outage is never truncated.</li>

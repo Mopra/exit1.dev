@@ -40,6 +40,8 @@ export type NotificationSettings = {
   perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   checkFilter?: { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
   emailFormat?: 'html' | 'text';
+  /** Email only: "still down" reminder interval in minutes (10, 30, 60). Absent or 0 = off. */
+  downReminderIntervalMinutes?: number;
   createdAt: number;
   updatedAt: number;
 };

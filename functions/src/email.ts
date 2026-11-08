@@ -10,12 +10,37 @@ import { notifySettingsEdit } from "./check-helpers";
 import { getActiveSuppressions, clearEmailSuppression } from "./email-suppression";
 import { sendTransactionalEmail, isTransactionalEmailConfigured } from "./email-send";
 import { resolveAccountId } from "./team-access";
+import { normalizeDownReminderInterval } from "./down-reminder";
+
+const isValidDownReminderInput = (value: unknown): boolean =>
+  value === 0 || value === null || normalizeDownReminderInterval(value) !== 0;
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
   const uid = await resolveAccountId(request, 'write');
 
-  const { recipients, recipient, enabled, events, checkFilter, emailFormat } = request.data || {};
+  const { recipients, recipient, enabled, events, checkFilter, emailFormat, downReminderIntervalMinutes } = request.data || {};
+
+  // Reminder-only update: the app's reminder control saves just this field, so
+  // it never races the debounced recipients/filter save. Needs an existing doc.
+  const reminderOnly = downReminderIntervalMinutes !== undefined
+    && recipients === undefined && recipient === undefined && events === undefined;
+  if (reminderOnly) {
+    if (!isValidDownReminderInput(downReminderIntervalMinutes)) {
+      throw new HttpsError('invalid-argument', 'downReminderIntervalMinutes must be 0, 10, 30 or 60');
+    }
+    const ref = firestore.collection('emailSettings').doc(uid);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new HttpsError('failed-precondition', 'Add an email address before turning on reminders');
+    }
+    await ref.update({
+      downReminderIntervalMinutes: normalizeDownReminderInterval(downReminderIntervalMinutes),
+      updatedAt: Date.now(),
+    });
+    await notifySettingsEdit(uid);
+    return { success: true };
+  }
 
   // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
   let emailRecipients: string[] = [];
@@ -54,6 +79,12 @@ export const saveEmailSettings = onCall(async (request) => {
   }
   if (emailFormat === 'html' || emailFormat === 'text') {
     setData.emailFormat = emailFormat;
+  }
+  if (downReminderIntervalMinutes !== undefined) {
+    if (!isValidDownReminderInput(downReminderIntervalMinutes)) {
+      throw new HttpsError('invalid-argument', 'downReminderIntervalMinutes must be 0, 10, 30 or 60');
+    }
+    setData.downReminderIntervalMinutes = normalizeDownReminderInterval(downReminderIntervalMinutes);
   }
   // merge: true preserves existing fields like createdAt — only set createdAt on first create
   const docSnap = await docRef.get();
