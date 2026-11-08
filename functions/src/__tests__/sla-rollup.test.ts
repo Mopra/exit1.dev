@@ -5,6 +5,7 @@ import { periodsToRefresh, planRollupDays } from "../sla-rollup-plan";
 import {
   buildReportRowsSql,
   buildRollupMergeSql,
+  buildRollupSelectSql,
   carryMsForFrequency,
   rollupParams,
   SLA_DEFAULT_CARRY_MS,
@@ -67,4 +68,11 @@ test("every query has a lower time bound", () => {
   assert.match(merge, /timestamp >= TIMESTAMP_SUB\(@dayStart, INTERVAL 2 DAY\)/);
   assert.match(merge, /ON target\.day = DATE\(@dayStart\)/);
   assert.match(buildReportRowsSql(), /day >= @firstDay/);
+});
+
+test("rows with a NULL key never reach the MERGE (check_sla_daily keys are REQUIRED)", () => {
+  const select = buildRollupSelectSql();
+  const filters = select.match(/AND website_id IS NOT NULL AND user_id IS NOT NULL/g) ?? [];
+  // Both history reads: the day's rows and the seed row.
+  assert.equal(filters.length, 2);
 });

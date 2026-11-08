@@ -73,12 +73,16 @@ export function buildRollupSelectSql(): string {
     SELECT website_id, user_id, timestamp, status, confirmed, maintenance, error
     FROM ${SLA_HISTORY_TABLE}
     WHERE timestamp >= @dayStart AND timestamp < @cut
+      # check_sla_daily keys are REQUIRED; history has a few NULL website_id
+      # rows (2026-01-06), which would fail the MERGE insert.
+      AND website_id IS NOT NULL AND user_id IS NOT NULL
   ),
   prior_rows AS (
     # Seed: the last row before the day. The lower bound is mandatory (cost rule).
     SELECT website_id, user_id, timestamp, status, confirmed, maintenance, error
     FROM ${SLA_HISTORY_TABLE}
     WHERE timestamp >= TIMESTAMP_SUB(@dayStart, INTERVAL 2 DAY) AND timestamp < @dayStart
+      AND website_id IS NOT NULL AND user_id IS NOT NULL
     QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id, user_id ORDER BY timestamp DESC) = 1
   ),
   # confirmed, maintenance and error must be projected through every CTE that
