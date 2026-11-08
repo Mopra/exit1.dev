@@ -29,7 +29,7 @@ import type {
   NoChannelNotifyResult,
   LifecycleSweepResult
 } from './types';
-import type { DomainExpiry, DomainIntelligenceItem, IncidentStatus, LinkedDowntime, StatusPageCustomDomain } from '../types';
+import type { DomainExpiry, DomainIntelligenceItem, IncidentStatus, LinkedDowntime, SlaReportInput, StatusPageCustomDomain } from '../types';
 
 export type IncidentUpdateInput = { status: IncidentStatus; message: string; createdAt?: number };
 
@@ -451,6 +451,44 @@ export class Exit1ApiClient {
   /** Remove the domain from the page. Must run before deleting a page that has one. */
   releaseStatusPageDomain(statusPageId: string) {
     return this.callCustomDomain('releaseStatusPageDomain', { statusPageId }, 'Failed to remove the domain');
+  }
+
+  // ---- SLA reports (Pro) ----
+  // Callables in functions/src/sla-reports.ts. Every write goes through them:
+  // firestore.rules make sla_reports read-only for clients.
+
+  /** Create (no reportId) or update a report. Returns its id. */
+  async upsertSlaReport(input: SlaReportInput, reportId?: string): Promise<ApiResponse<{ reportId: string }>> {
+    const res = await this.call<{ reportId?: string; id?: string }>(
+      'upsertSlaReport', reportId ? { reportId, ...input } : input, 'Failed to save the SLA report',
+    );
+    if (!res.success) return { success: false, error: res.error };
+    return { success: true, data: { reportId: res.data?.reportId ?? res.data?.id ?? reportId ?? '' } };
+  }
+
+  deleteSlaReport(reportId: string) {
+    return this.callVoid('deleteSlaReport', { reportId }, 'Failed to delete the SLA report');
+  }
+
+  /** Recompute one month now (missing month, or one computed in an old time zone). */
+  refreshSlaReport(reportId: string, period?: string) {
+    return this.callVoid('refreshSlaReport', period ? { reportId, period } : { reportId }, 'Failed to compute this month',
+      { 'functions/resource-exhausted': 'Too many recalculations this hour. Try again later.' });
+  }
+
+  /** Send this month's email to the signed-in user only. */
+  sendSlaReportTest(reportId: string, period?: string) {
+    return this.call<{ sentTo?: string }>(
+      'sendSlaReportTest', period ? { reportId, period } : { reportId }, 'Failed to send the test email',
+      { 'functions/resource-exhausted': 'Too many test emails this hour. Try again later.' },
+    );
+  }
+
+  /** HTML of the monthly email, for the editor preview. `draft` is the unsaved form. */
+  previewSlaReportEmail(reportId: string | null, draft: SlaReportInput) {
+    return this.call<{ html: string; subject?: string }>(
+      'previewSlaReportEmail', reportId ? { reportId, draft } : { draft }, 'Failed to build the email preview',
+    );
   }
 
   // ---- Report Metrics (with caching) ----

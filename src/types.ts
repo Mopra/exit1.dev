@@ -479,3 +479,139 @@ export interface UserPreferences {
   createdAt?: number;
   updatedAt?: number;
 }
+
+// ---------------------------------------------------------------------------
+// SLA reporting (Pro). Mirrors functions/src/sla-types.ts and sla-math.ts.
+// See docs/plans/sla-reporting.md, section 3.1.
+// ---------------------------------------------------------------------------
+
+export type SlaStatus = 'met' | 'breached' | 'at_risk' | 'on_track' | 'no_data';
+export type SlaExclusionState = 'maintenance' | 'blocked' | 'no_data';
+
+export interface SlaBranding {
+  companyName?: string | null;
+  logoUrl?: string | null;
+  brandColor?: string | null;
+}
+
+export interface SlaReport {
+  id: string;
+  /** Account owner uid. */
+  userId: string;
+  name: string;
+  targetPercent: number;
+  checkIds: string[];
+  folderPaths: string[];
+  /** IANA zone the report's months are counted in. */
+  timezone: string;
+  countBlockedAsDown: boolean;
+  schedule: { enabled: boolean; recipients: string[] };
+  branding?: SlaBranding | null;
+  unsubscribed?: string[];
+  nextSendAfter?: number | null;
+  lastSentPeriod?: string | null;
+  lastSentAt?: number | null;
+  lastSendError?: string | null;
+  lastFinalPeriod?: string | null;
+  createdAt: number;
+  updatedAt: number;
+  createdBy?: string;
+}
+
+export interface SlaTotals {
+  upMs: number;
+  downMs: number;
+  maintenanceMs: number;
+  blockedMs: number;
+  noDataMs: number;
+}
+
+export interface SlaOverall extends SlaTotals {
+  availability: number | null;
+  coverage: number;
+  budgetMs: number;
+  budgetUsed: number;
+  /** Allowed down time for the whole month (projected while the month is open). */
+  projectedBudgetMs: number;
+  status: SlaStatus;
+  insufficientData: boolean;
+}
+
+export interface SlaCheckResult extends SlaTotals {
+  checkId: string;
+  name: string;
+  url: string;
+  deleted?: boolean;
+  availability: number | null;
+  coverage: number;
+  incidents: number;
+  longestIncidentMs: number;
+  status: SlaStatus;
+  insufficientData: boolean;
+}
+
+export interface SlaIncident {
+  checkId: string;
+  startMs: number;
+  /** null while still ongoing at dataThrough. */
+  endMs: number | null;
+  durationMs: number;
+}
+
+export interface SlaExclusion {
+  checkId: string;
+  state: SlaExclusionState;
+  startMs: number;
+  endMs: number;
+}
+
+export interface SlaDailyEntry {
+  /** Local day, 'YYYY-MM-DD'. */
+  day: string;
+  upMs: number;
+  downMs: number;
+  excludedMs: number;
+}
+
+export interface SlaPeriod {
+  /** 'YYYY-MM' in `timezone`. */
+  period: string;
+  timezone: string;
+  status: 'open' | 'final';
+  periodStart: number;
+  periodEnd: number;
+  dataThrough: number;
+  rollupVersion: number;
+  targetPercent: number;
+  countBlockedAsDown: boolean;
+  overall: SlaOverall;
+  daily: SlaDailyEntry[];
+  checks: SlaCheckResult[];
+  incidents: SlaIncident[];
+  incidentsTotal: number;
+  exclusions: SlaExclusion[];
+  exclusionsTotal?: number;
+  userId: string;
+  reportId: string;
+  computedAt: number;
+  sentRecord?: {
+    sentAt: number;
+    timezone: string;
+    availability: number | null;
+    status: SlaStatus;
+    recipients?: number;
+  } | null;
+  previousTimezone?: string | null;
+}
+
+/** Payload for the upsertSlaReport callable. */
+export interface SlaReportInput {
+  name: string;
+  targetPercent: number;
+  checkIds: string[];
+  folderPaths: string[];
+  timezone: string;
+  countBlockedAsDown: boolean;
+  schedule: { enabled: boolean; recipients: string[] };
+  branding: SlaBranding | null;
+}
