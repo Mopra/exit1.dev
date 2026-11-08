@@ -11,6 +11,8 @@ import { Button } from '../ui/Button';
 import { Label } from '../ui/Label';
 import { Input } from '../ui/Input';
 import { Calendar } from '../ui/calendar';
+import { TimezonePicker } from '../ui/TimezonePicker';
+import { detectedTimeZone } from '../../lib/timezones';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Wrench, CalendarIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -122,24 +124,8 @@ export function MaintenanceDialog({
   });
   const [recurDurationMin, setRecurDurationMin] = useState<number>(existingRecurring?.durationMinutes ?? 60);
   const [recurReason, setRecurReason] = useState(existingRecurring?.reason ?? '');
-  const detectedTz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
+  const detectedTz = useMemo(() => detectedTimeZone(), []);
   const [recurTimezone, setRecurTimezone] = useState(existingRecurring?.timezone ?? detectedTz);
-  const [showTzPicker, setShowTzPicker] = useState(false);
-  const [tzSearch, setTzSearch] = useState('');
-
-  const allTimezones = useMemo(() => {
-    try {
-      return (Intl as any).supportedValuesOf('timeZone') as string[];
-    } catch {
-      return [detectedTz];
-    }
-  }, [detectedTz]);
-
-  const filteredTimezones = useMemo(() => {
-    if (!tzSearch) return allTimezones;
-    const q = tzSearch.toLowerCase();
-    return allTimezones.filter(tz => tz.toLowerCase().includes(q));
-  }, [allTimezones, tzSearch]);
 
   const resetState = () => {
     setActiveTab(defaultTab || 'now');
@@ -154,8 +140,6 @@ export function MaintenanceDialog({
     setRecurDurationMin(existingRecurring?.durationMinutes ?? 60);
     setRecurReason(existingRecurring?.reason ?? '');
     setRecurTimezone(existingRecurring?.timezone ?? detectedTz);
-    setShowTzPicker(false);
-    setTzSearch('');
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -380,44 +364,7 @@ export function MaintenanceDialog({
               </div>
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Timezone</Label>
-                {!showTzPicker ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-mono text-foreground">{recurTimezone}</span>
-                    <button type="button" onClick={() => setShowTzPicker(true)} className="text-xs text-warning hover:text-warning/80 cursor-pointer underline">
-                      Change
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <Input
-                        value={tzSearch}
-                        onChange={(e) => setTzSearch(e.target.value)}
-                        placeholder="Search timezones..."
-                        className="font-mono text-sm flex-1"
-                        autoFocus
-                      />
-                      <Button type="button" variant="ghost" size="sm" className="cursor-pointer text-xs shrink-0" onClick={() => { setShowTzPicker(false); setTzSearch(''); }}>
-                        Cancel
-                      </Button>
-                    </div>
-                    <div className="max-h-48 overflow-y-auto rounded border bg-background">
-                      {filteredTimezones.map(tz => (
-                        <button
-                          key={tz}
-                          type="button"
-                          className={cn(
-                            'w-full text-left px-3 py-1.5 text-xs font-mono cursor-pointer hover:bg-accent transition-colors',
-                            tz === recurTimezone && 'bg-warning/10 text-warning font-semibold'
-                          )}
-                          onClick={() => { setRecurTimezone(tz); setShowTzPicker(false); setTzSearch(''); }}
-                        >
-                          {tz}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <TimezonePicker value={recurTimezone} onChange={setRecurTimezone} tone="warning" />
               </div>
               <div className="space-y-2">
                 <Label className="text-sm font-medium">
