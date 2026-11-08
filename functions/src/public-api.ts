@@ -7,7 +7,14 @@ import { normalizeEventList } from "./webhook-events";
 import { BigQueryCheckHistoryRow, CheckStatsResult } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 import { CONFIG, TIER_LIMITS } from "./config";
-import { getUserTier, getMaxChecksForUser } from "./init";
+import { getUserTier, getUserTierDetailed, getMaxChecksForUser } from "./init";
+import {
+  IP_GUARD_PER_MINUTE,
+  MAX_CHECKS_PAGE_SIZE,
+  TierCache,
+  resolveReadRateLimits,
+  type ReadRateLimits,
+} from "./public-api-rate-limits";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { CheckRegion } from "./check-region";
 import { hasScope, API_SCOPES, type ApiScope } from "./api-scopes";
@@ -246,14 +253,14 @@ function getStatusSnapshot(userId: string): Promise<StatusSnapshot> {
 }
 
 // --- Rate limiters ---
-// Read limits
-const RATE_LIMITS = {
-  ipPerMinute: 20,
-  perKeyTotalPerMinute: 5,
-  perEndpointPerMinute: 1,
-  perKeyDaily: 500,
-  perUserDaily: 2000,
-} as const;
+// Read limits are per plan (public-api-rate-limits.ts). Picking the profile
+// needs the tier; the cache keeps that to one users-doc read per user per
+// instance per 15 minutes. A failed lookup is not cached as Free.
+const rateLimitTierCache = new TierCache(async (uid) => {
+  const { tier, failedOpen } = await getUserTierDetailed(uid);
+  if (failedOpen) throw new Error('tier lookup failed');
+  return tier;
+});
 const ipGuardLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 const apiKeyLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 50_000 });
 const dailyQuotaLimiter = new FixedWindowRateLimiter({ windowMs: 24 * 60 * 60 * 1000, maxKeys: 50_000 });
@@ -267,26 +274,19 @@ const WRITE_RATE_LIMITS = {
 const writeRateLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 const dailyWriteQuotaLimiter = new FixedWindowRateLimiter({ windowMs: 24 * 60 * 60 * 1000, maxKeys: 20_000 });
 
-// OAuth (agent) sessions get their own profile. The API-key numbers above are
-// tuned for scripted polling — 1 request/minute per endpoint means an agent
-// creating five checks during onboarding would sit through a five-minute
-// cooldown mid-flow. Agent sessions are interactive, backed by a consented
-// browser grant, and revocable per-connection, so the burst is worth allowing.
-// Tier caps and per-user check-creation limits still apply underneath.
-const AGENT_RATE_LIMITS = {
-  ipPerMinute: 20,
-  perKeyTotalPerMinute: 30,
-  perEndpointPerMinute: 10,
-  perKeyDaily: 1500,
-  perUserDaily: 3000,
-} as const;
+// OAuth (agent) sessions get their own write profile. The API-key numbers
+// above are tuned for scripted use: an agent creating five checks during
+// onboarding would sit through a long cooldown mid-flow. Agent sessions are
+// interactive, backed by a consented browser grant, and revocable
+// per-connection, so the burst is worth allowing. Tier caps and per-user
+// check-creation limits still apply underneath.
 const AGENT_WRITE_RATE_LIMITS = {
   perKeyWritePerMinute: 15,
   perKeyWriteDaily: 200,
   perUserWriteDaily: 400,
 } as const;
 
-type RateLimitProfile = typeof RATE_LIMITS | typeof AGENT_RATE_LIMITS;
+type RateLimitProfile = ReadRateLimits;
 type WriteRateLimitProfile = typeof WRITE_RATE_LIMITS | typeof AGENT_WRITE_RATE_LIMITS;
 
 // --- Idempotency ---
@@ -2300,7 +2300,7 @@ export const publicApi = onRequest({
   try {
     // Pre-auth IP guard
     const clientIp = getClientIp(req);
-    const ipDecision = ipGuardLimiter.consume(`ip:${clientIp}`, RATE_LIMITS.ipPerMinute);
+    const ipDecision = ipGuardLimiter.consume(`ip:${clientIp}`, IP_GUARD_PER_MINUTE);
     applyRateLimitHeaders(res, ipDecision);
     if (!ipDecision.allowed) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.', retryAfter: ipDecision.retryAfterSeconds });
@@ -2414,7 +2414,7 @@ export const publicApi = onRequest({
     }
 
     const keyDocId = principalId;
-    const limits: RateLimitProfile = isAgentSession ? AGENT_RATE_LIMITS : RATE_LIMITS;
+    const limits: RateLimitProfile = resolveReadRateLimits(await rateLimitTierCache.get(userId), isAgentSession);
     const writeLimits: WriteRateLimitProfile = isAgentSession ? AGENT_WRITE_RATE_LIMITS : WRITE_RATE_LIMITS;
 
     const reqPath = (req.path || req.url || '').replace(/\/+$/, '');
@@ -2637,7 +2637,7 @@ export const publicApi = onRequest({
 
     // GET /v1/public/checks
     if (segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
-      const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, 100);
+      const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, MAX_CHECKS_PAGE_SIZE);
       const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1);
       const statusFilter = String(req.query.status || 'all');
       if (!CHECK_STATUS_FILTERS.has(statusFilter)) {
