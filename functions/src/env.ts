@@ -37,6 +37,12 @@ export const WHATSAPP_PHONE_NUMBER_ID = defineSecret('WHATSAPP_PHONE_NUMBER_ID')
 // each VPS .env as TELEGRAM_BOT_TOKEN. The webhook's secret_token is derived from
 // it, so there is no second secret to pay for.
 export const TELEGRAM_BOT_TOKEN = defineSecret('TELEGRAM_BOT_TOKEN');
+// Cloudflare API token for Cloudflare for SaaS custom hostnames (custom status
+// page domains, cloudflare-saas.ts). Scoped to the exit1.dev zone: SSL and
+// Certificates Edit, Zone Read. The reconciler runs on the VPS, so the same
+// value goes in each VPS .env as CLOUDFLARE_SAAS_API_TOKEN. Rotating it needs a
+// redeploy of every function that binds it (Gen2 pins secret versions).
+export const CLOUDFLARE_SAAS_API_TOKEN = defineSecret('CLOUDFLARE_SAAS_API_TOKEN');
 export const VPS_MANUAL_CHECK_SECRET = defineSecret('VPS_MANUAL_CHECK_SECRET');
 // Shared secret for the probe generator endpoint (probe PLAN.md §6). probe signs
 // every request as HMAC-SHA256(secret, timestamp + "." + rawBody), and probe
@@ -194,3 +200,14 @@ export const getTwilioCredentials = () => {
   };
 };
 
+export const getCloudflareSaasToken = (): string | undefined => {
+  const sanitize = (value?: string | null) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  try {
+    const v = sanitize(CLOUDFLARE_SAAS_API_TOKEN.value());
+    if (v) return v;
+  } catch {
+    // Not bound to this function (the VPS cron host); use the env.
+  }
+  return sanitize(process.env.CLOUDFLARE_SAAS_API_TOKEN);
+};
