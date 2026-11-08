@@ -43,10 +43,23 @@ export type EmailProvider = 'resend' | 'day3';
  *  - alerts:   DOWN/UP, SSL, DNS, domain expiry. The product. Highest volume,
  *    most latency-sensitive, and the one where a missed send is a real
  *    incident for a customer. Move last.
+ *  - reports:  the monthly SLA report email (sla-email.ts). Born on Day3: it
+ *    resolves to Day3 unless the doc names a provider for it explicitly (see
+ *    CATEGORY_DEFAULT_PROVIDER), and Resend stays the fallback underneath.
  */
-export type EmailCategory = 'internal' | 'test' | 'lifecycle' | 'account' | 'alerts';
+export type EmailCategory = 'internal' | 'test' | 'lifecycle' | 'account' | 'alerts' | 'reports';
 
-export const EMAIL_CATEGORIES: EmailCategory[] = ['internal', 'test', 'lifecycle', 'account', 'alerts'];
+export const EMAIL_CATEGORIES: EmailCategory[] = ['internal', 'test', 'lifecycle', 'account', 'alerts', 'reports'];
+
+/**
+ * Categories that default to a provider of their own instead of inheriting
+ * the global `provider`. Only an explicit `categories[category]` in the doc
+ * overrides these. New categories that never rode Resend start here, so a
+ * rollback of the global flag does not drag them onto Resend as primary.
+ */
+export const CATEGORY_DEFAULT_PROVIDER: Partial<Record<EmailCategory, EmailProvider>> = {
+  reports: 'day3',
+};
 
 export interface EmailProviderSettings {
   /** Default provider for any category without an explicit override. */
@@ -218,7 +231,7 @@ export function resolveProvider(
   category: EmailCategory,
   recipient: string,
 ): EmailProvider {
-  const resolved = settings.categories[category] ?? settings.provider;
+  const resolved = settings.categories[category] ?? CATEGORY_DEFAULT_PROVIDER[category] ?? settings.provider;
   if (resolved === 'day3') return 'day3';
   // Still on Resend — the canary ramp is the only way onto Day3 from here.
   if (settings.canaryPercent > 0 && canaryBucket(recipient) < settings.canaryPercent) {

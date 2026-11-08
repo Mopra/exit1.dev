@@ -43,6 +43,11 @@ export const TELEGRAM_BOT_TOKEN = defineSecret('TELEGRAM_BOT_TOKEN');
 // value goes in each VPS .env as CLOUDFLARE_SAAS_API_TOKEN. Rotating it needs a
 // redeploy of every function that binds it (Gen2 pins secret versions).
 export const CLOUDFLARE_SAAS_API_TOKEN = defineSecret('CLOUDFLARE_SAAS_API_TOKEN');
+// Signs the unsubscribe links in SLA report emails (HMAC over report id and
+// recipient). The monthly email job runs on the VPS cron, so the same value
+// goes in each VPS .env as SLA_UNSUBSCRIBE_SECRET. Rotating it invalidates
+// links in emails already sent, and needs a redeploy of every bound function.
+export const SLA_UNSUBSCRIBE_SECRET = defineSecret('SLA_UNSUBSCRIBE_SECRET');
 export const VPS_MANUAL_CHECK_SECRET = defineSecret('VPS_MANUAL_CHECK_SECRET');
 // Shared secret for the probe generator endpoint (probe PLAN.md §6). probe signs
 // every request as HMAC-SHA256(secret, timestamp + "." + rawBody), and probe
@@ -210,4 +215,16 @@ export const getCloudflareSaasToken = (): string | undefined => {
     // Not bound to this function (the VPS cron host); use the env.
   }
   return sanitize(process.env.CLOUDFLARE_SAAS_API_TOKEN);
+};
+
+export const getSlaUnsubscribeSecret = (): string | undefined => {
+  const sanitize = (value?: string | null) =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  try {
+    const v = sanitize(SLA_UNSUBSCRIBE_SECRET.value());
+    if (v) return v;
+  } catch {
+    // Not bound to this function (the VPS cron host); use the env.
+  }
+  return sanitize(process.env.SLA_UNSUBSCRIBE_SECRET);
 };

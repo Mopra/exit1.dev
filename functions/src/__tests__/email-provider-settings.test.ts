@@ -6,6 +6,7 @@ import {
   parseEmailProviderSettings,
   resolveProvider,
   EMAIL_CATEGORIES,
+  CATEGORY_DEFAULT_PROVIDER,
   type EmailCategory,
   type EmailProvider,
 } from "../email-provider-settings";
@@ -61,7 +62,7 @@ test("only an explicit false disables the Resend fallback", () => {
 // ── Routing ─────────────────────────────────────────────────────────────────
 
 test("with no overrides every category follows the default", () => {
-  for (const category of EMAIL_CATEGORIES) {
+  for (const category of EMAIL_CATEGORIES.filter((c) => !CATEGORY_DEFAULT_PROVIDER[c])) {
     assert.equal(resolveProvider(settings(), category, "a@b.com"), "resend");
     assert.equal(
       resolveProvider(settings({ provider: "day3" }), category, "a@b.com"),
@@ -147,4 +148,23 @@ test("the canary never pulls traffic off a category already on Day3", () => {
   for (let i = 0; i < 100; i++) {
     assert.equal(resolveProvider(config, "alerts", `user${i}@example.com`), "day3");
   }
+});
+
+// ── reports (SLA monthly email) ─────────────────────────────────────────────
+
+test("reports parses as a category", () => {
+  const parsed = parseEmailProviderSettings({ categories: { reports: "day3" } }, 1);
+  assert.equal(parsed.categories.reports, "day3");
+});
+
+test("reports resolves to Day3 with the live doc shape and with no doc", () => {
+  assert.equal(resolveProvider(settings({ provider: "day3" }), "reports", "a@b.com"), "day3");
+  // Missing doc or a global rollback to Resend does not move reports.
+  assert.equal(resolveProvider(settings(), "reports", "a@b.com"), "day3");
+  assert.equal(resolveProvider(parseEmailProviderSettings(null, 1), "reports", "a@b.com"), "day3");
+});
+
+test("an explicit categories.reports wins over the code default", () => {
+  assert.equal(resolveProvider(settings({ categories: { reports: "day3" } }), "reports", "a@b.com"), "day3");
+  assert.equal(resolveProvider(settings({ provider: "day3", categories: { reports: "resend" } }), "reports", "a@b.com"), "resend");
 });
