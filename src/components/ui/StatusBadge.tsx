@@ -101,12 +101,12 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
   const isWarn = status === 'degraded' || status === 'DEGRADED' || status === 'maintenance' || status === 'disabled';
   const isUnknown = !status || status === 'unknown';
   const ledColor = isDown ? 'var(--destructive)' : isWarn ? 'var(--warning)' : 'var(--primary)';
-  const textColor = isDown ? 'text-destructive' : isWarn ? 'text-warning' : isUnknown ? 'text-muted-foreground' : 'text-foreground';
+  const textColor = isDown ? 'text-destructive' : isWarn ? 'text-warning' : 'text-muted-foreground';
 
   const badgeEl = (
     <span
       role="status"
-      className={`${className} ${replayClass('status-pop', changes)} ${textColor} panel-label inline-flex items-center gap-2 rounded-md border border-white/[0.06] bg-black/30 px-2 py-1 !text-[10.5px] cursor-pointer whitespace-nowrap`}
+      className={`${className} ${replayClass('status-pop', changes)} ${textColor} inline-flex items-center gap-2 py-1 text-sm font-medium cursor-pointer whitespace-nowrap`}
     >
       <span
         className={`led ${isUnknown ? '' : 'led-on'} ${isDown ? 'led-pulse' : ''}`}
