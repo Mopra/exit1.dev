@@ -342,8 +342,31 @@ export interface StatusPage {
    */
   incidents?: StatusPageIncident[];
   incidentsUpdatedAt?: number;
+  /**
+   * Custom hostname mirror (Pro). Written only by the custom domain callables
+   * and the reconciler (functions/src/custom-domains.ts); firestore.rules
+   * forbids client writes.
+   */
+  customDomain?: StatusPageCustomDomain | null;
   createdAt: number;
   updatedAt: number;
+}
+
+export type CustomDomainStatus = 'pending' | 'verifying' | 'active' | 'failed' | 'disabled';
+
+/** Public mirror of custom_domains/{hostname} on status_pages/{id}.customDomain. */
+export interface StatusPageCustomDomain {
+  hostname: string;
+  status: CustomDomainStatus;
+  /** TXT ownership record, e.g. _exit1-verify.status.acme.com = exit1-verify=<token> */
+  verifyRecord: { name: string; value: string };
+  /** CNAME target, domains.exit1.dev */
+  cnameTarget: string;
+  lastError: string | null;
+  /** Present on disabled domains: why it was switched off. */
+  disabledReason?: 'plan_downgrade' | 'owner' | null;
+  statusChangedAt: number;
+  lastCheckedAt: number;
 }
 
 export type IncidentStatus = 'investigating' | 'identified' | 'monitoring' | 'resolved';

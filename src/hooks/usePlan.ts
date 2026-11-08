@@ -160,6 +160,7 @@ export function usePlan() {
     csvExport: limits.csvExport,
     allAlertChannels: limits.allAlertChannels,
     regionChoice: limits.regionChoice,
+    customStatusDomain: limits.customStatusDomain,
     retentionDays: limits.retentionDays,
     // Back-compat booleans:
     paid,

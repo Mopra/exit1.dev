@@ -29,7 +29,7 @@ import type {
   NoChannelNotifyResult,
   LifecycleSweepResult
 } from './types';
-import type { DomainExpiry, DomainIntelligenceItem, IncidentStatus, LinkedDowntime } from '../types';
+import type { DomainExpiry, DomainIntelligenceItem, IncidentStatus, LinkedDowntime, StatusPageCustomDomain } from '../types';
 
 export type IncidentUpdateInput = { status: IncidentStatus; message: string; createdAt?: number };
 
@@ -394,6 +394,63 @@ export class Exit1ApiClient {
     return this.callUnwrap<{ downtimes: Array<{ startedAt: number; endedAt: number | null; durationMs: number }>; startDate: number; endDate: number }>(
       "getStatusPageCheckDowntimes", { statusPageId, checkId }, 'Failed to load downtime history', Exit1ApiClient.STATUS_ERRORS,
     );
+  }
+
+  // ---- Status page custom domains (Pro) ----
+  // Backend: functions/src/custom-domains.ts. Each call returns the page's
+  // customDomain mirror; the editor also gets it live through onSnapshot.
+
+  /**
+   * The custom domain callables throw user-facing messages ("Pro includes 10
+   * custom domains...", "This hostname is connected to another status page",
+   * validation errors). The shared map would replace resource-exhausted,
+   * invalid-argument and permission-denied with generic text, so keep the
+   * backend's message unless it is a bare transport error.
+   */
+  private static customDomainError(error: unknown, fallback: string): string {
+    const e = (error ?? {}) as FirebaseFunctionsError;
+    const retryAfter = Number(e.details?.retryAfterSeconds);
+    const transport = !e.code || e.code === 'functions/internal' || e.code === 'functions/unavailable'
+      || e.code === 'functions/unauthenticated' || e.code === 'functions/deadline-exceeded';
+    if ((Number.isFinite(retryAfter) && retryAfter > 0) || transport || !e.message) {
+      return getErrorMessage(error, fallback);
+    }
+    return e.message;
+  }
+
+  /** Accepts the mirror bare, as `{ customDomain }` or as `{ data }`, so a backend shape tweak does not break the UI. */
+  private static unwrapCustomDomain(data: unknown): StatusPageCustomDomain | null {
+    if (!data || typeof data !== 'object') return null;
+    const d = data as Record<string, unknown>;
+    if (typeof d.hostname === 'string') return d as unknown as StatusPageCustomDomain;
+    if (d.customDomain !== undefined) return Exit1ApiClient.unwrapCustomDomain(d.customDomain);
+    if (d.data !== undefined) return Exit1ApiClient.unwrapCustomDomain(d.data);
+    return null;
+  }
+
+  private async callCustomDomain(name: string, args: unknown, fallback: string): Promise<ApiResponse<StatusPageCustomDomain | null>> {
+    try {
+      const fn = httpsCallable(this.functions, name);
+      const result = await fn(args);
+      return { success: true, data: Exit1ApiClient.unwrapCustomDomain(result.data) };
+    } catch (error: unknown) {
+      return { success: false, error: Exit1ApiClient.customDomainError(error, fallback) };
+    }
+  }
+
+  /** Attach a hostname to a status page. Starts in `pending` until the TXT record is seen. */
+  claimStatusPageDomain(statusPageId: string, hostname: string) {
+    return this.callCustomDomain('claimStatusPageDomain', { statusPageId, hostname }, 'Failed to connect the domain');
+  }
+
+  /** Check now / Retry / Reconnect: advances the domain one step and returns the mirror. */
+  checkStatusPageDomain(statusPageId: string) {
+    return this.callCustomDomain('checkStatusPageDomain', { statusPageId }, 'Failed to check the domain');
+  }
+
+  /** Remove the domain from the page. Must run before deleting a page that has one. */
+  releaseStatusPageDomain(statusPageId: string) {
+    return this.callCustomDomain('releaseStatusPageDomain', { statusPageId }, 'Failed to remove the domain');
   }
 
   // ---- Report Metrics (with caching) ----

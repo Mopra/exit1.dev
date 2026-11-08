@@ -121,6 +121,8 @@ export type TierLimitsRow = {
   csvExport: boolean
   allAlertChannels: boolean
   regionChoice: boolean
+  /** Custom hostname on a status page (Cloudflare for SaaS). Pro only. */
+  customStatusDomain: boolean
 }
 
 const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
@@ -131,6 +133,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     apiAccess: true, statusPageBuilder: false, domainIntel: false,
     maintenanceMode: false, smsAlerts: false, csvExport: false,
     allAlertChannels: false, regionChoice: false,
+    customStatusDomain: false,
   },
   indie: {
     emailsPerHour: 100, emailsPerMonth: 800, maxStatusPages: 1,
@@ -139,6 +142,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     apiAccess: true, statusPageBuilder: true, domainIntel: false,
     maintenanceMode: false, smsAlerts: false, csvExport: false,
     allAlertChannels: false, regionChoice: false,
+    customStatusDomain: false,
   },
   nano: {
     emailsPerHour: 250, emailsPerMonth: 2500, maxStatusPages: 5,
@@ -147,6 +151,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     apiAccess: true, statusPageBuilder: true, domainIntel: true,
     maintenanceMode: true, smsAlerts: false, csvExport: false,
     allAlertChannels: false, regionChoice: true,
+    customStatusDomain: false,
   },
   pro: {
     emailsPerHour: 1000, emailsPerMonth: 10000, maxStatusPages: 50,
@@ -155,6 +160,7 @@ const TIER_LIMITS_MIRROR: Record<TierKey, TierLimitsRow> = {
     apiAccess: true, statusPageBuilder: true, domainIntel: true,
     maintenanceMode: true, smsAlerts: true, csvExport: true,
     allAlertChannels: true, regionChoice: true,
+    customStatusDomain: true,
   },
 }
 
