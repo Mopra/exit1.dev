@@ -8,6 +8,10 @@ import { getStorage } from "firebase/storage";
 
 // Firebase project configuration for exit1.dev
 // Note: Firebase API keys are safe to expose in client-side code, but using env vars is best practice
+// The browser API key must have NO HTTP referrer restriction in GCP: custom
+// status page domains (customers' own hostnames, see src/CustomDomainApp.tsx)
+// call Firestore and the status page callables with this key from origins we
+// cannot list in advance. A referrer restriction would break them silently.
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBJj7oHBfYGiYh03LgyRaFWf0vQ-_h1rMI",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "exit1-dev.firebaseapp.com",

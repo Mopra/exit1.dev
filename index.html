@@ -19,21 +19,35 @@
       })();
     </script>
 
-    <!-- Google Analytics - preconnect for faster loading -->
-    <link rel="preconnect" href="https://www.googletagmanager.com" />
-    <link rel="preconnect" href="https://www.google-analytics.com" />
-    
-    <!-- Google tag (gtag.js) — shared property G-TW8WXE2TZP, same stream as the
-         marketing site (exit1.dev) so the marketing→app signup funnel stitches
+    <!-- Google tag (gtag.js): shared property G-TW8WXE2TZP, same stream as the
+         marketing site (exit1.dev) so the marketing to app signup funnel stitches
          into one cross-domain session. linker.domains must mirror the website's
          config; with both domains listed on both ends, gtag auto-accepts the
-         incoming `_gl` param. -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-TW8WXE2TZP"></script>
+         incoming `_gl` param.
+         Loaded only on our own hosts: customers' custom status page domains
+         (src/lib/app-hosts.ts) are not our analytics subjects, so GA must not
+         run or set cookies there. `gtag` stays defined everywhere so calls
+         from the app are harmless no-ops. -->
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-TW8WXE2TZP', { linker: { domains: ['exit1.dev', 'app.exit1.dev'] } });
+      (function () {
+        var host = location.hostname;
+        var ownHost = /(^|\.)exit1\.dev$|^localhost$|^127\.0\.0\.1$|\.web\.app$|\.firebaseapp\.com$/.test(host);
+        if (!ownHost || location.search.indexOf('customHost=') !== -1) return;
+        ['https://www.googletagmanager.com', 'https://www.google-analytics.com'].forEach(function (href) {
+          var link = document.createElement('link');
+          link.rel = 'preconnect';
+          link.href = href;
+          document.head.appendChild(link);
+        });
+        var script = document.createElement('script');
+        script.async = true;
+        script.src = 'https://www.googletagmanager.com/gtag/js?id=G-TW8WXE2TZP';
+        document.head.appendChild(script);
+        gtag('js', new Date());
+        gtag('config', 'G-TW8WXE2TZP', { linker: { domains: ['exit1.dev', 'app.exit1.dev'] } });
+      })();
     </script>
 
     <link rel="icon" type="image/svg+xml" href="/e_.svg" />

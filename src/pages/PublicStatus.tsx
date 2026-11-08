@@ -24,6 +24,7 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useChecks } from '../hooks/useChecks';
 import { getFolderGroupClasses } from '../lib/folder-utils';
 import { Logo } from "@/components/ui/Logo"
+import { customHostFromLocation } from '../lib/app-hosts';
 
 interface BadgeData {
   checkId: string;
@@ -739,6 +740,51 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
       document.title = defaultTitle;
     };
   }, [mode, statusChecks, statusPage?.name, defaultTitle]);
+
+  // Custom domain SEO. On the custom host itself, and on app.exit1.dev when
+  // the page has an active custom domain, the canonical URL is the custom
+  // host (the app URL keeps working, it just is not the indexed copy).
+  const customHost = useMemo(() => customHostFromLocation(), []);
+  const activeCustomHostname = statusPage?.customDomain?.status === 'active' ? statusPage.customDomain.hostname : null;
+  const canonicalHost = customHost ?? activeCustomHostname;
+  useEffect(() => {
+    if (mode !== 'status' || !canonicalHost) return;
+    let link = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    const created = !link;
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'canonical';
+      document.head.appendChild(link);
+    }
+    const previous = link.getAttribute('href');
+    link.setAttribute('href', `https://${canonicalHost}/`);
+    return () => {
+      if (created) link.remove();
+      else if (previous !== null) link.setAttribute('href', previous);
+    };
+  }, [mode, canonicalHost]);
+
+  // On the custom host, describe the customer's page rather than exit1
+  // (crawlers that run JS pick these up; the HTML shell still says exit1).
+  useEffect(() => {
+    if (!customHost || mode !== 'status' || !statusPage?.name) return;
+    const name = statusPage.name;
+    const setMeta = (selector: string, value: string) => {
+      const el = document.querySelector<HTMLMetaElement>(selector);
+      if (!el) return null;
+      const previous = el.getAttribute('content');
+      el.setAttribute('content', value);
+      return () => { if (previous !== null) el.setAttribute('content', previous); };
+    };
+    const restores = [
+      setMeta('meta[name="description"]', `Live status and uptime for ${name}`),
+      setMeta('meta[property="og:title"]', name),
+      setMeta('meta[property="og:description"]', `Live status and uptime for ${name}`),
+      setMeta('meta[name="twitter:title"]', name),
+      setMeta('meta[name="twitter:description"]', `Live status and uptime for ${name}`),
+    ];
+    return () => restores.forEach((restore) => restore?.());
+  }, [customHost, mode, statusPage?.name]);
 
   // Calculate next update time and countdown
   useEffect(() => {
