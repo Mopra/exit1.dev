@@ -49,8 +49,13 @@ export function scopeOfWebhookType(
   return INTEGRATION_SCOPE_SET.has(t) ? 'integration' : 'webhook';
 }
 
+// Telegram stays hidden from the picker until its bot token is set and the
+// Telegram functions are deployed. Flip to true then.
+export const TELEGRAM_ENABLED = false;
+
 export function platformTypesForScope(scope: IntegrationScope): readonly WebhookPlatformType[] {
-  return scope === 'webhook' ? WEBHOOK_SCOPE_TYPES : INTEGRATION_SCOPE_TYPES;
+  if (scope === 'webhook') return WEBHOOK_SCOPE_TYPES;
+  return TELEGRAM_ENABLED ? INTEGRATION_SCOPE_TYPES : INTEGRATION_SCOPE_TYPES.filter((t) => t !== 'telegram');
 }
 
 export function defaultPlatformForScope(scope: IntegrationScope): WebhookPlatformType {
@@ -127,7 +132,7 @@ const WEBHOOK_LABELS: ScopeLabels = {
   deleteSingleTitle: (name) => `Delete "${name}"?`,
   deleteBulkTitle: (n) => `Delete ${n} webhook${n !== 1 ? 's' : ''}?`,
   failureEmailSubject: 'Webhook',
-  crossLinkLabel: 'Looking for Pushover, Telegram, PagerDuty, or Opsgenie? Find them under Integrations →',
+  crossLinkLabel: 'Looking for Pushover, PagerDuty, or Opsgenie? Find them under Integrations →',
   crossLinkPath: '/integrations',
   upgradeLimitMessage: channelLimitMessage,
   downgradeMessage: channelDowngradeMessage('webhooks'),
@@ -150,7 +155,7 @@ const INTEGRATION_LABELS: ScopeLabels = {
   formEditSubtitle: 'Update your integration configuration',
   testMenu: 'Test integration',
   emptyTitle: 'No integrations configured',
-  emptyDescription: 'Connect Pushover, Telegram, PagerDuty, or Opsgenie to receive alerts on the tools your team already uses.',
+  emptyDescription: 'Connect Pushover, PagerDuty, or Opsgenie to receive alerts on the tools your team already uses.',
   emptyAction: 'Add Your First Integration',
   bulkItemLabel: 'integration',
   deleteSingleTitle: (name) => `Delete "${name}"?`,

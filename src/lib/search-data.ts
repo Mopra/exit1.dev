@@ -136,10 +136,10 @@ export const pageItems: SearchItem[] = [
   {
     id: 'page-integrations',
     name: 'Integrations',
-    description: 'Pushover, Telegram, PagerDuty, Opsgenie',
+    description: 'Pushover, PagerDuty, Opsgenie',
     path: '/integrations',
     iconName: 'Plug',
-    keywords: ['notifications', 'pushover', 'telegram', 'pagerduty', 'opsgenie', 'integration', 'rest', 'api'],
+    keywords: ['notifications', 'pushover', 'pagerduty', 'opsgenie', 'integration', 'rest', 'api'],
     category: 'page',
   },
   {
