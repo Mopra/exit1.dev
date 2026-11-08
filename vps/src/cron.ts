@@ -109,6 +109,23 @@ const JOBS: JobSpec[] = [
     // @ts-expect-error: functions/lib has no .d.ts
     run: async () => (await import('../../functions/lib/custom-domains.js')).runCustomDomainReconcile(),
   },
+  {
+    // SLA reporting: builds checks.check_sla_daily (complete days 2 h after
+    // they end, then today up to now), then refreshes every Pro SLA report's
+    // open month in its own time zone and finalizes months whose local end
+    // + 2 h has passed. See docs/plans/sla-reporting.md.
+    name: 'slaRollup', hours: [2, 8, 14, 20], minute: 10, leaseMs: 30 * MIN,
+    // @ts-expect-error: functions/lib has no .d.ts
+    run: async () => (await import('../../functions/lib/sla-rollup.js')).runSlaRollup(),
+  },
+  {
+    // Sends each SLA report's monthly email once its month is final. Runs 30
+    // min after every rollup so every zone (UTC-12 to UTC+14) gets it on the
+    // local 1st. Needs SLA_UNSUBSCRIBE_SECRET in the VPS .env.
+    name: 'slaMonthlyEmails', hours: [2, 8, 14, 20], minute: 40, leaseMs: 30 * MIN,
+    // @ts-expect-error: functions/lib has no .d.ts
+    run: async () => (await import('../../functions/lib/sla-email.js')).runSlaMonthlyEmails(),
+  },
 ];
 
 /** Start of the most recent slot at or before `now`, in ms. */

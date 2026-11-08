@@ -87,6 +87,16 @@ test("feature flags are never revoked as price rises", () => {
   }
 });
 
+test("SLA report allowance never shrinks as price rises, and only exists with the flag", () => {
+  for (const [from, to] of STEPS) {
+    assert.ok(TIER_LIMITS[to].maxSlaReports >= TIER_LIMITS[from].maxSlaReports, `${to} must allow at least as many SLA reports as ${from}`);
+  }
+  for (const tier of LADDER) {
+    assert.equal(TIER_LIMITS[tier].maxSlaReports > 0, TIER_LIMITS[tier].slaReporting, `${tier}: maxSlaReports and slaReporting disagree`);
+  }
+  assert.equal(TIER_LIMITS.pro.maxSlaReports, 50);
+});
+
 test("the hourly email cap covers a total outage on every tier", () => {
   // The blast radius of one provider going down is every monitor at once. If
   // the hourly cap is below the check cap, the alerts that get dropped are

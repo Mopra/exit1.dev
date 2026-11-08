@@ -44,6 +44,7 @@ export const TIER_LIMITS = {
     csvExport: false,
     teamSeats: 0,
     slaReporting: false,
+    maxSlaReports: 0,
     customStatusDomain: false,
     allAlertChannels: false,
     regionChoice: false,
@@ -69,6 +70,7 @@ export const TIER_LIMITS = {
     csvExport: false,
     teamSeats: 0,
     slaReporting: false,
+    maxSlaReports: 0,
     customStatusDomain: false,
     allAlertChannels: false, // email + webhooks only
     regionChoice: false,
@@ -92,6 +94,7 @@ export const TIER_LIMITS = {
     csvExport: false,
     teamSeats: 0,
     slaReporting: false,
+    maxSlaReports: 0,
     customStatusDomain: false,
     allAlertChannels: false,
     // Region pinning moved down from Pro so Nano is a destination rather than
@@ -120,6 +123,7 @@ export const TIER_LIMITS = {
     csvExport: true,
     teamSeats: 10,
     slaReporting: true,
+    maxSlaReports: 50,
     customStatusDomain: true,
     allAlertChannels: true,
     regionChoice: true,
@@ -143,6 +147,8 @@ export const TIER_LIMITS = {
   csvExport: boolean;
   teamSeats: number;
   slaReporting: boolean;
+  /** SLA reports per account (Pro only). Each holds up to 250 checks and 10 recipients. */
+  maxSlaReports: number;
   customStatusDomain: boolean;
   allAlertChannels: boolean;
   regionChoice: boolean;

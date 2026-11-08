@@ -83,9 +83,13 @@ export async function backfillCheckUserTier(userId: string, newTier: UserTier): 
 }
 
 /**
- * Disable SLA reporting and custom status domains, both Pro-only. Called when
- * a user lands on a tier whose TIER_LIMITS lack those flags. No-ops for users
- * that don't have them enabled, so it is idempotent.
+ * Disable custom status domains (Pro-only). Called when a user lands on a tier
+ * whose TIER_LIMITS lack the flag. No-ops for users that don't have one, so it
+ * is idempotent.
+ *
+ * SLA reporting has nothing to strip: it is gated at runtime on the owner's
+ * tier (callables, rollup, email job, public API), and its reports stay
+ * readable so a re-upgrade picks up where it left off.
  *
  * Custom domains: both the custom_domains/{host} reservation and the page
  * mirror go to `disabled` / `plan_downgrade`. No Cloudflare call here (keeps
@@ -93,7 +97,7 @@ export async function backfillCheckUserTier(userId: string, newTier: UserTier): 
  * 14-day grace period so Reconnect after a re-upgrade is instant, then the
  * hourly reconciler (runCustomDomainReconcile) deletes it.
  */
-async function disableSlaAndCustomDomain(userId: string): Promise<{ statusPagesUpdated: number; domainsDisabled: number }> {
+async function disableCustomStatusDomain(userId: string): Promise<{ statusPagesUpdated: number; domainsDisabled: number }> {
   const [statusSnap, domainSnap] = await Promise.all([
     firestore.collection('status_pages').where('userId', '==', userId).get(),
     firestore.collection('custom_domains').where('userId', '==', userId).get(),
@@ -126,16 +130,13 @@ async function disableSlaAndCustomDomain(userId: string): Promise<{ statusPagesU
       updates['customDomain.failedReason'] = null;
       updates['customDomain.statusChangedAt'] = now;
     }
-    if (data.slaReporting?.enabled === true) {
-      updates['slaReporting.enabled'] = false;
-    }
     if (Object.keys(updates).length > 0) {
       batcher.add(doc.ref, updates);
       statusPagesUpdated++;
     }
   }
 
-  await batcher.commit('disableSlaAndCustomDomain', userId);
+  await batcher.commit('disableCustomStatusDomain', userId);
   if (domainsDisabled > 0) {
     logger.info(`[plan-enforcement] Disabled ${domainsDisabled} custom domain(s) for ${userId}`);
   }
@@ -444,11 +445,11 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
 
   const totalBatches = await batcher.commit('downgrade→free', userId);
 
-  // Free has neither SLA reporting nor custom status domains. Every path into
-  // Free comes through here, so the Pro-only features are torn down here too.
-  // Own batcher, after the main commit, like the branding strip below.
-  if (!freeLimits.slaReporting || !freeLimits.customStatusDomain) {
-    await disableSlaAndCustomDomain(userId);
+  // Free has no custom status domains. Every path into Free comes through
+  // here, so they are torn down here too. Own batcher, after the main commit,
+  // like the branding strip below. (SLA reporting is runtime-gated.)
+  if (!freeLimits.customStatusDomain) {
+    await disableCustomStatusDomain(userId);
   }
 
   // Free has no status page builder — clear persisted branding / custom layouts
@@ -532,6 +533,8 @@ export function ceilingTightens(from: UserTier, to: UserTier): boolean {
   if (a.smsAlerts && !b.smsAlerts) return true;
   if (a.maintenanceMode && !b.maintenanceMode) return true;
   if (a.domainIntel && !b.domainIntel) return true;
+  // SLA reporting leaves no state to strip (runtime-gated), but losing it is
+  // still a tightening worth a pass.
   if (a.slaReporting && !b.slaReporting) return true;
   if (a.customStatusDomain && !b.customStatusDomain) return true;
   if (a.statusPageBuilder && !b.statusPageBuilder) return true;
@@ -615,8 +618,8 @@ export async function enforceTierCeiling(userId: string, newTier: UserTier): Pro
 
   // 3. Flag-gated features.
   const smsDisabled = limits.smsAlerts ? false : await disableSmsSettings(userId);
-  if (!limits.slaReporting || !limits.customStatusDomain) {
-    await disableSlaAndCustomDomain(userId);
+  if (!limits.customStatusDomain) {
+    await disableCustomStatusDomain(userId);
   }
   const brandingStripped = limits.statusPageBuilder ? 0 : await stripStatusPageBranding(userId);
 

@@ -210,6 +210,19 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // SLA reports (Pro): the account reads them in the app; every write goes
+    // through the SLA callables (scope, caps, zone and tier are validated
+    // server-side). Period docs carry userId so this needs no parent get().
+    // Reads stay open after a downgrade: past reports remain viewable.
+    match /sla_reports/{reportId} {
+      allow read: if canReadAccount(resource.data.userId);
+      allow write: if false;
+      match /periods/{period} {
+        allow read: if canReadAccount(resource.data.userId);
+        allow write: if false;
+      }
+    }
+
     // Status page incidents: the account reads them in the app; every write
     // goes through the manageStatusPageIncident callable. Public viewers see a
     // projection on the status page doc instead.

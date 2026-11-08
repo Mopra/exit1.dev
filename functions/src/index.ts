@@ -183,6 +183,17 @@ lazy((): typeof import('./team') => require('./team'), [
 ]);
 
 // Status pages
+// SLA reporting (Pro). The rollup and monthly email run on the VPS cron.
+lazy((): typeof import('./sla-reports') => require('./sla-reports'), [
+  'upsertSlaReport',
+  'deleteSlaReport',
+  'refreshSlaReport',
+  'sendSlaReportTest',
+  'previewSlaReportEmail',
+  'backfillSlaRollup',
+]);
+lazy((): typeof import('./sla-unsubscribe') => require('./sla-unsubscribe'), ['slaReportUnsubscribe']);
+
 lazy((): typeof import('./status-pages') => require('./status-pages'), ['getStatusPageUptime', 'getStatusPageSnapshot', 'getStatusPageHeartbeat']);
 lazy((): typeof import('./status-page-incidents') => require('./status-page-incidents'), ['manageStatusPageIncident', 'getStatusPageCheckDowntimes']);
 // Custom status page domains (Pro): claim, check, release. Behind CUSTOM_DOMAINS_ENABLED.
