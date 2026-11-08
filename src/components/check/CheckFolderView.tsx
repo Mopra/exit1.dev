@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { CheckTile } from "./CheckTile";
 import {
   Button,
@@ -33,6 +34,7 @@ import { getTypeIcon } from "../../lib/check-utils";
 import { toast } from "sonner";
 import {
   ArrowLeft,
+  Check,
   ChevronRight,
   Folder,
   Minus,
@@ -65,15 +67,86 @@ export interface CheckFolderViewProps {
   onBulkMoveToFolder?: (ids: string[], folder: string | null) => Promise<void>;
 }
 
-// Total leaf count for a folder, including all nested subfolders
-function countLeavesInFolder(folder: FolderInfo, checks: Website[]): number {
-  return checks.filter((c) => {
-    const f = normalizeFolder(c.folder);
-    return f && folderHasPrefix(f, folder.path);
-  }).length;
+// ---------- Health helpers ----------
+
+type Health = "down" | "degraded" | "maintenance" | "up" | "paused" | "unknown";
+
+function getHealth(c: Website): Health {
+  if (c.disabled) return "paused";
+  if (c.maintenanceMode) return "maintenance";
+  if (c.status === "offline" || c.detailedStatus === "DOWN") return "down";
+  if (c.status === "degraded" || c.detailedStatus === "REACHABLE_WITH_ERROR") return "degraded";
+  if (c.status === "online") return "up";
+  return "unknown";
 }
 
+const HEALTH_LED: Record<Health, string> = {
+  down: "bg-destructive",
+  degraded: "bg-warning",
+  maintenance: "bg-warning",
+  up: "bg-primary",
+  paused: "bg-muted-foreground/30",
+  unknown: "bg-muted-foreground/30",
+};
 
+const HEALTH_LABEL: Record<Health, string> = {
+  down: "Down",
+  degraded: "Degraded",
+  maintenance: "Maintenance",
+  up: "Up",
+  paused: "Paused",
+  unknown: "Pending",
+};
+
+interface HealthSummary { total: number; down: number; degraded: number; up: number; paused: number }
+
+function summarize(list: Website[]): HealthSummary {
+  const s: HealthSummary = { total: list.length, down: 0, degraded: 0, up: 0, paused: 0 };
+  for (const c of list) {
+    const h = getHealth(c);
+    if (h === "down") s.down++;
+    else if (h === "degraded" || h === "maintenance") s.degraded++;
+    else if (h === "up") s.up++;
+    else if (h === "paused") s.paused++;
+  }
+  return s;
+}
+
+// Worst state wins, so a folder with one down check reads as down.
+function summaryLed(s: HealthSummary): string {
+  if (s.down > 0) return HEALTH_LED.down;
+  if (s.degraded > 0) return HEALTH_LED.degraded;
+  if (s.up > 0) return HEALTH_LED.up;
+  return HEALTH_LED.unknown;
+}
+
+function displayHost(url: string): string {
+  return url.replace(/^[a-z]+:\/\//i, "").replace(/\/$/, "");
+}
+
+function checksUnder(checks: Website[], path: string): Website[] {
+  return checks.filter((c) => {
+    const f = normalizeFolder(c.folder);
+    return !!f && folderHasPrefix(f, path);
+  });
+}
+
+function HealthLed({ className, pulse }: { className: string; pulse?: boolean }) {
+  return (
+    <span className="relative flex size-2 shrink-0">
+      {pulse && <span className={cn("absolute inset-0 rounded-full animate-ping opacity-60", className)} />}
+      <span className={cn("relative size-2 rounded-full", className)} />
+    </span>
+  );
+}
+
+function SummaryText({ s }: { s: HealthSummary }) {
+  if (s.total === 0) return <span className="text-muted-foreground/60">Empty</span>;
+  if (s.down > 0) return <span className="text-destructive font-medium">{s.down} down</span>;
+  if (s.degraded > 0) return <span className="text-warning font-medium">{s.degraded} degraded</span>;
+  if (s.up === s.total) return <span className="text-muted-foreground">All up</span>;
+  return <span className="text-muted-foreground">{s.up} of {s.total} up</span>;
+}
 
 export default function CheckFolderView({
   checks,
@@ -83,6 +156,7 @@ export default function CheckFolderView({
   onBulkMoveToFolder,
 }: CheckFolderViewProps) {
   const isMobile = useMobile(640);
+  const navigate = useNavigate();
 
   // Persisted state
   const [customFolders, setCustomFolders] = useLocalStorage<string[]>(
@@ -206,13 +280,10 @@ export default function CheckFolderView({
   }, [isMobile, collapsed, rootFolders, unsortedChecks, allFolders, checks, zoomPath, getSubfolders]);
 
   // Delete-confirmation count
-  const deleteFolderCheckCount = useMemo(() => {
-    if (!deleteFolderPath) return 0;
-    return checks.filter((c) => {
-      const f = normalizeFolder(c.folder);
-      return f && folderHasPrefix(f, deleteFolderPath);
-    }).length;
-  }, [checks, deleteFolderPath]);
+  const deleteFolderCheckCount = useMemo(
+    () => (deleteFolderPath ? checksUnder(checks, deleteFolderPath).length : 0),
+    [checks, deleteFolderPath]
+  );
 
   // Selection
   const handleSelectCheck = useCallback((checkId: string, event?: React.MouseEvent) => {
@@ -441,18 +512,31 @@ export default function CheckFolderView({
 
   const hasAnyContent = rootFolders.length > 0 || unsortedChecks.length > 0;
 
-  // ---------- Check tile (compact, used in masonry grid) ----------
+  // Header summary covers whatever is in view: the whole account, or the zoomed folder.
+  const overallSummary = useMemo(
+    () => summarize(zoomPath ? checksUnder(checks, zoomPath) : checks),
+    [checks, zoomPath]
+  );
+
+  // ---------- Check row (inside a folder card) ----------
 
   const renderCheckTile = useCallback((check: Website, parentPath: string | null) => {
     const isSelected = selectedChecks.has(check.id);
     const isDragging = draggingCheckId === check.id;
+    const health = getHealth(check);
+    const selecting = selectedChecks.size > 0;
+    const showLatency = (health === "up" || health === "degraded") && typeof check.responseTime === "number";
     return (
       <div
         key={`check-${check.id}`}
+        role="button"
+        tabIndex={0}
         className={cn(
-          "group flex items-center gap-2 px-2 h-9 rounded-md border cursor-pointer transition-all select-none",
-          "bg-background/60 hover:bg-muted/60 backdrop-blur-[1px]",
-          isSelected ? "border-primary/40 ring-1 ring-primary/20 bg-primary/5" : "border-border/50 hover:border-border",
+          "group/row relative flex items-center gap-2.5 h-9 pl-2 pr-2.5 rounded-md cursor-pointer select-none transition-colors outline-none",
+          "hover:bg-foreground/[0.04] focus-visible:ring-1 focus-visible:ring-primary/50",
+          isSelected && "bg-primary/[0.07] hover:bg-primary/[0.1]",
+          health === "down" && !isSelected && "bg-destructive/[0.06] hover:bg-destructive/[0.1]",
+          health === "paused" && "opacity-60",
           isDragging && "opacity-40"
         )}
         draggable={!!onSetFolder}
@@ -471,15 +555,56 @@ export default function CheckFolderView({
           if (!draggingCheckId || draggingCheckId === check.id) return;
           dropOnTarget(e, parentPath);
         }}
-        onClick={(e) => handleSelectCheck(check.id, e)}
+        onClick={(e) => {
+          // A modifier click, or any click while a selection is active, selects.
+          // A plain click opens the check.
+          if (e.shiftKey || e.metaKey || e.ctrlKey || selecting) handleSelectCheck(check.id, e);
+          else navigate(`/checks/${check.id}`);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") navigate(`/checks/${check.id}`);
+          if (e.key === " ") { e.preventDefault(); handleSelectCheck(check.id); }
+        }}
+        title={`${check.name}: ${HEALTH_LABEL[health]}`}
       >
-        {getTypeIcon(check.type, "size-3.5 shrink-0 text-muted-foreground/80")}
-        <span className="text-[12px] font-medium tracking-tight truncate flex-1">{check.name}</span>
+        {/* Status LED, swapped for a checkbox on hover or while selecting */}
+        <span className="relative size-4 shrink-0 flex items-center justify-center">
+          <span className={cn("transition-opacity", isSelected || selecting ? "opacity-0" : "group-hover/row:opacity-0")}>
+            <HealthLed className={HEALTH_LED[health]} pulse={health === "down"} />
+          </span>
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label={isSelected ? "Deselect check" : "Select check"}
+            className={cn(
+              "absolute inset-0 rounded-[4px] border flex items-center justify-center transition-opacity",
+              isSelected
+                ? "bg-primary border-primary text-primary-foreground opacity-100"
+                : cn("border-muted-foreground/40 hover:border-primary/70", selecting ? "opacity-100" : "opacity-0 group-hover/row:opacity-100")
+            )}
+            onClick={(e) => { e.stopPropagation(); handleSelectCheck(check.id, e); }}
+          >
+            {isSelected && <Check className="size-3" strokeWidth={3} />}
+          </button>
+        </span>
+        {getTypeIcon(check.type, "size-3.5 shrink-0 text-muted-foreground/70")}
+        <span className="text-[13px] font-medium tracking-tight truncate shrink-0 max-w-[55%]">{check.name}</span>
+        <span className="text-[12px] text-muted-foreground/55 truncate flex-1 min-w-0">{displayHost(check.url)}</span>
+        <span className={cn(
+          "text-[11.5px] tabular-nums shrink-0 font-mono",
+          health === "down"
+            ? "text-destructive"
+            : health === "degraded" || health === "maintenance"
+              ? "text-warning"
+              : "text-muted-foreground/70"
+        )}>
+          {showLatency ? `${check.responseTime}ms` : HEALTH_LABEL[health]}
+        </span>
       </div>
     );
-  }, [selectedChecks, draggingCheckId, onSetFolder, dragOverTarget, dropOnTarget, handleSelectCheck]);
+  }, [selectedChecks, draggingCheckId, onSetFolder, dragOverTarget, dropOnTarget, handleSelectCheck, navigate]);
 
-  // ---------- Folder card (masonry, recursive) ----------
+  // ---------- Folder card (recursive) ----------
 
   const renderFolderCard = useCallback(
     (folder: FolderInfo, nested = false): React.ReactNode => {
@@ -489,9 +614,10 @@ export default function CheckFolderView({
       const isFolderDropTarget = folderDropTarget?.path === folder.path;
       const subfolders = getSubfolders(folder.path);
       const folderChecks = getChecksInFolder(checks, folder.path);
-      const totalChecks = countLeavesInFolder(folder, checks);
+      const summary = summarize(checksUnder(checks, folder.path));
       const canAddSub = canCreateSubfolder(folder.path);
       const hasBody = subfolders.length > 0 || folderChecks.length > 0;
+      const isCustomColor = theme.value !== "default";
 
       const canReorderWith =
         draggingFolderPath &&
@@ -506,11 +632,11 @@ export default function CheckFolderView({
           key={folder.path}
           draggable
           className={cn(
-            "relative break-inside-avoid rounded-xl border transition-colors",
-            nested ? "mb-2 last:mb-0 rounded-lg" : "mb-4",
-            theme.value === "default"
-              ? "border-border/50 bg-foreground/[0.02] hover:border-border"
-              : cn(theme.border, theme.lightBg),
+            "group/card relative break-inside-avoid border transition-colors overflow-hidden",
+            nested ? "rounded-lg bg-foreground/[0.015]" : "mb-4 rounded-xl bg-card",
+            "border-border/50 hover:border-border",
+            summary.down > 0 && !nested && "border-destructive/30 hover:border-destructive/50",
+            draggingCheckId && !isCheckDropActive && "border-dashed",
             isCheckDropActive && "ring-2 ring-inset ring-primary/60 bg-primary/[0.06]",
             isBeingDragged && "opacity-40"
           )}
@@ -563,79 +689,91 @@ export default function CheckFolderView({
             }
           }}
         >
+          {/* Folder color accent */}
+          {isCustomColor && (
+            <div className={cn("pointer-events-none absolute left-0 top-0 bottom-0 w-[3px]", theme.bg)} />
+          )}
+
           {/* Reorder indicator */}
           {isFolderDropTarget && folderDropTarget?.position === "before" && (
-            <div className="pointer-events-none absolute -top-1 left-0 right-0 h-0.5 rounded-full bg-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]" />
+            <div className="pointer-events-none absolute top-0 left-0 right-0 h-0.5 bg-primary" />
           )}
           {isFolderDropTarget && folderDropTarget?.position === "after" && (
-            <div className="pointer-events-none absolute -bottom-1 left-0 right-0 h-0.5 rounded-full bg-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]" />
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
 
           {/* Header */}
           <div
             className={cn(
-              "group flex items-center gap-1.5 cursor-pointer",
+              "flex items-center gap-2 cursor-pointer",
               hasBody && "border-b border-border/30",
-              nested ? "h-8 px-2.5" : "h-10 px-3"
+              nested ? "h-8 pl-2.5 pr-1" : "h-11 pl-3.5 pr-2"
             )}
             onClick={() => setZoomPath(folder.path)}
-            title="Zoom into folder"
+            title={`Open ${folder.name}`}
           >
-            <div className={cn("size-2 rounded-full shrink-0", theme.value === "default" ? "bg-muted-foreground/40" : theme.bg)} />
+            <HealthLed className={summaryLed(summary)} pulse={summary.down > 0} />
             <Folder
-              className={cn("size-3.5 shrink-0", theme.value === "default" ? "text-muted-foreground/80" : theme.text)}
+              className={cn("size-3.5 shrink-0", isCustomColor ? theme.text : "text-muted-foreground/70")}
               strokeWidth={1.75}
             />
             <span className={cn(
-              "font-medium tracking-tight truncate flex-1",
-              nested ? "text-[12px]" : "text-[13px]"
+              "font-semibold tracking-tight truncate min-w-0",
+              nested ? "text-[12.5px]" : "text-[13.5px]"
             )}>
               {folder.name}
             </span>
-            <span className="text-[12px] font-medium tabular-nums text-foreground/80 shrink-0 px-1.5">{totalChecks}</span>
-            {canAddSub && (
-              <button
-                type="button"
-                className="shrink-0 size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/[0.08] transition-all"
-                onClick={(e) => { e.stopPropagation(); openNewFolderDialog(folder.path); }}
-                title="Add subfolder"
-              >
-                <Plus className="size-4" strokeWidth={2} />
-              </button>
-            )}
-            <div onClick={(e) => e.stopPropagation()}>
-              <FolderMenu
-                folder={folder}
-                colors={folderColors}
-                onRename={() => {
-                  setRenameFolderValue(getFolderName(folder.path));
-                  setRenameFolderError(null);
-                  setRenameFolderPath(folder.path);
-                }}
-                onDelete={() => setDeleteFolderPath(folder.path)}
-                onColorChange={(color) => handleColorChange(folder.path, color)}
-                compact
-              />
+            <span className="text-[11.5px] tabular-nums text-muted-foreground/60 shrink-0">{summary.total}</span>
+            <span className="flex-1" />
+            <span className="text-[11.5px] tabular-nums shrink-0 pr-1"><SummaryText s={summary} /></span>
+            <div className="flex items-center opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100 transition-opacity">
+              {canAddSub && (
+                <button
+                  type="button"
+                  className="shrink-0 size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/[0.08] transition-colors"
+                  onClick={(e) => { e.stopPropagation(); openNewFolderDialog(folder.path); }}
+                  title="Add subfolder"
+                >
+                  <Plus className="size-3.5" strokeWidth={2} />
+                </button>
+              )}
+              <div onClick={(e) => e.stopPropagation()}>
+                <FolderMenu
+                  folder={folder}
+                  colors={folderColors}
+                  onRename={() => {
+                    setRenameFolderValue(getFolderName(folder.path));
+                    setRenameFolderError(null);
+                    setRenameFolderPath(folder.path);
+                  }}
+                  onDelete={() => setDeleteFolderPath(folder.path)}
+                  onColorChange={(color) => handleColorChange(folder.path, color)}
+                  compact
+                />
+              </div>
             </div>
           </div>
 
           {/* Body */}
-          {hasBody && (
-            <div className={cn(nested ? "p-2 space-y-2" : "p-3 space-y-3")}>
+          {hasBody ? (
+            <div className={cn(nested ? "p-1" : "p-1.5")}>
               {subfolders.length > 0 && (
-                <div className="space-y-2">
+                <div className={cn("space-y-1.5 p-1", folderChecks.length > 0 && "pb-1.5")}>
                   {subfolders.map((sf) => renderFolderCard(sf, true))}
                 </div>
               )}
               {folderChecks.length > 0 && (
-                <div
-                  className="grid gap-2"
-                  style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${nested ? 132 : 148}px, 1fr))` }}
-                >
+                <div className="flex flex-col">
                   {folderChecks.map((c) => renderCheckTile(c, folder.path))}
                 </div>
               )}
             </div>
+          ) : (
+            !nested && (
+              <p className="px-4 py-3 text-[11.5px] text-muted-foreground/60 border-t border-border/30">
+                Drag checks here
+              </p>
+            )
           )}
         </div>
       );
@@ -664,16 +802,17 @@ export default function CheckFolderView({
   const renderUnsortedCard = useCallback(() => {
     const isDropActive = dropTarget === "__unsorted__";
     const isEmpty = unsortedChecks.length === 0;
+    const summary = summarize(unsortedChecks);
     return (
       <div
         key="unsorted"
         className={cn(
-          "break-inside-avoid mb-4 rounded-xl border border-dashed transition-colors",
-          "border-border/50 bg-transparent hover:bg-foreground/[0.02]",
+          "break-inside-avoid mb-4 rounded-xl border border-dashed transition-colors overflow-hidden",
+          "border-border/50 bg-transparent",
           isDropActive && "ring-2 ring-inset ring-primary/60 bg-primary/[0.06] border-solid"
         )}
         onDragOver={(e) => {
-          if (draggingFolderPath) return; // folder reordering — not a valid drop here
+          if (draggingFolderPath) return; // folder reordering, not a valid drop here
           dragOverTarget(e, null);
         }}
         onDragLeave={dragLeaveTarget}
@@ -682,22 +821,19 @@ export default function CheckFolderView({
           dropOnTarget(e, null);
         }}
       >
-        <div className={cn("flex items-center gap-1.5 px-3 h-10", !isEmpty && "border-b border-border/30")}>
-          <div className="size-2 rounded-full bg-muted-foreground/30 shrink-0" />
-          <span className="text-[13px] font-medium tracking-tight truncate flex-1 text-muted-foreground/80">Unsorted</span>
-          <span className="text-[12px] font-medium tabular-nums text-foreground/80 shrink-0 px-1.5">{unsortedChecks.length}</span>
+        <div className={cn("flex items-center gap-2 pl-3.5 pr-3 h-11", !isEmpty && "border-b border-border/30")}>
+          <HealthLed className={isEmpty ? HEALTH_LED.unknown : summaryLed(summary)} pulse={summary.down > 0} />
+          <span className="text-[13.5px] font-semibold tracking-tight truncate text-muted-foreground">Unsorted</span>
+          <span className="text-[11.5px] tabular-nums text-muted-foreground/60 shrink-0">{summary.total}</span>
+          <span className="flex-1" />
+          {!isEmpty && <span className="text-[11.5px] tabular-nums shrink-0"><SummaryText s={summary} /></span>}
         </div>
         {isEmpty ? (
-          <div className="px-4 py-5 flex items-center justify-center">
-            <p className="text-[11px] text-muted-foreground/60 text-center leading-snug">
-              Drop checks here to remove them from folders
-            </p>
-          </div>
+          <p className="px-4 py-3 text-[11.5px] text-muted-foreground/60">
+            Drop checks here to take them out of folders
+          </p>
         ) : (
-          <div
-            className="p-3 grid gap-2"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))" }}
-          >
+          <div className="p-1.5 flex flex-col">
             {unsortedChecks.map((c) => renderCheckTile(c, null))}
           </div>
         )}
@@ -844,9 +980,20 @@ export default function CheckFolderView({
               <h3 className="text-[15px] font-semibold tracking-tight text-foreground">Folders</h3>
             )}
           </div>
-          <p className="text-xs text-muted-foreground/80 tabular-nums">
-            {checks.length} {checks.length === 1 ? "check" : "checks"}
-            {zoomPath && " · drag checks between folders to reorganize"}
+          <p className="text-xs text-muted-foreground/80 tabular-nums flex items-center gap-1.5">
+            <span>{overallSummary.total} {overallSummary.total === 1 ? "check" : "checks"}</span>
+            {overallSummary.down > 0 && (
+              <><span className="text-muted-foreground/40">·</span><span className="text-destructive font-medium">{overallSummary.down} down</span></>
+            )}
+            {overallSummary.degraded > 0 && (
+              <><span className="text-muted-foreground/40">·</span><span className="text-warning font-medium">{overallSummary.degraded} degraded</span></>
+            )}
+            {overallSummary.paused > 0 && (
+              <><span className="text-muted-foreground/40">·</span><span>{overallSummary.paused} paused</span></>
+            )}
+            {!isMobile && checks.length > 0 && (
+              <span className="text-muted-foreground/50 hidden lg:inline">· drag to reorganize, shift-click to select</span>
+            )}
           </p>
         </div>
 
@@ -938,7 +1085,7 @@ export default function CheckFolderView({
             )}
 
             {!zoomPath && hasAnyContent && (
-              <div className="w-full">
+              <div className="columns-1 lg:columns-2 2xl:columns-3 gap-4">
                 {desktopVisibleFolders.map((folder) => renderFolderCard(folder, false))}
                 {renderUnsortedCard()}
               </div>
@@ -950,28 +1097,25 @@ export default function CheckFolderView({
                 {zoomedDirectChecks.length > 0 && (
                   <div
                     className={cn(
-                      "mb-4 rounded-xl border p-3 transition-colors",
-                      "border-border/50 bg-foreground/[0.02]",
+                      "mb-4 rounded-xl border p-1.5 pt-3 transition-colors",
+                      "border-border/50 bg-card",
                       dropTarget === zoomedFolder.path && "ring-2 ring-inset ring-primary/60 bg-primary/[0.06]"
                     )}
                     onDragOver={(e) => dragOverTarget(e, zoomedFolder.path)}
                     onDragLeave={dragLeaveTarget}
                     onDrop={(e) => dropOnTarget(e, zoomedFolder.path)}
                   >
-                    <p className="text-[10.5px] uppercase tracking-wide text-muted-foreground/70 px-1 pb-2">
+                    <p className="text-[10.5px] uppercase tracking-wide text-muted-foreground/70 px-2 pb-2">
                       Directly in {zoomedFolder.name}
                     </p>
-                    <div
-                      className="grid gap-2"
-                      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))" }}
-                    >
+                    <div className="grid gap-x-4 lg:grid-cols-2 2xl:grid-cols-3">
                       {zoomedDirectChecks.map((c) => renderCheckTile(c, zoomedFolder.path))}
                     </div>
                   </div>
                 )}
 
                 {zoomedSubs.length > 0 && (
-                  <div className="w-full">
+                  <div className="columns-1 lg:columns-2 2xl:columns-3 gap-4">
                     {zoomedSubs.map((folder) => renderFolderCard(folder, false))}
                   </div>
                 )}
