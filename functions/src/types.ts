@@ -520,3 +520,59 @@ export interface ApiKeyDoc {
   /** Set when a team member minted the key inside the owner's account (userId). */
   createdByUid?: string;
 }
+
+// ── Custom status page domains (Pro) ──
+// See docs/plans/custom-status-domain.md. Server-only docs; clients see the
+// StatusPageCustomDomain mirror on status_pages/{id}.customDomain.
+
+export type CustomDomainStatus = 'pending' | 'verifying' | 'active' | 'failed' | 'disabled';
+export type CustomDomainFailedReason = 'timeout' | 'blocked' | 'moved' | 'provider_error';
+export type CustomDomainDisabledReason = 'plan_downgrade' | 'owner';
+
+/** custom_domains/{hostname}. The doc id is the normalized hostname, which makes claims unique. */
+export interface CustomDomainDoc {
+  hostname: string;
+  /** Owning account (team owner, not the acting member). */
+  userId: string;
+  statusPageId: string;
+  status: CustomDomainStatus;
+  /** 32 hex chars, published by the customer as TXT `exit1-verify=<token>`. */
+  verifyToken: string;
+  /** Last time the TXT matched. */
+  ownershipVerifiedAt: number | null;
+  /** Last CNAME observation, advisory only (hidden when the customer proxies through Cloudflare). */
+  cnameOk: boolean | null;
+  provider: 'cloudflare';
+  /** Cloudflare custom hostname id. */
+  providerId: string | null;
+  /** Raw Cloudflare hostname status, e.g. 'pending', 'active', 'moved', 'blocked'. */
+  providerStatus: string | null;
+  /** Raw Cloudflare ssl.status, e.g. 'pending_validation', 'active'. */
+  sslStatus: string | null;
+  /** Human readable, shown in the editor. */
+  lastError: string | null;
+  failedReason: CustomDomainFailedReason | null;
+  disabledReason: CustomDomainDisabledReason | null;
+  /** First time Cloudflare reported `moved` on this domain since it last was not moved. */
+  movedSince: number | null;
+  statusChangedAt: number;
+  lastCheckedAt: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** status_pages/{id}.customDomain: what the editor and the public page need, nothing secret. */
+export interface StatusPageCustomDomain {
+  hostname: string;
+  status: CustomDomainStatus;
+  /** e.g. { name: '_exit1-verify.status.acme.com', value: 'exit1-verify=<token>' } */
+  verifyRecord: { name: string; value: string };
+  cnameTarget: string;
+  lastError: string | null;
+  /** Set while status is 'failed'. Additive to the plan's shape. */
+  failedReason: CustomDomainFailedReason | null;
+  /** Set while status is 'disabled'. Additive to the plan's shape. */
+  disabledReason: CustomDomainDisabledReason | null;
+  statusChangedAt: number;
+  lastCheckedAt: number;
+}

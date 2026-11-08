@@ -174,6 +174,63 @@ export const TIER_DISPLAY_NAMES: Record<Tier, string> = {
 // The `CheckLimitOverrides` argument that carried the flag was removed with it —
 // `getMaxChecksForTier` is a pure tier lookup again.
 
+// --- Custom status page domains (Pro) ----------------------------------------
+//
+// Pro users attach their own hostname (status.acme.com) to a status page. The
+// hostname is registered as a Cloudflare for SaaS custom hostname on the
+// exit1.dev zone, and a Worker proxies the SPA. See
+// docs/plans/custom-status-domain.md for the whole design.
+
+export const CUSTOM_DOMAIN = {
+  /**
+   * Kill switch (CUSTOM_DOMAINS_ENABLED). Off: the callables refuse everyone
+   * except admins and `allowUids`. The reconciler runs either way; with no
+   * domain docs it costs a couple of empty queries an hour.
+   */
+  enabled: false,
+  /** Accounts (owner uid) or actors that may use the feature while `enabled` is false. */
+  allowUids: [] as readonly string[],
+  /** Customer CNAME target. Also the Cloudflare for SaaS fallback origin. */
+  cnameTarget: "domains.exit1.dev",
+  /** TXT ownership record lives at `<txtPrefix>.<hostname>`. */
+  txtPrefix: "_exit1-verify",
+  /** TXT value is `<txtValuePrefix><token>`. */
+  txtValuePrefix: "exit1-verify=",
+  /** Cloudflare zone id of exit1.dev (not secret). Cloudflare for SaaS is enabled on it. */
+  cloudflareZoneId: "07ee08f396163a43b521495a1c369b03",
+  /** Domain docs per account, every status counted (a disabled domain keeps its reservation). */
+  maxPerAccount: 10,
+  /** Claims per account per day (in-memory, per instance). */
+  claimsPerDay: 20,
+  /** pending or verifying this long without progress becomes failed. */
+  setupTimeoutMs: 72 * 60 * 60 * 1000,
+  /** A never-verified failed claim is released this long after it failed. */
+  failedReleaseAfterMs: 7 * 24 * 60 * 60 * 1000,
+  /** Cloudflare `moved` this long on an active domain becomes failed. */
+  movedFailAfterMs: 7 * 24 * 60 * 60 * 1000,
+  /** Cloudflare hostname of a disabled domain is kept this long, then deleted. */
+  disabledGraceMs: 14 * 24 * 60 * 60 * 1000,
+  /** Reconnect or retry re-checks the TXT when the last match is older than this. */
+  reverifyAfterMs: 30 * 24 * 60 * 60 * 1000,
+  /** Another account may take over a pending claim this old by passing TXT. */
+  contestedPendingMinAgeMs: 60 * 60 * 1000,
+  /** checkStatusPageDomain does no work when the same domain was checked this recently. */
+  checkThrottleMs: 5_000,
+  /** Per DNS query. */
+  dnsTimeoutMs: 3_000,
+  dnsServers: ["1.1.1.1", "8.8.8.8"] as readonly string[],
+  /** Per Cloudflare API call. */
+  cloudflareTimeoutMs: 10_000,
+  /** UTC hour whose reconciler run also does the daily sweep. */
+  dailySweepHourUtc: 3,
+  /** Health email when the hostname count reaches this (Cloudflare for SaaS includes 100). */
+  healthHostnameThreshold: 90,
+  healthEmailTo: "morten@exit1.dev",
+} as const;
+
+/** Alias with the name the plan and the frontend mirror use. */
+export const CUSTOM_DOMAINS_ENABLED: boolean = CUSTOM_DOMAIN.enabled;
+
 // Configuration for cost optimization
 export const CONFIG = {
   // Scheduler function resource configuration
