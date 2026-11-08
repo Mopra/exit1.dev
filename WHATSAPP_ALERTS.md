@@ -20,6 +20,14 @@ The feature is dark while either secret holds the placeholder `unset`: `getSmsSe
 
 Not covered yet: domain expiry alerts (`alert-domain.ts`) stay SMS only; there is no inbound webhook, so delivery failures after Meta accepts a message (for example a number without WhatsApp, error 131026) and "STOP" replies are not seen. Users turn WhatsApp off on the SMS page.
 
+## Live setup (2026-11-08)
+
+- Business portfolio: Pradsgaard Labs (944535408436162), verified.
+- WhatsApp Business Account: Exit1.dev (1877121336312563). Billed afterwards to the card on file; there is no prepaid balance.
+- Sender: Twilio toll-free +1 844 623 5510, phone number ID 1457237300800137, display name Exit1.dev. The old +45 52 51 59 56 on the same account is unverified and must not be used.
+- Meta app: Exit1 Alerts (1392842786259833). System user exit1-whatsapp-alerts (61596546833072, Admin) holds the non-expiring token in `WHATSAPP_ACCESS_TOKEN`.
+- The two-step verification PIN for the number is not stored in the repo; ask Morten.
+
 ## Setup (human steps)
 
 1. **Meta Business verification.** business.facebook.com, Security Center, verify the business (exit1 / the legal entity behind it).
@@ -41,16 +49,17 @@ Not covered yet: domain expiry alerts (`alert-domain.ts`) stay SMS only; there i
 
 ## Templates
 
-Submit each with the sample values shown; Meta reviews them against the samples.
+All four approved 2026-11-08 (submitted through the Graph API). Meta rejects a body with too few words per variable or a variable at the very start or end, which is why the bodies are wordier than the first draft. Submit each with the sample values shown; Meta reviews them against the samples.
 
 ### exit1_check_down
 
 Body:
 
 ```
-Exit1 alert: {{1}} is down.
-Status: {{2}}
-URL: {{3}}
+Exit1 alert: your monitored check {{1}} is down right now.
+Status reported: {{2}}
+Checked URL: {{3}}
+We will send another message as soon as it is back up.
 ```
 
 Samples: `{{1}}` Shop API, `{{2}}` 503 Service Unavailable, `{{3}}` https://shop.example.com
@@ -62,9 +71,10 @@ Footer: `Manage alerts at app.exit1.dev`
 Body:
 
 ```
-Exit1 alert: {{1}} is back up.
-Status: {{2}}
-URL: {{3}}
+Exit1 alert: your monitored check {{1}} is back up again.
+Status reported: {{2}}
+Checked URL: {{3}}
+No further action is needed for this alert.
 ```
 
 Samples: `{{1}}` Shop API, `{{2}}` 200 OK, was offline, 120ms, `{{3}}` https://shop.example.com
@@ -76,8 +86,9 @@ Footer: `Manage alerts at app.exit1.dev`
 Body:
 
 ```
-Exit1 SSL alert for {{1}}: {{2}}.
-URL: {{3}}
+Exit1 SSL alert for your monitored check {{1}}: {{2}}.
+Checked URL: {{3}}
+Please review the certificate before it causes downtime for your visitors.
 ```
 
 Samples: `{{1}}` Shop API, `{{2}}` expires in 7 days, `{{3}}` https://shop.example.com
