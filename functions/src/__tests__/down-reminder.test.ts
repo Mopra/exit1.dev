@@ -56,8 +56,10 @@ test("isDownReminderDue: no anchor means no reminder", () => {
   assert.equal(isDownReminderDue({ now: 1_000 * MIN, intervalMinutes: 10 }), false);
 });
 
-test("resolveDownSince prefers the first failed probe, then the transition", () => {
+test("resolveDownSince takes the earliest of first failure and transition", () => {
   const now = 1_000 * MIN;
+  // A passing blip mid-outage restarts lastFailureTime; the transition still wins.
+  assert.equal(resolveDownSince({ lastFailureTime: now - 2 * MIN, lastStatusChange: now - 180 * MIN }, now), now - 180 * MIN);
   assert.equal(resolveDownSince({ lastFailureTime: now - 30 * MIN, lastStatusChange: now - 28 * MIN }, now), now - 30 * MIN);
   assert.equal(resolveDownSince({ lastFailureTime: null, lastStatusChange: now - 28 * MIN }, now), now - 28 * MIN);
   assert.equal(resolveDownSince({}, now), undefined);

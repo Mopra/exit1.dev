@@ -36,19 +36,22 @@ export function normalizeDownReminderInterval(value: unknown): DownReminderInter
 }
 
 /**
- * When the outage began, for "down for X" copy. Prefers the first failed probe
- * of the streak (`lastFailureTime`), which is what the user experienced, and
- * falls back to the confirmed transition time. Returns undefined when neither
- * is a usable past timestamp.
+ * When the outage began, for "down for X" copy. Takes the earlier of the first
+ * failed probe of the current streak (`lastFailureTime`) and the confirmed
+ * transition (`lastStatusChange`). A single passing probe during an outage
+ * clears `lastFailureTime`, and the next failure restarts it, so preferring it
+ * outright would understate a long outage. It is cleared on success, so it can
+ * never be stale from an older outage. Returns undefined when neither is a
+ * usable past timestamp.
  */
 export function resolveDownSince(
   check: { lastFailureTime?: number | null; lastStatusChange?: number | null },
   now: number,
 ): number | undefined {
-  for (const candidate of [check.lastFailureTime, check.lastStatusChange]) {
-    if (typeof candidate === "number" && candidate > 0 && candidate <= now) return candidate;
-  }
-  return undefined;
+  const valid = [check.lastFailureTime, check.lastStatusChange].filter(
+    (c): c is number => typeof c === "number" && c > 0 && c <= now,
+  );
+  return valid.length ? Math.min(...valid) : undefined;
 }
 
 /**
