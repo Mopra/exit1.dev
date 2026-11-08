@@ -1,3 +1,4 @@
+import { TELEGRAM_ENABLED } from './integration-scope';
 import type { LucideIcon } from 'lucide-react';
 import {
   Globe,
@@ -136,10 +137,10 @@ export const pageItems: SearchItem[] = [
   {
     id: 'page-integrations',
     name: 'Integrations',
-    description: 'Pushover, PagerDuty, Opsgenie',
+    description: TELEGRAM_ENABLED ? 'Pushover, Telegram, PagerDuty, Opsgenie' : 'Pushover, PagerDuty, Opsgenie',
     path: '/integrations',
     iconName: 'Plug',
-    keywords: ['notifications', 'pushover', 'pagerduty', 'opsgenie', 'integration', 'rest', 'api'],
+    keywords: ['notifications', 'pushover', ...(TELEGRAM_ENABLED ? ['telegram'] : []), 'pagerduty', 'opsgenie', 'integration', 'rest', 'api'],
     category: 'page',
   },
   {

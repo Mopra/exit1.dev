@@ -49,8 +49,9 @@ export function scopeOfWebhookType(
   return INTEGRATION_SCOPE_SET.has(t) ? 'integration' : 'webhook';
 }
 
-// Telegram stays hidden from the picker until its bot token is set and the
-// Telegram functions are deployed. Flip to true then.
+// Telegram stays hidden from the picker and the copy (here, search-data.ts,
+// Webhooks.tsx) until its bot token is set and the Telegram functions are
+// deployed. Flip to true then; nothing else needs to change.
 export const TELEGRAM_ENABLED = false;
 
 export function platformTypesForScope(scope: IntegrationScope): readonly WebhookPlatformType[] {
@@ -132,7 +133,7 @@ const WEBHOOK_LABELS: ScopeLabels = {
   deleteSingleTitle: (name) => `Delete "${name}"?`,
   deleteBulkTitle: (n) => `Delete ${n} webhook${n !== 1 ? 's' : ''}?`,
   failureEmailSubject: 'Webhook',
-  crossLinkLabel: 'Looking for Pushover, PagerDuty, or Opsgenie? Find them under Integrations →',
+  crossLinkLabel: `Looking for Pushover, ${TELEGRAM_ENABLED ? 'Telegram, ' : ''}PagerDuty, or Opsgenie? Find them under Integrations →`,
   crossLinkPath: '/integrations',
   upgradeLimitMessage: channelLimitMessage,
   downgradeMessage: channelDowngradeMessage('webhooks'),
@@ -155,7 +156,7 @@ const INTEGRATION_LABELS: ScopeLabels = {
   formEditSubtitle: 'Update your integration configuration',
   testMenu: 'Test integration',
   emptyTitle: 'No integrations configured',
-  emptyDescription: 'Connect Pushover, PagerDuty, or Opsgenie to receive alerts on the tools your team already uses.',
+  emptyDescription: `Connect Pushover, ${TELEGRAM_ENABLED ? 'Telegram, ' : ''}PagerDuty, or Opsgenie to receive alerts on the tools your team already uses.`,
   emptyAction: 'Add Your First Integration',
   bulkItemLabel: 'integration',
   deleteSingleTitle: (name) => `Delete "${name}"?`,
