@@ -42,6 +42,8 @@ const Team = lazy(() => import('./pages/Team'));
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const Reports = lazy(() => import('./pages/Reports'));
+const Sla = lazy(() => import('./pages/Sla'));
+const SlaReport = lazy(() => import('./pages/SlaReport'));
 const API = lazy(() => import('./pages/Api'));
 const ApiKeys = lazy(() => import('./pages/ApiKeys'));
 const Mcp = lazy(() => import('./pages/Mcp'));
@@ -263,6 +265,26 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Reports />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/sla"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Sla />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/sla/:reportId"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <SlaReport />
                     </AuthGuard>
                   </Layout>
                 }

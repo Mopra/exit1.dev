@@ -13,6 +13,8 @@ const ROUTE_DOCS: Array<{ pattern: string; path: string; label: string }> = [
   { pattern: "/sms", path: "/alerting/sms-alerts", label: "SMS alerts docs" },
   { pattern: "/logs", path: "/analytics/logs", label: "Logs docs" },
   { pattern: "/reports", path: "/analytics/reports", label: "Reports docs" },
+  { pattern: "/sla", path: "/analytics/sla-reports", label: "SLA reports docs" },
+  { pattern: "/sla/:reportId", path: "/analytics/sla-reports", label: "SLA reports docs" },
   { pattern: "/api", path: "/api-reference", label: "API reference docs" },
   { pattern: "/api-keys", path: "/api-reference/authentication", label: "API authentication docs" },
   { pattern: "/billing", path: "/billing/manage", label: "How billing works" },

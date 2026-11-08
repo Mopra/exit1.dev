@@ -13,6 +13,7 @@ import {
   DatabaseIcon,
   DiscordIcon,
   FileBadgeIcon,
+  GaugeIcon,
   GlobeIcon,
   MailIcon,
   MessageSquareIcon,
@@ -77,6 +78,11 @@ const getNavData = (isAdmin: boolean, smsAlerts: boolean) => ({
       title: "Reports",
       url: "/reports",
       icon: ChartColumnIcon,
+    },
+    {
+      title: "SLA",
+      url: "/sla",
+      icon: GaugeIcon,
     },
     {
       title: "Status",

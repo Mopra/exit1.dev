@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAccountId } from '@/AccountProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type DateRange } from 'react-day-picker';
 // removed metric icons
 
@@ -101,6 +101,17 @@ const Reports: React.FC = () => {
       setWebsiteFilter('');
     }
   }, [websiteFilter, setWebsiteFilter]);
+
+  // Deep link from an SLA report: /reports?check=<id> selects that check once.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const checkParam = searchParams.get('check');
+  React.useEffect(() => {
+    if (!checkParam) return;
+    setWebsiteFilter(checkParam);
+    const next = new URLSearchParams(searchParams);
+    next.delete('check');
+    setSearchParams(next, { replace: true });
+  }, [checkParam, searchParams, setSearchParams, setWebsiteFilter]);
 
   const [uptimeDisplay, setUptimeDisplay] = React.useState<string>('-');
   const [metricsLoading, setMetricsLoading] = React.useState<boolean>(false);

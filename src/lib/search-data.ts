@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   FileText,
   Plus,
+  Gauge,
 } from 'lucide-react';
 
 // --- Types ---
@@ -29,7 +30,8 @@ export type IconName =
   | 'Globe' | 'BarChart3' | 'Activity' | 'Webhook' | 'Mail'
   | 'MessageSquare' | 'FileBadge' | 'Database' | 'Code' | 'Shield'
   | 'Users' | 'Bell' | 'CreditCard' | 'User' | 'Rocket'
-  | 'Key' | 'Plug' | 'AlertTriangle' | 'FileText' | 'Plus';
+  | 'Key' | 'Plug' | 'AlertTriangle' | 'FileText' | 'Plus'
+  | 'Gauge';
 
 /** Map from serializable icon name to Lucide component — used to restore icons from localStorage */
 export const iconMap: Record<IconName, LucideIcon> = {
@@ -37,6 +39,7 @@ export const iconMap: Record<IconName, LucideIcon> = {
   MessageSquare, FileBadge, Database, Code, Shield,
   Users, Bell, CreditCard, User, Rocket,
   Key, Plug, AlertTriangle, FileText, Plus,
+  Gauge,
 };
 
 export interface SearchItem {
@@ -114,6 +117,15 @@ export const pageItems: SearchItem[] = [
     path: '/reports',
     iconName: 'BarChart3',
     keywords: ['analytics', 'uptime', 'statistics', 'charts'],
+    category: 'page',
+  },
+  {
+    id: 'page-sla',
+    name: 'SLA reports',
+    description: 'Monthly availability against client targets',
+    path: '/sla',
+    iconName: 'Gauge',
+    keywords: ['sla', 'availability', 'error budget', 'contract', 'monthly report', 'client'],
     category: 'page',
   },
   {

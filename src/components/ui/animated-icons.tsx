@@ -148,6 +148,19 @@ export const ChartColumnIcon = define("ChartColumnIcon", (p) => (
   </Svg>
 ))
 
+// SLA: the needle swings back to empty and sweeps up to its reading, with a
+// small overshoot, like a gauge settling on the month's number.
+const NEEDLE: Variants = {
+  normal: { rotate: 0, transition: OUT },
+  animate: { rotate: [0, -95, 18, -6, 0], transition: { ...IN, duration: 0.85 } },
+}
+export const GaugeIcon = define("GaugeIcon", (p) => (
+  <Svg {...p}>
+    <m.path d="m12 14 4-4" variants={NEEDLE} style={{ originX: 0, originY: 1 }} />
+    <path d="M3.34 19a10 10 0 1 1 17.32 0" />
+  </Svg>
+))
+
 // Status: the heartbeat trace redraws, like a fresh reading coming in.
 const TRACE: Variants = {
   normal: { pathLength: 1, opacity: 1, transition: OUT },
