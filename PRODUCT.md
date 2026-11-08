@@ -338,7 +338,7 @@ Schedule planned maintenance windows to suppress alerts (Nano, Pro):
 Share uptime status with customers and stakeholders:
 
 - Public or private visibility options
-- Custom domain support with SSL (Pro tier)
+- Custom domain with automatic HTTPS (Pro): up to 10 per account, one per page, subdomains only. TXT ownership record plus a CNAME to `domains.exit1.dev`; Cloudflare proxied records work. Statuses `pending`, `verifying`, `active`, `failed`, `disabled`; a downgrade disables domains with 14 days of grace
 - Branding customization (logo, favicon, colors)
 - Optional "Powered by exit1.dev" footer (removable on any tier with the status page builder — Indie and up)
 - Folder-based dynamic check inclusion
@@ -408,7 +408,15 @@ Embed real-time monitoring badges on your website, README, or documentation:
 - Average response time with distribution buckets
 - Time ranges: 1h, 24h, 7d, 30d, 60d, custom calendar
 - Recharts-based bar and line visualizations
-- Dedicated SLA reporting surface on Pro tier
+
+**SLA reports (Pro)**
+- Account-level reports at `/sla`, up to 50 per account: name (client or contract), target (presets 99 to 99.99, custom 90 to 99.999), checks and folders (up to 250 checks), and an IANA time zone
+- Periods are calendar months in the report's zone, DST correct
+- Availability = up / (up + down), confirmed downtime only. Maintenance, WAF-blocked probes (unless `countBlockedAsDown`) and gaps with no data are excluded and shown as excluded time plus coverage %
+- Month to date, error budget, status (on track, at risk, breached, met) and an incident log
+- Rollup refreshes 4 times a day; a month is final 2 h after it ends locally
+- Branded monthly HTML email (company name, logo, brand color) to up to 10 recipients, outside addresses allowed, with an unsubscribe link, on the local 1st
+- No PDF or CSV export. Read-only public API (`GET /v1/public/sla-reports[/:id]`) and MCP tool `get_sla_report`
 
 **Log Annotations**
 - **Log notes** — Attach comments (max 2000 chars) to any historical check result
@@ -582,9 +590,9 @@ tier in full:
 - **CSV export** of check history
 - **Per-log comments** and **extra email recipients** (per-check & per-folder)
 - **All alert channels** — Slack, Discord, Teams
-- **Custom status domains** with SSL *(coming soon)*
-- **SLA reporting** surface *(coming soon)*
-- **Team seats** (10) *(coming soon)*
+- **Custom status domains** with automatic HTTPS (up to 10)
+- **SLA reports** with a branded monthly email (up to 50)
+- **Team members** (10), editor or viewer
 - All widget types, all Nano features
 
 ### Email budget derivation
@@ -1018,7 +1026,7 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 | Function | Type | Description |
 |----------|------|-------------|
 | `syncMyTier` | Callable | Force-refresh Firestore tier cache from Clerk subscription data (called by client on mismatch) |
-| `enforcePlanDowngrade` | Callable | Handle downgrade: disable excess checks/webhooks/API keys/status pages, clamp intervals, turn off tier-gated features (SMS, DNS, custom domain, SLA reporting), backfill userTier |
+| `enforcePlanDowngrade` | Callable | Handle downgrade: disable excess checks/webhooks/API keys/status pages, clamp intervals, turn off tier-gated features (SMS, DNS, custom domain; SLA reports are gated at runtime), backfill userTier |
 | `recomputeAllTiers` | Callable (admin) | Resumable bulk recompute — scans all Clerk users, recalculates tier from active subscription, backfills denormalized userTier on every check. Supports dry-run and ~200 users per invocation |
 
 ### Notification Functions

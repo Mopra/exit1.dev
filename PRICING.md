@@ -32,8 +32,6 @@ All plans share the same monitoring engine. Higher tiers unlock faster checks, h
 
 ## Feature matrix
 
-Capabilities marked **🕐 Coming soon** have the entitlement flag enabled in code but the feature itself is still being built. Subscribers see a "Coming Soon" badge in-app.
-
 | Capability | Free | Indie | Nano | Pro |
 |---|---|---|---|---|
 | **Monitored checks** | 50 | 100 | 250 | 1,000 |
@@ -60,9 +58,9 @@ Capabilities marked **🕐 Coming soon** have the entitlement flag enabled in co
 | All alert channels (Slack / Discord / Teams) | — | — | — | ✓ |
 | Per-log comments / notes | — | — | — | ✓ |
 | Extra email recipients (per-check / per-folder) | — | — | — | ✓ |
-| Team seats 🕐 *Coming soon* | 0 | 0 | 0 | 10 |
-| SLA reporting 🕐 *Coming soon* | — | — | — | ✓ |
-| Custom status-page domain 🕐 *Coming soon* | — | — | — | ✓ |
+| Team members (editor or viewer) | 0 | 0 | 0 | 10 |
+| SLA reports | 0 | 0 | 0 | 50 |
+| Custom status-page domains | 0 | 0 | 0 | 10 |
 
 > **MCP access follows API access.** There is no separate MCP entitlement — if a
 > plan can mint API keys, it can use the [exit1-mcp](https://www.npmjs.com/package/exit1-mcp)
@@ -162,8 +160,11 @@ tier in full.
 - **All alert channels**: Slack, Discord, Microsoft Teams (plus email, SMS, webhooks).
 - **Per-log comments** on individual check runs.
 - **Extra email recipients** per-check and per-folder.
-- Pre-allocated for **10 team seats**, **SLA reporting**, and **custom status-page
-  domains** — 🕐 these are entitled in billing but the features are still being built.
+- **10 team members**, each an editor or a viewer with their own login.
+- **SLA reports** (up to 50): monthly availability against a target per client or
+  contract, with error budget, incident log and a branded email on the 1st.
+- **Custom status-page domains** (up to 10 per account, one per page, subdomains
+  only), with automatic HTTPS.
 
 > **Why 100 webhooks and not "unlimited"?** One down event fans out to every
 > configured webhook, so an unbounded count is an amplifier pointed at our own
@@ -269,6 +270,7 @@ All limits are enforced server-side in [`functions/src/config.ts`](functions/src
 - **Alert quotas:** `getEmailBudgetMaxPerWindowForTier`, `getEmailMonthlyBudgetMaxPerWindowForTier`, `getSmsBudgetMaxPerWindowForTier`, `getSmsMonthlyBudgetMaxPerWindowForTier`
 - **Upsell copy:** `nextTierWithMore(tier, dimension)` — resolves the cheapest tier that actually offers more. Never hardcode a tier name in a user-facing limit message; that is how the app ended up advertising caps the backend never honoured.
 - **Feature flags:** booleans on `TIER_LIMITS[tier]` (`smsAlerts`, `apiAccess`, `csvExport`, `domainIntel`, `maintenanceMode`, `statusPageBuilder`, `slaReporting`, `customStatusDomain`, `allAlertChannels`, `regionChoice`)
+- **SLA report cap:** `TIER_LIMITS[tier].maxSlaReports` (0 below Pro, 50 on Pro). The custom domain cap is `CUSTOM_DOMAIN.maxPerAccount` (10) in [`functions/src/config.ts`](functions/src/config.ts).
 - **Inline Pro-only guards** (no `TIER_LIMITS` flag — gated as `tier !== 'pro'`):
   - Per-log comments — [`functions/src/log-notes.ts`](functions/src/log-notes.ts)
   - Extra email recipients per-check / per-folder — [`functions/src/email.ts`](functions/src/email.ts)
@@ -329,7 +331,11 @@ through any future repricing without anyone having to remember why.
 | Strip | maintenance state if `!maintenanceMode`; `domainExpiry.enabled` if `!domainIntel`; status-page `branding` + `customLayout` if `!statusPageBuilder` |
 | Reset | pinned `checkRegion` back to `vps-eu-1` if `!regionChoice` |
 | Prune | checks, webhooks, status pages and API keys down to their caps (oldest-first, disabled not deleted) |
-| Disable | SMS settings if `!smsAlerts`; SLA reporting + custom status domains if not entitled |
+| Disable | SMS settings if `!smsAlerts`; custom status domains if `!customStatusDomain` (14-day grace before the Cloudflare hostname is deleted) |
+
+SLA reports are gated at runtime on the owner's live tier, so a downgrade strips
+nothing: reports stay readable, stop refreshing and stop emailing until the
+owner is back on Pro.
 
 **Downgrade to Free** routes to `handlePlanDowngrade`, which does the same work
 plus the Free-only bookkeeping (`downgradedAt`).
@@ -373,6 +379,5 @@ plus the Free-only bookkeeping (`downgradedAt`).
 - "MCP access" and "API access" are the **same entitlement** — do not treat them as separate features, and do not describe either as paid-only.
 - The ladder is **monotonic**. If you see code or copy implying a cheaper tier beats a dearer one on any dimension, that is a bug — report it rather than preserving it.
 - **Agency no longer exists.** If you see `agency` in code or data it is a legacy plan key that resolves to `pro`.
-- Features tagged 🕐 *Coming soon* are **entitled but not yet built**. Don't tell users they have access today.
 - Founders (legacy `nano` plan key) is **not the same** as current Nano (`nanov2`). Founders pay $4/mo and get Pro features; current Nano pays $9/mo and gets the Nano feature set.
 - The `legacyFreeChecks` grandfathering is **retired**. Ignore any residual field of that name on user documents.
