@@ -7,3 +7,5 @@ export { TimelineWidget } from './TimelineWidget';
 export { TextWidget } from './TextWidget';
 export { MapWidget } from './MapWidget';
 export { StatusWidget } from './StatusWidget';
+export { ActiveIncidents, PastIncidents } from './StatusPageIncidents';
+export { IncidentManagerSheet } from './IncidentManagerSheet';

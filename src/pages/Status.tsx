@@ -50,6 +50,7 @@ import {
   CollapsibleContent,
 } from '../components/ui';
 import { db, storage } from '../firebase';
+import { IncidentManagerSheet } from '../components/status';
 import { useChecks } from '../hooks/useChecks';
 import { usePlan } from '../hooks/usePlan';
 import { toast } from 'sonner';
@@ -137,6 +138,7 @@ const Status: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [editingPage, setEditingPage] = useState<StatusPage | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StatusPage | null>(null);
+  const [incidentsPageId, setIncidentsPageId] = useState<string | null>(null);
   const [formName, setFormName] = useState('');
   const [formVisibility, setFormVisibility] = useState<StatusPageVisibility>('private');
   const [formLayout, setFormLayout] = useState<StatusPageLayout>('grid-2');
@@ -488,6 +490,37 @@ const Status: React.FC = () => {
   };
 
   const hasRows = !loading && statusPages.length > 0;
+
+  // Incidents: the sheet manages one page at a time.
+  const incidentsPage = incidentsPageId ? statusPages.find((p) => p.id === incidentsPageId) ?? null : null;
+  const incidentsPageChecks = useMemo(() => {
+    if (!incidentsPage) return [];
+    const ids = new Set(incidentsPage.checkIds ?? []);
+    const folders = new Set(incidentsPage.folderPaths ?? []);
+    return checks
+      .filter((check) => {
+        if (ids.has(check.id)) return true;
+        const folder = normalizeFolder(check.folder);
+        return folder !== null && folders.has(folder);
+      })
+      .map((check) => ({ id: check.id, name: check.name }));
+  }, [incidentsPage, checks]);
+  const renderOpenIncidentBadge = (page: StatusPage) => {
+    const openCount = (page.incidents ?? []).filter((incident) => incident.status !== 'resolved').length;
+    if (openCount === 0) return null;
+    return (
+      <button
+        type="button"
+        onClick={() => setIncidentsPageId(page.id)}
+        className="shrink-0 cursor-pointer"
+        aria-label="Manage open incidents"
+      >
+        <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
+          {openCount === 1 ? 'Open incident' : `${openCount} open incidents`}
+        </Badge>
+      </button>
+    );
+  };
   const mobileEmptyState = loading ? (
     <EmptyState
       variant="loading"
@@ -513,6 +546,7 @@ const Status: React.FC = () => {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="font-medium text-sm text-foreground truncate">{page.name}</div>
+                {renderOpenIncidentBadge(page)}
                 <Badge variant={page.visibility === 'public' ? 'default' : 'secondary'}>
                   {page.visibility === 'public' ? 'Public' : 'Private'}
                 </Badge>
@@ -539,6 +573,13 @@ const Status: React.FC = () => {
                   />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                  <DropdownMenuItem
+                    onClick={() => setIncidentsPageId(page.id)}
+                    className="cursor-pointer font-mono"
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                    <span className="ml-2">Incidents</span>
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => openEdit(page)}
                     className="cursor-pointer font-mono"
@@ -730,8 +771,11 @@ const Status: React.FC = () => {
                 {statusPages.map((page) => (
                   <TableRow key={page.id} className="group">
                     <TableCell className="px-4 py-4 max-w-0">
-                      <div className="font-medium text-sm text-foreground truncate">
-                        {page.name}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="font-medium text-sm text-foreground truncate">
+                          {page.name}
+                        </div>
+                        {renderOpenIncidentBadge(page)}
                       </div>
                     </TableCell>
                     <TableCell className="px-4 py-4">
@@ -765,6 +809,13 @@ const Status: React.FC = () => {
                             />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                            <DropdownMenuItem
+                              onClick={() => setIncidentsPageId(page.id)}
+                              className="cursor-pointer font-mono"
+                            >
+                              <AlertTriangle className="w-3 h-3" />
+                              <span className="ml-2">Incidents</span>
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => openEdit(page)}
                               className="cursor-pointer font-mono"
@@ -1399,6 +1450,14 @@ const Status: React.FC = () => {
           </ScrollArea>
         </SheetContent>
       </Sheet>
+
+      <IncidentManagerSheet
+        open={!!incidentsPage}
+        onOpenChange={(open) => { if (!open) setIncidentsPageId(null); }}
+        statusPage={incidentsPage}
+        checks={incidentsPageChecks}
+        canWrite={canWrite}
+      />
 
       <ConfirmationModal
         isOpen={!!deleteTarget}

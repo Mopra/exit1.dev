@@ -29,7 +29,17 @@ import type {
   NoChannelNotifyResult,
   LifecycleSweepResult
 } from './types';
-import type { DomainExpiry, DomainIntelligenceItem } from '../types';
+import type { DomainExpiry, DomainIntelligenceItem, IncidentStatus, LinkedDowntime } from '../types';
+
+export type IncidentUpdateInput = { status: IncidentStatus; message: string; createdAt?: number };
+
+export type ManageIncidentRequest =
+  | { action: 'create'; statusPageId: string; title: string; affectedCheckIds: string[]; linkedDowntime: LinkedDowntime | null; startedAt?: number; update: IncidentUpdateInput }
+  | { action: 'edit'; statusPageId: string; incidentId: string; title?: string; affectedCheckIds?: string[]; linkedDowntime?: LinkedDowntime | null; startedAt?: number }
+  | { action: 'delete'; statusPageId: string; incidentId: string }
+  | { action: 'addUpdate'; statusPageId: string; incidentId: string; update: IncidentUpdateInput }
+  | { action: 'editUpdate'; statusPageId: string; incidentId: string; updateId: string; update: Partial<IncidentUpdateInput> }
+  | { action: 'deleteUpdate'; statusPageId: string; incidentId: string; updateId: string };
 
 // ---------- shared error handling ----------
 
@@ -368,6 +378,21 @@ export class Exit1ApiClient {
   getStatusPageHeartbeat(statusPageId: string) {
     return this.callUnwrap<{ heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number; onlineChecks?: number; offlineChecks?: number }> }>; days: number; startDate?: number; endDate?: number }>(
       "getStatusPageHeartbeat", { statusPageId }, 'Failed to get status page heartbeat', Exit1ApiClient.STATUS_ERRORS,
+    );
+  }
+
+  // ---- Status page incidents ----
+
+  /** create / edit / delete an incident, or add / edit / delete one of its updates. */
+  manageStatusPageIncident(request: ManageIncidentRequest) {
+    return this.call<{ success: boolean; incidentId: string }>(
+      "manageStatusPageIncident", request, 'Failed to save incident', Exit1ApiClient.STATUS_ERRORS,
+    );
+  }
+
+  getStatusPageCheckDowntimes(statusPageId: string, checkId: string) {
+    return this.callUnwrap<{ downtimes: Array<{ startedAt: number; endedAt: number | null; durationMs: number }>; startDate: number; endDate: number }>(
+      "getStatusPageCheckDowntimes", { statusPageId, checkId }, 'Failed to load downtime history', Exit1ApiClient.STATUS_ERRORS,
     );
   }
 

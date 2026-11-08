@@ -336,6 +336,47 @@ export interface StatusPage {
   showPoweredBy?: boolean;
   enabled?: boolean;
   disabledReason?: string | null;
+  /**
+   * Public projection of this page's incidents (open ones plus 90 days of
+   * resolved ones). Written only by the manageStatusPageIncident callable.
+   */
+  incidents?: StatusPageIncident[];
+  incidentsUpdatedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type IncidentStatus = 'investigating' | 'identified' | 'monitoring' | 'resolved';
+
+export interface IncidentUpdate {
+  id: string;
+  status: IncidentStatus;
+  message: string;
+  createdAt: number;
+}
+
+export interface LinkedDowntime {
+  checkId: string;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+/** Incident as the public page sees it. Updates are newest first. */
+export interface StatusPageIncident {
+  id: string;
+  title: string;
+  status: IncidentStatus;
+  affectedCheckIds: string[];
+  linkedDowntime: LinkedDowntime | null;
+  startedAt: number;
+  resolvedAt: number | null;
+  updates: IncidentUpdate[];
+}
+
+/** Full incident doc (status_page_incidents), read by the account in the app. Updates are oldest first. */
+export interface StatusPageIncidentDoc extends Omit<StatusPageIncident, 'id'> {
+  userId: string;
+  statusPageId: string;
   createdAt: number;
   updatedAt: number;
 }

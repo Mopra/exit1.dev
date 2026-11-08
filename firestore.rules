@@ -137,6 +137,8 @@ service cloud.firestore {
 
       // Create into an account the caller can write to
       allow create: if canWriteAccount(request.resource.data.userId) &&
+        // Incidents are written only by manageStatusPageIncident
+        !request.resource.data.keys().hasAny(['incidents', 'incidentsUpdatedAt']) &&
         // Validate required fields
         request.resource.data.keys().hasAll(['name', 'userId', 'visibility', 'checkIds', 'createdAt', 'updatedAt']) &&
         // Validate name
@@ -169,6 +171,9 @@ service cloud.firestore {
       allow update: if canWriteAccount(resource.data.userId) &&
         request.resource.data.userId == resource.data.userId &&
         request.resource.data.createdAt == resource.data.createdAt &&
+        // Incidents are written only by manageStatusPageIncident
+        request.resource.data.get('incidents', null) == resource.data.get('incidents', null) &&
+        request.resource.data.get('incidentsUpdatedAt', null) == resource.data.get('incidentsUpdatedAt', null) &&
         // Validate name
         request.resource.data.name is string &&
         request.resource.data.name.size() >= 2 &&
@@ -190,6 +195,14 @@ service cloud.firestore {
         (!('showPoweredBy' in request.resource.data.keys()) || request.resource.data.showPoweredBy is bool) &&
         // Validate updated timestamp
         request.resource.data.updatedAt is number;
+    }
+    
+    // Status page incidents: the account reads them in the app; every write
+    // goes through the manageStatusPageIncident callable. Public viewers see a
+    // projection on the status page doc instead.
+    match /status_page_incidents/{incidentId} {
+      allow read: if canReadAccount(resource.data.userId);
+      allow write: if false;
     }
     
     // Check history subcollection rules (under checks/{checkId}/history/{historyId})

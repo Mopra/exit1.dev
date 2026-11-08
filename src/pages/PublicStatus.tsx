@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import { useOptionalAccount } from '@/AccountProvider';
-import { Bell, BellOff, CheckCircle, Download, Edit, ExternalLink, Maximize, Minimize, RefreshCw, Share2, Shield, XCircle } from 'lucide-react';
+import { AlertTriangle, Bell, BellOff, CheckCircle, Download, Edit, ExternalLink, Maximize, Minimize, RefreshCw, Share2, Shield, XCircle } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -13,7 +13,7 @@ import {
 } from '../components/ui';
 import PixelCard from '../components/PixelCard';
 import { PageContainer, PageHeader } from '../components/layout';
-import { CustomLayoutEditor, WidgetGrid } from '../components/status';
+import { ActiveIncidents, CustomLayoutEditor, IncidentManagerSheet, PastIncidents, WidgetGrid } from '../components/status';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
 import { db } from '../firebase';
@@ -309,6 +309,7 @@ const PublicStatus: React.FC = () => {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
   const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
   const [editMode, setEditMode] = useState(false);
+  const [incidentsOpen, setIncidentsOpen] = useState(false);
 
   // Owner detection for custom layout editing
   const isOwner = useMemo(() => {
@@ -982,6 +983,12 @@ const PublicStatus: React.FC = () => {
 
     const relativeUpdated = lastUpdateTime ? formatRelativeTime(lastUpdateTime, now) : null;
 
+    // Owner-posted incidents ride on the page doc we already subscribe to.
+    const showIncidents = !statusPageError && !isPageDisabled && !editMode;
+    const pageIncidents = statusPage?.incidents ?? [];
+    const incidentCheckNames: Record<string, string> = {};
+    for (const check of statusChecks) incidentCheckNames[check.checkId] = check.name;
+
     const showBanner =
       (display.showOverallStatus || display.showUptimeStats) &&
       !layoutConfig.isCustom &&
@@ -1156,6 +1163,7 @@ const PublicStatus: React.FC = () => {
             />
             <div className="flex-1 overflow-auto p-2 sm:p-4 md:p-6">
               <div className={layoutConfig.wrapperClassName}>
+                {showIncidents && <ActiveIncidents incidents={pageIncidents} checkNames={incidentCheckNames} />}
                 {overallBanner}
                 {historyControls}
                 {statusPage?.enabled === false && statusPage?.disabledReason === 'plan_downgrade' ? (
@@ -1247,6 +1255,7 @@ const PublicStatus: React.FC = () => {
                     </div>
                   )
                 )}
+                {showIncidents && <PastIncidents incidents={pageIncidents} checkNames={incidentCheckNames} />}
               </div>
             </div>
           </PageContainer>
@@ -1294,6 +1303,19 @@ const PublicStatus: React.FC = () => {
                 <span className="text-xs text-muted-foreground">
                   Alert sound {soundEnabled ? 'on' : 'off'}
                 </span>
+                {isOwner && canWrite && statusPage && (
+                  <>
+                    <div className="w-px h-4 bg-border mx-2" />
+                    <button
+                      type="button"
+                      onClick={() => setIncidentsOpen(true)}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-background text-foreground hover:bg-muted transition-colors cursor-pointer"
+                    >
+                      <AlertTriangle className="h-4 w-4" />
+                      <span className="text-xs font-medium">Incidents</span>
+                    </button>
+                  </>
+                )}
                 {canEdit && (
                   <>
                     <div className="w-px h-4 bg-border mx-2" />
@@ -1329,6 +1351,15 @@ const PublicStatus: React.FC = () => {
             </div>
           </div>
         </footer>
+        {isOwner && canWrite && (
+          <IncidentManagerSheet
+            open={incidentsOpen}
+            onOpenChange={setIncidentsOpen}
+            statusPage={statusPage ? { id: statusPage.id, name: statusPage.name, userId: statusPage.userId } : null}
+            checks={statusChecks.map((check) => ({ id: check.checkId, name: check.name }))}
+            canWrite={canWrite}
+          />
+        )}
         {barTip && (
           <div
             className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] leading-tight shadow-md"

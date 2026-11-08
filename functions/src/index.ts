@@ -184,6 +184,7 @@ lazy((): typeof import('./team') => require('./team'), [
 
 // Status pages
 lazy((): typeof import('./status-pages') => require('./status-pages'), ['getStatusPageUptime', 'getStatusPageSnapshot', 'getStatusPageHeartbeat']);
+lazy((): typeof import('./status-page-incidents') => require('./status-page-incidents'), ['manageStatusPageIncident', 'getStatusPageCheckDowntimes']);
 
 // Public API
 lazy((): typeof import('./public-api') => require('./public-api'), ['publicApi']);
