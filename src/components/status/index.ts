@@ -9,3 +9,5 @@ export { MapWidget } from './MapWidget';
 export { StatusWidget } from './StatusWidget';
 export { ActiveIncidents, PastIncidents } from './StatusPageIncidents';
 export { IncidentManagerSheet } from './IncidentManagerSheet';
+export { StatusViewerContext, useStatusViewer } from './StatusViewerContext';
+export type { StatusViewer } from './StatusViewerContext';

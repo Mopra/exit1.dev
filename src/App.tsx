@@ -14,6 +14,7 @@ import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useOnboardingStatus } from './hooks/useOnboardingStatus';
 import { PendingFollow, PENDING_FOLLOW_STORAGE_KEY } from './components/follow/PendingFollow';
+import { StatusViewerContext } from './components/status/StatusViewerContext';
 
 // Website URL storage key
 const WEBSITE_URL_STORAGE_KEY = 'exit1_website_url';
@@ -64,6 +65,14 @@ const Authorize = lazy(() => import('./pages/Authorize'));
 const Claim = lazy(() => import('./pages/Claim'));
 
 export const FirebaseReadyContext = createContext(false);
+
+// Fills the status page viewer from Clerk on app.exit1.dev. Custom domains
+// render PublicStatus without it (anonymous viewer, no Clerk).
+function ClerkStatusViewerProvider({ children }: { children: React.ReactNode }) {
+  const { userId, isSignedIn } = useAuth();
+  const viewer = React.useMemo(() => ({ userId: userId ?? null, isSignedIn: !!isSignedIn }), [userId, isSignedIn]);
+  return <StatusViewerContext.Provider value={viewer}>{children}</StatusViewerContext.Provider>;
+}
 
 // Wrapper components for auth routes to prevent React hooks mismatch (error #310).
 // When isSignedIn flips from undefined→true (existing session cookie), rendering
@@ -460,7 +469,7 @@ function App() {
               />
               <Route
                 path="/status/:checkId"
-                element={<PublicStatus />}
+                element={<ClerkStatusViewerProvider><PublicStatus /></ClerkStatusViewerProvider>}
               />
               <Route
                 path="/release-notes"

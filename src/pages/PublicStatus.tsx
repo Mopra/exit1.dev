@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import { useAuth } from '@clerk/clerk-react';
 import { useOptionalAccount } from '@/AccountProvider';
 import { AlertTriangle, Bell, BellOff, CheckCircle, Download, Edit, ExternalLink, Maximize, Minimize, RefreshCw, Share2, Shield, XCircle } from 'lucide-react';
 import {
@@ -13,7 +12,7 @@ import {
 } from '../components/ui';
 import PixelCard from '../components/PixelCard';
 import { PageContainer, PageHeader } from '../components/layout';
-import { ActiveIncidents, CustomLayoutEditor, IncidentManagerSheet, PastIncidents, WidgetGrid } from '../components/status';
+import { ActiveIncidents, CustomLayoutEditor, IncidentManagerSheet, PastIncidents, WidgetGrid, useStatusViewer } from '../components/status';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
 import { db } from '../firebase';
@@ -280,9 +279,15 @@ const getStatusLayoutConfig = (layout?: StatusPageLayout) => {
   }
 };
 
-const PublicStatus: React.FC = () => {
-  const { checkId } = useParams<{ checkId: string }>();
-  const { userId, isSignedIn } = useAuth();
+interface PublicStatusProps {
+  /** Wins over the :checkId route param. Set by CustomDomainApp, which has no route param. */
+  statusPageId?: string;
+}
+
+const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdProp }) => {
+  const { checkId: checkIdParam } = useParams<{ checkId: string }>();
+  const checkId = statusPageIdProp ?? checkIdParam;
+  const { userId, isSignedIn } = useStatusViewer();
   // A teammate acting inside the owner's account counts as the owner here.
   const account = useOptionalAccount();
   const accountId = account?.accountId ?? userId ?? null;
