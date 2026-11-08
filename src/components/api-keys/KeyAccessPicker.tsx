@@ -12,6 +12,10 @@ const noopLog = () => {};
 interface KeyAccessPickerProps {
   value: ApiKeyAccess;
   onChange: (next: ApiKeyAccess) => void;
+  /** Check types to leave out of the list (SLA reports skip dns and domain). */
+  excludeTypes?: readonly string[];
+  /** Replaces the API key explanation under the list. */
+  footnote?: React.ReactNode;
 }
 
 /**
@@ -20,9 +24,13 @@ interface KeyAccessPickerProps {
  * Mounted only while the create dialog is restricting a key, so the checks
  * fetch doesn't run for everyone who opens the API Keys page.
  */
-export default function KeyAccessPicker({ value, onChange }: KeyAccessPickerProps) {
+export default function KeyAccessPicker({ value, onChange, excludeTypes, footnote }: KeyAccessPickerProps) {
   const accountId = useAccountId();
-  const { checks, loading } = useChecks(accountId, noopLog, { realtime: false });
+  const { checks: allChecks, loading } = useChecks(accountId, noopLog, { realtime: false });
+  const checks = React.useMemo(
+    () => (excludeTypes?.length ? allChecks.filter((c) => !excludeTypes.includes(c.type ?? "")) : allChecks),
+    [allChecks, excludeTypes],
+  );
   const [search, setSearch] = React.useState("");
 
   const folders = React.useMemo(() => {
@@ -126,7 +134,7 @@ export default function KeyAccessPicker({ value, onChange }: KeyAccessPickerProp
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        A folder includes its subfolders and any checks added to it later. The key can only create checks inside a selected folder, and can't change alert settings.
+        {footnote ?? "A folder includes its subfolders and any checks added to it later. The key can only create checks inside a selected folder, and can't change alert settings."}
       </p>
     </div>
   );
