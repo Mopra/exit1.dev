@@ -4,7 +4,7 @@ import { useAccount } from '@/AccountProvider';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap, AlertTriangle } from 'lucide-react';
+import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap, AlertTriangle, Globe } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
@@ -51,6 +51,9 @@ import {
 } from '../components/ui';
 import { db, storage } from '../firebase';
 import { IncidentManagerSheet } from '../components/status';
+import { CustomDomainSection } from '../components/status/CustomDomainSection';
+import { CUSTOM_DOMAINS_ENABLED } from '../lib/custom-domains';
+import { apiClient } from '../api/client';
 import { useChecks } from '../hooks/useChecks';
 import { usePlan } from '../hooks/usePlan';
 import { toast } from 'sonner';
@@ -127,7 +130,7 @@ const Status: React.FC = () => {
   const log = useCallback((msg: string) => {
     void msg;
   }, []);
-  const { tier, statusPageBuilder } = usePlan();
+  const { tier, statusPageBuilder, customStatusDomain } = usePlan();
   const { checks: rawChecks, loading: checksLoading } = useChecks(accountId, log);
   // Domain-only checks have no uptime data — they make no sense on a status page.
   const checks = useMemo(() => rawChecks.filter((c) => c.type !== 'domain'), [rawChecks]);
@@ -161,6 +164,7 @@ const Status: React.FC = () => {
   const [faviconUploading, setFaviconUploading] = useState(false);
   const [checksOpen, setChecksOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [domainOpen, setDomainOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Per-tier status-page cap — mirrors TIER_LIMITS[tier].maxStatusPages.
@@ -180,6 +184,26 @@ const Status: React.FC = () => {
     : 'You have the highest status-page allowance available.';
   const canCreateStatusPage = !atTierLimit;
   const hasDowngradedPages = statusPages.some((p) => p.disabledReason === 'plan_downgrade');
+  // Custom domains (Pro). Every connected domain counts toward the account
+  // cap, whatever its state, matching claimStatusPageDomain on the backend.
+  const customDomainTier = nextTierWithFlag(tier, 'customStatusDomain');
+  const customDomainsUsed = statusPages.filter((p) => !!p.customDomain).length;
+  const activeCustomHost = (page: StatusPage) =>
+    CUSTOM_DOMAINS_ENABLED && page.customDomain?.status === 'active' ? page.customDomain.hostname : null;
+  const publicUrlFor = (page: StatusPage) => {
+    const host = activeCustomHost(page);
+    return host ? `https://${host}/` : `/status/${page.id}`;
+  };
+  const renderCustomDomainBadge = (page: StatusPage) => {
+    const host = activeCustomHost(page);
+    if (!host) return null;
+    return (
+      <Badge variant="outline" className="gap-1 font-mono text-[10px] px-1.5 py-0 text-muted-foreground max-w-[14rem]" title={host}>
+        <Globe className="w-3 h-3 shrink-0" />
+        <span className="truncate">{host}</span>
+      </Badge>
+    );
+  };
 
   useEffect(() => {
     if (!accountId) {
@@ -285,6 +309,7 @@ const Status: React.FC = () => {
     setFormShowResponseTime(true);
     setChecksOpen(false);
     setAppearanceOpen(false);
+    setDomainOpen(false);
     setSearchQuery('');
     setFormOpen(true);
   }, [hasFolders]);
@@ -329,6 +354,7 @@ const Status: React.FC = () => {
     setEditingPage(null);
     setChecksOpen(false);
     setAppearanceOpen(false);
+    setDomainOpen(false);
   };
 
   const toggleCheck = (checkId: string) => {
@@ -479,6 +505,15 @@ const Status: React.FC = () => {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
+      // A page with a custom domain must release it first: the rules refuse
+      // to delete a page that still carries customDomain.
+      if (deleteTarget.customDomain) {
+        const released = await apiClient.releaseStatusPageDomain(deleteTarget.id);
+        if (!released.success) {
+          toast.error(released.error ?? 'Failed to remove the custom domain');
+          return;
+        }
+      }
       await deleteDoc(doc(db, 'status_pages', deleteTarget.id));
       toast.success('Status page deleted.');
     } catch (error) {
@@ -547,6 +582,7 @@ const Status: React.FC = () => {
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="font-medium text-sm text-foreground truncate">{page.name}</div>
                 {renderOpenIncidentBadge(page)}
+                {renderCustomDomainBadge(page)}
                 <Badge variant={page.visibility === 'public' ? 'default' : 'secondary'}>
                   {page.visibility === 'public' ? 'Public' : 'Private'}
                 </Badge>
@@ -557,9 +593,9 @@ const Status: React.FC = () => {
             </div>
             <div className="flex items-center gap-0.5 shrink-0">
               <Button asChild variant="ghost" size="icon" aria-label="View status page">
-                <Link to={`/status/${page.id}`} target="_blank" rel="noopener noreferrer">
+                <a href={publicUrlFor(page)} target="_blank" rel="noopener noreferrer">
                   <Eye className="w-4 h-4" />
-                </Link>
+                </a>
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -776,6 +812,7 @@ const Status: React.FC = () => {
                           {page.name}
                         </div>
                         {renderOpenIncidentBadge(page)}
+                        {renderCustomDomainBadge(page)}
                       </div>
                     </TableCell>
                     <TableCell className="px-4 py-4">
@@ -790,9 +827,9 @@ const Status: React.FC = () => {
                     </TableCell>
                     <TableCell className="px-4 py-4 text-center">
                       <Button asChild variant="ghost" size="icon" aria-label="View status page">
-                        <Link to={`/status/${page.id}`} target="_blank" rel="noopener noreferrer">
+                        <a href={publicUrlFor(page)} target="_blank" rel="noopener noreferrer">
                           <Eye className="w-4 h-4" />
-                        </Link>
+                        </a>
                       </Button>
                     </TableCell>
                     <TableCell className="px-4 py-4">
@@ -927,6 +964,11 @@ const Status: React.FC = () => {
                     <p className="text-xs text-muted-foreground mt-1.5">
                       Public pages can be viewed by anyone with the link.
                     </p>
+                    {CUSTOM_DOMAINS_ENABLED && formVisibility === 'private' && editingPage?.customDomain && (
+                      <p className="text-xs text-warning mt-1.5">
+                        {editingPage.customDomain.hostname} will show "not available" until the page is public again.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1445,6 +1487,30 @@ const Status: React.FC = () => {
                     )}
                   </CollapsibleContent>
                 </Collapsible>
+
+                {/* ── Custom domain (collapsible, existing pages only) ── */}
+                {CUSTOM_DOMAINS_ENABLED && editingPage && (
+                  <Collapsible open={domainOpen} onOpenChange={setDomainOpen}>
+                    <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                      <div className="h-px flex-1 bg-border/60" />
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                        <Globe className="w-3.5 h-3.5" />
+                        Custom domain
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${domainOpen ? 'rotate-180' : ''}`} />
+                      </span>
+                      <div className="h-px flex-1 bg-border/60" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-2">
+                      <CustomDomainSection
+                        page={statusPages.find((p) => p.id === editingPage.id) ?? editingPage}
+                        entitled={customStatusDomain}
+                        upgradeTierName={customDomainTier?.name ?? null}
+                        domainsUsed={customDomainsUsed}
+                        canWrite={canWrite}
+                      />
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
               </div>
             </div>
           </ScrollArea>
@@ -1464,7 +1530,9 @@ const Status: React.FC = () => {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title={`Delete "${deleteTarget?.name}"?`}
-        message="This action cannot be undone. The status page will be permanently removed."
+        message={deleteTarget?.customDomain
+          ? `This action cannot be undone. The status page will be permanently removed, and ${deleteTarget.customDomain.hostname} will stop serving it.`
+          : 'This action cannot be undone. The status page will be permanently removed.'}
         confirmText="Delete Status Page"
         variant="destructive"
       />
