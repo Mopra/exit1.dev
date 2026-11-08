@@ -100,6 +100,15 @@ const JOBS: JobSpec[] = [
     // @ts-expect-error: functions/lib has no .d.ts
     run: async () => (await import('../../functions/lib/cost-watch.js')).runCostWatch(),
   },
+  {
+    // Custom status page domains: advances pending/verifying domains, expires
+    // them at 72h, deletes Cloudflare hostnames 14 days after a disable. The
+    // 03:35 run also sweeps owner tiers, orphans and Cloudflare drift.
+    // Needs CLOUDFLARE_SAAS_API_TOKEN in the VPS .env.
+    name: 'customDomainReconcile', minute: 35, leaseMs: 15 * MIN,
+    // @ts-expect-error: functions/lib has no .d.ts
+    run: async () => (await import('../../functions/lib/custom-domains.js')).runCustomDomainReconcile(),
+  },
 ];
 
 /** Start of the most recent slot at or before `now`, in ms. */

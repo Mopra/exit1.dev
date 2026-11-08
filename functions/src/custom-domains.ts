@@ -17,7 +17,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { promises as dnsPromises } from "node:dns";
 import { FieldValue } from "firebase-admin/firestore";
-import { firestore, getUserTierLive } from "./init";
+import { firestore, getUserEmailFromClerk, getUserTierDetailed, getUserTierLive } from "./init";
 import { CUSTOM_DOMAINS_ENABLED, TIER_LIMITS } from "./config";
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, CLOUDFLARE_SAAS_API_TOKEN } from "./env";
 import { resolveAccount, type AccountContext } from "./team-access";
@@ -30,7 +30,10 @@ import {
   buildMirror,
   cnameMatchesTarget,
   decideClaim,
+  decideDaily,
+  decideProviderDrift,
   describeTxtMiss,
+  graceExpired,
   hasMeaningfulChange,
   needsReverify,
   newDomainDoc,
@@ -502,3 +505,217 @@ export const releaseStatusPageDomain = onCall(CALLABLE_OPTS, async (request) => 
   log("release requested", { hostname, accountId, actorUid, statusPageId });
   return { released: true };
 });
+
+// ── Reconciler (VPS cron job customDomainReconcile, hourly at :35) ──
+
+export interface ReconcileStats {
+  advanced: number;
+  graceDeleted: number;
+  daily: boolean;
+  released: number;
+  disabled: number;
+  driftDeleted: number;
+  adopted: number;
+  movedFailed: number;
+  errors: string[];
+}
+
+async function emailOwnerMovedFailed(doc: CustomDomainDoc): Promise<void> {
+  const { sendTransactionalEmail } = await import("./email-send.js");
+  const to = await getUserEmailFromClerk(doc.userId);
+  if (!to) return;
+  const text = [
+    `Your custom status page domain ${doc.hostname} has stopped working.`,
+    "",
+    `Its CNAME record has not pointed at ${CUSTOM_DOMAIN.cnameTarget} for over 7 days, so we`,
+    "disconnected it. Your status page is still available on app.exit1.dev.",
+    "",
+    `To reconnect, point the CNAME for ${doc.hostname} back at ${CUSTOM_DOMAIN.cnameTarget} and click Retry`,
+    "in the status page editor. If you no longer use this hostname, remove it there.",
+  ].join("\n");
+  await sendTransactionalEmail({
+    to,
+    subject: `Custom domain ${doc.hostname} was disconnected`,
+    text,
+    category: "account",
+    meta: { hostname: doc.hostname, userId: doc.userId, event: "custom_domain_moved_failed" },
+  });
+}
+
+async function emailHealth(lines: string[]): Promise<void> {
+  const { sendTransactionalEmail } = await import("./email-send.js");
+  await sendTransactionalEmail({
+    to: CUSTOM_DOMAIN.healthEmailTo,
+    subject: "Custom status domains need a look",
+    text: ["The daily custom domain sweep found:", "", ...lines.map((l) => `- ${l}`)].join("\n"),
+    category: "internal",
+    meta: { event: "custom_domain_health" },
+  });
+}
+
+type ProviderHostname = Awaited<ReturnType<CloudflareSaasClient["listAllCustomHostnames"]>>[number];
+
+async function dailySweep(now: number, client: CloudflareSaasClient | null, stats: ReconcileStats): Promise<void> {
+  const all = await domains().get();
+  const docs = new Map<string, CustomDomainDoc>();
+  for (const d of all.docs) docs.set(d.id, d.data() as CustomDomainDoc);
+
+  // Pages and owner tiers, each read once.
+  const pageIds = [...new Set([...docs.values()].map((d) => d.statusPageId))];
+  const pageInfo = new Map<string, { userId: string | null; customHost: string | null }>();
+  for (let i = 0; i < pageIds.length; i += 100) {
+    const chunk = pageIds.slice(i, i + 100);
+    const snaps = await firestore.getAll(...chunk.map((id) => pages().doc(id)));
+    for (const s of snaps) {
+      if (!s.exists) continue;
+      const p = s.data() as PageData;
+      pageInfo.set(s.id, { userId: p.userId ?? null, customHost: p.customDomain?.hostname ?? null });
+    }
+  }
+  const entitled = new Map<string, boolean | null>();
+  for (const uid of new Set([...docs.values()].map((d) => d.userId))) {
+    const { tier, failedOpen } = await getUserTierDetailed(uid);
+    entitled.set(uid, failedOpen ? null : tierHasCustomDomain(TIER_LIMITS, tier));
+  }
+
+  for (const [hostname, doc] of [...docs]) {
+    const action = decideDaily({
+      doc, page: pageInfo.get(doc.statusPageId) ?? null, entitled: entitled.get(doc.userId) ?? null, now,
+    });
+    try {
+      if (action === "release") {
+        const ok = await releaseDomain(hostname, {
+          expect: { userId: doc.userId, statusPageId: doc.statusPageId }, reason: "reconcile",
+        });
+        if (ok) {
+          docs.delete(hostname);
+          stats.released++;
+        }
+      } else if (action === "disable") {
+        const after = transition(doc, { status: "disabled", disabledReason: "plan_downgrade", movedSince: null }, now);
+        docs.set(hostname, await persistDomain(doc, after, client));
+        stats.disabled++;
+      }
+    } catch (e) {
+      stats.errors.push(`${hostname}: ${(e as Error).message}`);
+    }
+  }
+
+  const health: string[] = [];
+  if (!client) {
+    if (docs.size > 0) health.push("CLOUDFLARE_SAAS_API_TOKEN is not set on this host, Cloudflare was not checked");
+  } else {
+    let provider: ProviderHostname[] = [];
+    let listed = false;
+    try {
+      provider = await client.listAllCustomHostnames();
+      listed = true;
+    } catch (e) {
+      health.push(`Cloudflare list failed: ${(e as Error).message}`);
+    }
+
+    if (listed) {
+      const drift = decideProviderDrift(provider, docs);
+      for (const id of drift.deleteIds) {
+        try {
+          await client.deleteCustomHostname(id);
+          stats.driftDeleted++;
+        } catch (e) {
+          stats.errors.push(`drift delete ${id}: ${(e as Error).message}`);
+        }
+      }
+      for (const { hostname, id } of drift.adopt) {
+        const doc = docs.get(hostname);
+        if (!doc) continue;
+        docs.set(hostname, await persistDomain(doc, { ...doc, providerId: id }, client));
+        stats.adopted++;
+      }
+
+      // Active domains: record moved, blocked and certificate state.
+      const byId = new Map(provider.map((h) => [h.id, h]));
+      for (const [hostname, doc] of [...docs]) {
+        if (doc.status !== "active" || !doc.providerId) continue;
+        const h = byId.get(doc.providerId);
+        if (!h) continue; // gone at Cloudflare; the next check recreates it
+        try {
+          const after = applyProviderState({ ...doc, lastCheckedAt: now }, mapProviderState(h), now);
+          const saved = await persistDomain(doc, after, client);
+          docs.set(hostname, saved);
+          if (saved.status === "failed" && saved.failedReason === "moved") {
+            stats.movedFailed++;
+            await emailOwnerMovedFailed(saved).catch((e) =>
+              stats.errors.push(`moved email ${hostname}: ${(e as Error).message}`));
+          }
+        } catch (e) {
+          stats.errors.push(`${hostname}: ${(e as Error).message}`);
+        }
+      }
+
+      if (provider.length >= CUSTOM_DOMAIN.healthHostnameThreshold) {
+        health.push(`${provider.length} Cloudflare custom hostnames (100 are free, then $0.10 each per month)`);
+      }
+    }
+  }
+
+  for (const d of docs.values()) {
+    if (d.status !== "active") continue;
+    if (d.sslStatus && d.sslStatus !== "active") health.push(`${d.hostname} is active but its certificate is ${d.sslStatus}`);
+    if (d.movedSince !== null) health.push(`${d.hostname} has been moved since ${new Date(d.movedSince).toISOString()}`);
+  }
+  for (const err of stats.errors) health.push(`Error: ${err}`);
+
+  if (health.length > 0) {
+    await emailHealth(health).catch((e) =>
+      logger.warn("[custom-domains] health email failed", { error: (e as Error).message }));
+  }
+}
+
+/**
+ * Hourly: move pending and verifying domains forward after the owner closed
+ * the tab (and expire them at 72 h), and delete the Cloudflare hostname of
+ * domains disabled for more than 14 days. The 03:35 UTC run also does the
+ * daily sweep: owner tier, orphans, Cloudflare drift, moved hostnames and the
+ * health email.
+ */
+export async function runCustomDomainReconcile(now: number = Date.now()): Promise<ReconcileStats> {
+  const client = getCloudflareSaasClient();
+  const stats: ReconcileStats = {
+    advanced: 0, graceDeleted: 0, daily: false, released: 0, disabled: 0,
+    driftDeleted: 0, adopted: 0, movedFailed: 0, errors: [],
+  };
+
+  const inFlight = await domains().where("status", "in", ["pending", "verifying"]).get();
+  for (const snap of inFlight.docs) {
+    const before = snap.data() as CustomDomainDoc;
+    try {
+      const after = await persistDomain(before, await advanceDomain(before, now, client), client);
+      if (after !== before) stats.advanced++;
+    } catch (e) {
+      stats.errors.push(`${before.hostname}: ${(e as Error).message}`);
+    }
+  }
+
+  if (client) {
+    const disabled = await domains().where("status", "==", "disabled").get();
+    for (const snap of disabled.docs) {
+      const before = snap.data() as CustomDomainDoc;
+      if (!graceExpired(before, now) || !before.providerId) continue;
+      try {
+        await client.deleteCustomHostname(before.providerId);
+        await persistDomain(before, { ...before, providerId: null, providerStatus: null, sslStatus: null }, client);
+        stats.graceDeleted++;
+        log("grace expired, Cloudflare hostname deleted", { hostname: before.hostname, accountId: before.userId });
+      } catch (e) {
+        stats.errors.push(`${before.hostname}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  if (new Date(now).getUTCHours() === CUSTOM_DOMAIN.dailySweepHourUtc) {
+    stats.daily = true;
+    await dailySweep(now, client, stats);
+  }
+
+  logger.info("[custom-domains] reconcile finished", stats);
+  return stats;
+}
