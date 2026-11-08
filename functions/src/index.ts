@@ -185,6 +185,8 @@ lazy((): typeof import('./team') => require('./team'), [
 // Status pages
 lazy((): typeof import('./status-pages') => require('./status-pages'), ['getStatusPageUptime', 'getStatusPageSnapshot', 'getStatusPageHeartbeat']);
 lazy((): typeof import('./status-page-incidents') => require('./status-page-incidents'), ['manageStatusPageIncident', 'getStatusPageCheckDowntimes']);
+// Custom status page domains (Pro): claim, check, release. Behind CUSTOM_DOMAINS_ENABLED.
+lazy((): typeof import('./custom-domains') => require('./custom-domains'), ['claimStatusPageDomain', 'checkStatusPageDomain', 'releaseStatusPageDomain']);
 
 // Public API
 lazy((): typeof import('./public-api') => require('./public-api'), ['publicApi']);

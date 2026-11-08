@@ -139,6 +139,8 @@ service cloud.firestore {
       allow create: if canWriteAccount(request.resource.data.userId) &&
         // Incidents are written only by manageStatusPageIncident
         !request.resource.data.keys().hasAny(['incidents', 'incidentsUpdatedAt']) &&
+        // The custom domain mirror is written only by the custom-domains callables
+        !request.resource.data.keys().hasAny(['customDomain']) &&
         // Validate required fields
         request.resource.data.keys().hasAll(['name', 'userId', 'visibility', 'checkIds', 'createdAt', 'updatedAt']) &&
         // Validate name
@@ -164,8 +166,11 @@ service cloud.firestore {
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
 
-      // Allow delete if user is authenticated and owns the document
-      allow delete: if canWriteAccount(resource.data.userId);
+      // Allow delete if user is authenticated and owns the document. A page
+      // with a custom domain must be released first (releaseStatusPageDomain),
+      // so the reservation and the Cloudflare hostname never outlive it.
+      allow delete: if canWriteAccount(resource.data.userId) &&
+        resource.data.get('customDomain', null) == null;
 
       // Allow update by the owner or an editor with valid data
       allow update: if canWriteAccount(resource.data.userId) &&
@@ -174,6 +179,8 @@ service cloud.firestore {
         // Incidents are written only by manageStatusPageIncident
         request.resource.data.get('incidents', null) == resource.data.get('incidents', null) &&
         request.resource.data.get('incidentsUpdatedAt', null) == resource.data.get('incidentsUpdatedAt', null) &&
+        // The custom domain mirror is written only by the custom-domains callables
+        request.resource.data.get('customDomain', null) == resource.data.get('customDomain', null) &&
         // Validate name
         request.resource.data.name is string &&
         request.resource.data.name.size() >= 2 &&
@@ -197,6 +204,12 @@ service cloud.firestore {
         request.resource.data.updatedAt is number;
     }
     
+    // Custom status page domains: hostname reservations. Admin SDK only; the
+    // app and the public page read the mirror on status_pages/{id}.customDomain.
+    match /custom_domains/{hostname} {
+      allow read, write: if false;
+    }
+
     // Status page incidents: the account reads them in the app; every write
     // goes through the manageStatusPageIncident callable. Public viewers see a
     // projection on the status page doc instead.
