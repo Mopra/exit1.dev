@@ -52,7 +52,7 @@ export function scopeOfWebhookType(
 // Telegram stays hidden from the picker and the copy (here, search-data.ts,
 // Webhooks.tsx) until its bot token is set and the Telegram functions are
 // deployed. Flip to true then; nothing else needs to change.
-export const TELEGRAM_ENABLED = false;
+export const TELEGRAM_ENABLED = true;
 
 export function platformTypesForScope(scope: IntegrationScope): readonly WebhookPlatformType[] {
   if (scope === 'webhook') return WEBHOOK_SCOPE_TYPES;
