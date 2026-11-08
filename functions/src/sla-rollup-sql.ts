@@ -75,14 +75,14 @@ export function buildRollupSelectSql(): string {
     WHERE timestamp >= @dayStart AND timestamp < @cut
   ),
   prior_rows AS (
-    -- Seed: the last row before the day. The lower bound is mandatory (cost rule).
+    # Seed: the last row before the day. The lower bound is mandatory (cost rule).
     SELECT website_id, user_id, timestamp, status, confirmed, maintenance, error
     FROM ${SLA_HISTORY_TABLE}
     WHERE timestamp >= TIMESTAMP_SUB(@dayStart, INTERVAL 2 DAY) AND timestamp < @dayStart
     QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id, user_id ORDER BY timestamp DESC) = 1
   ),
-  -- confirmed, maintenance and error must be projected through every CTE that
-  -- feeds the classifier, or BigQuery fails with "Unrecognized name".
+  # confirmed, maintenance and error must be projected through every CTE that
+  # feeds the classifier, or BigQuery fails with "Unrecognized name".
   seeded AS (
     SELECT website_id, user_id, timestamp AS row_ts, timestamp AS start_ts, status, confirmed, maintenance, error FROM range_rows
     UNION ALL
@@ -106,15 +106,15 @@ export function buildRollupSelectSql(): string {
   ),
   raw_segs AS (
     SELECT website_id, user_id, state, start_ts, carry_ms,
-      -- A seed whose carry ran out before the day starts covers nothing.
+      # A seed whose carry ran out before the day starts covers nothing.
       GREATEST(start_ts, LEAST(COALESCE(next_ts, @cut), @cut, TIMESTAMP_ADD(row_ts, INTERVAL carry_ms MILLISECOND))) AS end_ts,
       LEAST(COALESCE(next_ts, @cut), @cut) AS gap_end
     FROM classified
   ),
-  -- Leading gap: no seed row, so the time before the first row is no_data.
-  -- Without it uncovered time is invisible and sub-day windows are wrong.
-  -- Aggregated in a subquery on purpose: with start_ts aliased in the same
-  -- SELECT, HAVING MIN(start_ts) would resolve to the alias and never fire.
+  # Leading gap: no seed row, so the time before the first row is no_data.
+  # Without it uncovered time is invisible and sub-day windows are wrong.
+  # Aggregated in a subquery on purpose: with start_ts aliased in the same
+  # SELECT, HAVING MIN(start_ts) would resolve to the alias and never fire.
   leading AS (
     SELECT website_id, user_id, 'no_data' AS state, @dayStart AS start_ts, first_ts AS end_ts, carry_ms
     FROM (
