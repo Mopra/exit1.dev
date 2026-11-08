@@ -332,6 +332,11 @@ export default function Billing() {
   }, [realNano, userEmail, userName, orgId, orgName, orgMetadataKey])
 
   const nextPayment = subscription?.nextPayment
+  // A cancelled plan stays active until the period it was paid for runs out.
+  // Clerk marks it with `canceledAt` and keeps status "active", so without
+  // this the page read as a healthy subscription with no next payment.
+  const cancelledItem = realNano && nanoItem?.canceledAt ? nanoItem : null
+  const endsAt = cancelledItem?.periodEnd ?? null
   const paymentMethodSummary = useMemo(() => {
     if (isPaymentMethodsLoading) return "Loading…"
     if (!paymentMethods || paymentMethods.length === 0) return "None on file"
@@ -389,6 +394,14 @@ export default function Billing() {
           </SignedOut>
 
           <SignedIn>
+            {cancelledItem && (
+              <CancelledPlanBanner
+                planName={cancelledItem.plan?.name ?? "Your plan"}
+                planId={cancelledItem.plan?.id ?? null}
+                planPeriod={cancelledItem.planPeriod === "annual" ? "annual" : "month"}
+                endsAt={endsAt}
+              />
+            )}
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
               <TabsList className="w-full sm:w-fit h-auto sm:h-10 mb-6">
                 {showPaidTabs && (
@@ -430,12 +443,16 @@ export default function Billing() {
                         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                           <CardTitle className="text-xl">Subscription</CardTitle>
                           <TierBadge tier={realTier} isFounders={isFounders} />
-                          <Badge
-                            variant={getStatusVariant(subscription?.status ?? null)}
-                            className="capitalize"
-                          >
-                            {isLoading ? "Loading" : subscription?.status || "Free"}
-                          </Badge>
+                          {cancelledItem ? (
+                            <Badge variant="warning">Ending</Badge>
+                          ) : (
+                            <Badge
+                              variant={getStatusVariant(subscription?.status ?? null)}
+                              className="capitalize"
+                            >
+                              {isLoading ? "Loading" : subscription?.status || "Free"}
+                            </Badge>
+                          )}
                         </div>
                         <Button
                           variant="outline"
@@ -498,9 +515,13 @@ export default function Billing() {
                           <p className="text-base font-semibold">{formatDate(subscription?.activeAt)}</p>
                         </div>
                         <div className="space-y-2">
-                          <p className="text-sm text-muted-foreground">Next payment</p>
+                          <p className="text-sm text-muted-foreground">
+                            {cancelledItem ? "Plan ends" : "Next payment"}
+                          </p>
                           <p className="text-base font-semibold">
-                            {nextPayment
+                            {cancelledItem
+                              ? `${formatDate(endsAt)}, then Free`
+                              : nextPayment
                               ? `${nextPayment.amount.amountFormatted} on ${formatDate(nextPayment.date)}`
                               : "—"}
                           </p>
@@ -541,7 +562,7 @@ export default function Billing() {
                           <Receipt className="h-4 w-4" />
                           Invoices
                         </Button>
-                        {realNano && (
+                        {realNano && !cancelledItem && (
                           <Button
                             variant="ghost"
                             className="cursor-pointer text-muted-foreground hover:text-foreground"
@@ -856,6 +877,58 @@ export default function Billing() {
         </div>
       </div>
     </PageContainer>
+  )
+}
+
+// ---- Cancelled plan banner ----
+
+/**
+ * Shown on every tab while a cancelled plan runs out its paid period. Says
+ * when it ends and what happens then, and offers the one-click way back.
+ *
+ * Resubscribing checks out the same plan and cadence, which is how Clerk's own
+ * pricing table resumes a cancelled item. When the plan id is missing (should
+ * not happen) the subscription drawer is the fallback.
+ */
+function CancelledPlanBanner({
+  planName,
+  planId,
+  planPeriod,
+  endsAt,
+}: {
+  planName: string
+  planId: string | null
+  planPeriod: BillingPeriod
+  endsAt: Date | null
+}) {
+  const button = (
+    <Button variant="default" className="cursor-pointer shrink-0">
+      Resubscribe
+    </Button>
+  )
+  return (
+    <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm">
+      <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
+      <div className="flex-1 space-y-1">
+        <p className="font-medium">
+          {endsAt
+            ? `Your ${planName} plan ends on ${formatDate(endsAt)}`
+            : `Your ${planName} plan is cancelled`}
+        </p>
+        <p className="text-muted-foreground">
+          You keep everything until then. After that your account moves to Free:{" "}
+          {getMaxChecksForTier("free")} monitors and {formatIntervalForTier("free")}{" "}
+          intervals. Monitors over the cap are paused, never deleted.
+        </p>
+      </div>
+      {planId ? (
+        <CheckoutButton planId={planId} planPeriod={planPeriod}>
+          {button}
+        </CheckoutButton>
+      ) : (
+        <SubscriptionDetailsButton>{button}</SubscriptionDetailsButton>
+      )}
+    </div>
   )
 }
 

@@ -1,4 +1,5 @@
 export type SubscriptionPlanLike = {
+  id?: string
   name?: string
   slug?: string
 }
@@ -7,6 +8,9 @@ export type SubscriptionItemLike = {
   status?: string
   planPeriod?: "month" | "annual" | string
   plan?: SubscriptionPlanLike
+  /** Set once the user cancels; the item stays active until `periodEnd`. */
+  canceledAt?: Date | null
+  periodEnd?: Date | null
 }
 
 export type SubscriptionLike = {
