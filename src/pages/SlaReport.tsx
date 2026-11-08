@@ -48,6 +48,8 @@ export default function SlaReport() {
   const [computing, setComputing] = React.useState(false);
   const [computeError, setComputeError] = React.useState<string | null>(null);
   const attempted = React.useRef(new Set<string>());
+  // Key of the last month this view asked the server to compute.
+  const [triedKey, setTriedKey] = React.useState<string | null>(null);
 
   const [editOpen, setEditOpen] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
@@ -75,6 +77,7 @@ export default function SlaReport() {
       return () => clearTimeout(t);
     }
     attempted.current.add(key);
+    setTriedKey(key);
     void compute(report, period);
   }, [needsCompute, report, period, current, slaReporting, compute, nonce]);
 
@@ -126,6 +129,7 @@ export default function SlaReport() {
   }
 
   const canWrite = account.canWrite;
+  const computeKey = report ? `${report.id}/${period}/${report.timezone}` : '';
   const view = doc && !stale ? doc : null;
 
   const actions = report ? (
@@ -206,7 +210,7 @@ export default function SlaReport() {
           ) : !view ? (
             <Card className={cardClass}>
               <CardContent className="p-6 sm:p-8">
-                {computing || (needsCompute && slaReporting && !computeError) ? (
+                {computing || (needsCompute && slaReporting && !computeError && triedKey !== computeKey) ? (
                   <div className="flex items-center gap-3 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin shrink-0" />
                     Computing {periodLabel(period)}{stale ? ` in ${report.timezone}` : ''}. This takes a few seconds.

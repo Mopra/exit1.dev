@@ -461,6 +461,7 @@ export class Exit1ApiClient {
   async upsertSlaReport(input: SlaReportInput, reportId?: string): Promise<ApiResponse<{ reportId: string }>> {
     const res = await this.call<{ reportId?: string; id?: string }>(
       'upsertSlaReport', reportId ? { reportId, ...input } : input, 'Failed to save the SLA report',
+      { 'functions/resource-exhausted': 'You have the most SLA reports your plan allows. Delete one to add another.' },
     );
     if (!res.success) return { success: false, error: res.error };
     return { success: true, data: { reportId: res.data?.reportId ?? res.data?.id ?? reportId ?? '' } };
@@ -471,9 +472,16 @@ export class Exit1ApiClient {
   }
 
   /** Recompute one month now (missing month, or one computed in an old time zone). */
-  refreshSlaReport(reportId: string, period?: string) {
-    return this.callVoid('refreshSlaReport', period ? { reportId, period } : { reportId }, 'Failed to compute this month',
-      { 'functions/resource-exhausted': 'Too many recalculations this hour. Try again later.' });
+  async refreshSlaReport(reportId: string, period?: string): Promise<ApiResponse> {
+    const res = await this.call<{ recomputed?: boolean; rateLimited?: boolean }>(
+      'refreshSlaReport', period ? { reportId, period } : { reportId }, 'Failed to compute this month',
+      { 'functions/resource-exhausted': 'Too many recalculations this hour. Try again later.' },
+    );
+    // Rate-limited with an old doc on file: the server hands back the old one.
+    if (res.success && res.data?.rateLimited) {
+      return { success: false, error: 'Too many recalculations this hour. Try again later.' };
+    }
+    return res.success ? { success: true } : { success: false, error: res.error };
   }
 
   /** Send this month's email to the signed-in user only. */
