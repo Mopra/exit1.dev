@@ -1,3 +1,5 @@
+/* Panel typography: Doto (dot-matrix LCD) and JetBrains Mono (panel labels). Must stay above every other rule. */
+@import url('https://fonts.googleapis.com/css2?family=Doto:wght@500..900&family=JetBrains+Mono:wght@400..700&display=swap');
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
@@ -1202,4 +1204,128 @@ radialGradient > stop {
     transparent 3px 6px
   );
   opacity: 0.55;
+}
+
+
+/* ================================================================
+   Hardware panel kit: tactile keys, LEDs, LCD screen.
+   Unlayered on purpose so it wins over utility shadows. Glow is
+   allowed here (and only here) despite the halo kill-switch above:
+   these classes never match [class*="shadow-["].
+   ================================================================ */
+:root {
+  --font-panel: "JetBrains Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-lcd: "Doto", "JetBrains Mono", ui-monospace, monospace;
+  --screen: #050507;
+  --screen-foreground: oklch(0.94 0.02 250);
+  --screen-dim: oklch(1 0 0 / 0.07);
+}
+
+.panel-label {
+  font-family: var(--font-panel);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Keys: a 2px solid base under the cap, a light top edge and a dark
+   bottom edge. Pressing drops the cap onto its base. */
+.key {
+  --key-base: oklch(0 0 0 / 0.6);
+  --key-drop: oklch(0 0 0 / 0.55);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.09),
+    inset 0 -2px 0 oklch(0 0 0 / 0.22),
+    0 2px 0 var(--key-base),
+    0 4px 8px -3px var(--key-drop);
+  transition-property: transform, box-shadow, background-color, color, filter;
+  transition-duration: 80ms, 80ms, 150ms, 150ms, 150ms;
+}
+.key:active:not(:disabled):not([aria-disabled="true"]),
+.key[data-state="active"] {
+  transform: translateY(2px);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.06),
+    inset 0 -1px 0 oklch(0 0 0 / 0.22),
+    0 0 0 var(--key-base),
+    0 1px 2px var(--key-drop);
+}
+.key:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.key-primary {
+  --key-base: color-mix(in oklch, var(--primary) 45%, black);
+  --key-drop: color-mix(in oklch, var(--primary) 40%, transparent);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.28),
+    inset 0 -2px 0 oklch(0 0 0 / 0.22),
+    0 2px 0 var(--key-base),
+    0 6px 14px -4px var(--key-drop);
+}
+.key-destructive {
+  --key-base: color-mix(in oklch, var(--destructive) 45%, black);
+  --key-drop: color-mix(in oklch, var(--destructive) 40%, transparent);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.25),
+    inset 0 -2px 0 oklch(0 0 0 / 0.22),
+    0 2px 0 var(--key-base),
+    0 6px 14px -4px var(--key-drop);
+}
+
+/* LEDs. Set --led to change the lit colour. */
+.led {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: oklch(1 0 0 / 0.16);
+  transition: background-color 200ms, box-shadow 200ms;
+}
+.led-on {
+  background: var(--led, var(--primary));
+  box-shadow: 0 0 6px var(--led, var(--primary)), 0 0 2px var(--led, var(--primary));
+}
+.led-pulse {
+  animation: led-pulse 1.4s ease-in-out infinite;
+}
+@keyframes led-pulse {
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .led-pulse { animation: none; }
+  .key:active:not(:disabled), .key[data-state="active"] { transform: none; }
+}
+
+/* LCD screen: true black glass so it reads as a display on the dark canvas. */
+.screen {
+  background: var(--screen);
+  color: var(--screen-foreground);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.07),
+    0 0 0 1px oklch(1 0 0 / 0.08),
+    0 30px 60px -30px color-mix(in oklch, var(--primary) 30%, transparent),
+    0 12px 24px -12px oklch(0 0 0 / 0.6);
+}
+.lcd {
+  font-family: var(--font-lcd);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: pre;
+  text-shadow: 0 0 8px color-mix(in oklch, currentColor 55%, transparent);
+}
+.lcd-ghost {
+  color: var(--screen-dim);
+  text-shadow: none;
+}
+.screen-seg {
+  height: 8px;
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 1px;
+  background: var(--screen-dim);
 }

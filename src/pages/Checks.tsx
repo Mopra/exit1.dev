@@ -4,6 +4,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
+import { StatusScreen } from '../components/check/StatusScreen';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
@@ -16,7 +17,7 @@ import { httpsCallable } from "@/lib/callable";
 import { functions } from '../firebase';
 import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, Upload, Download } from 'lucide-react';
+import { Plus, Globe, Upload, Download } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { useAccount } from '@/AccountProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
@@ -659,6 +660,12 @@ const Checks: React.FC = () => {
 
       <WsFallbackBanner fallbackRegion={wsFallbackRegion} />
 
+      {checks.length > 0 && (
+        <div className="px-2 sm:px-4 md:px-6 pt-4 pb-2">
+          <StatusScreen checks={checks} wsState={wsAggregateState} />
+        </div>
+      )}
+
       <SearchInput
         value={searchQuery}
         onChange={setSearchQuery}
@@ -698,20 +705,30 @@ const Checks: React.FC = () => {
         {/* View switcher — Folders/Map are desktop-only */}
         {!isMobile && (
           <div className="px-2 sm:px-4 md:px-6 pt-3">
-            <TabsList aria-label="Checks view" className="w-fit">
-              <TabsTrigger value="table" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
-                <List className="size-4 flex-shrink-0" />
-                <span>Table</span>
-              </TabsTrigger>
-              <TabsTrigger value="folders" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
-                <LayoutGrid className="size-4 flex-shrink-0" />
-                <span>Folders</span>
-              </TabsTrigger>
-              <TabsTrigger value="map" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
-                <Map className="size-4 flex-shrink-0" />
-                <span>Map</span>
-              </TabsTrigger>
-            </TabsList>
+            {/* Bracketed key selector: an LED over each key, the lit one is the view in use. */}
+            <div className="inline-flex w-fit self-start flex-col">
+              <div className="flex items-center gap-2 text-muted-foreground" aria-hidden>
+                <span className="h-[6px] flex-1 border-l border-t border-border" />
+                <span className="panel-label leading-none">View</span>
+                <span className="h-[6px] flex-1 border-r border-t border-border" />
+              </div>
+              <TabsList
+                aria-label="Checks view"
+                className="h-auto w-fit gap-2 overflow-visible rounded-none bg-transparent p-0 pt-1 backdrop-blur-none supports-[backdrop-filter]:bg-transparent [&>[data-slot=tabs-indicator]]:hidden"
+              >
+                {([['table', 'Table'], ['folders', 'Folders'], ['map', 'Map']] as const).map(([value, label]) => (
+                  <div key={value} className="flex flex-col items-center gap-1.5">
+                    <span className={`led ${effectiveChecksView === value ? 'led-on' : ''}`} aria-hidden />
+                    <TabsTrigger
+                      value={value}
+                      className="key panel-label h-8 min-w-[5.5rem] flex-none rounded-md border-white/[0.06] bg-card px-3 text-muted-foreground touch-manipulation hover:text-foreground data-[state=active]:bg-black/40 data-[state=active]:text-foreground dark:data-[state=active]:bg-black/40 dark:data-[state=active]:border-white/[0.06]"
+                    >
+                      {label}
+                    </TabsTrigger>
+                  </div>
+                ))}
+              </TabsList>
+            </div>
           </div>
         )}
 

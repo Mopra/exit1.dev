@@ -1,5 +1,4 @@
 import React from 'react';
-import { Badge } from './Badge';
 import { CheckCircle, XCircle, HelpCircle, AlertTriangle, PauseCircle, Wrench } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 import { glass } from './glass';
@@ -97,14 +96,25 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
   // Pops when the status changes while on screen, never on mount.
   const changes = useChangeCount(config.text);
 
+  // LED readout: a lit dot plus a mono caps label, like a hardware panel.
+  const isDown = status === 'offline' || status === 'DOWN';
+  const isWarn = status === 'degraded' || status === 'DEGRADED' || status === 'maintenance' || status === 'disabled';
+  const isUnknown = !status || status === 'unknown';
+  const ledColor = isDown ? 'var(--destructive)' : isWarn ? 'var(--warning)' : 'var(--primary)';
+  const textColor = isDown ? 'text-destructive' : isWarn ? 'text-warning' : isUnknown ? 'text-muted-foreground' : 'text-foreground';
+
   const badgeEl = (
-    <Badge
-      variant={config.variant}
-      className={`${config.className} ${className} ${replayClass('status-pop', changes)} flex items-center gap-1.5 px-2 py-1 text-xs font-medium cursor-pointer`}
+    <span
+      role="status"
+      className={`${className} ${replayClass('status-pop', changes)} ${textColor} panel-label inline-flex items-center gap-2 rounded-md border border-white/[0.06] bg-black/30 px-2 py-1 !text-[10.5px] cursor-pointer whitespace-nowrap`}
     >
-      <config.icon className="w-3 h-3" />
+      <span
+        className={`led ${isUnknown ? '' : 'led-on'} ${isDown ? 'led-pulse' : ''}`}
+        style={isUnknown ? undefined : ({ '--led': ledColor } as React.CSSProperties)}
+        aria-hidden
+      />
       {config.text}
-    </Badge>
+    </span>
   );
 
   return (
