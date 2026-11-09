@@ -13,7 +13,7 @@ import * as logger from "firebase-functions/logger";
 import { firestore, getUserTier } from "./init";
 import { TIER_LIMITS } from "./config";
 import { createBigQuery } from "./bigquery-client";
-import { buildReportRowsSql } from "./sla-rollup-sql";
+import { buildReportRowsSql, reportRowsParams } from "./sla-rollup-sql";
 import { computePeriod, type SlaCheckInput, type SlaDailyRow, type SlaSegmentState } from "./sla-math";
 import { periodBounds, utcDay } from "./sla-time";
 import { selectReportChecks, type OwnerCheck } from "./sla-reports-policy";
@@ -106,11 +106,7 @@ export async function loadSlaRows(
   lastDay: string,
 ): Promise<{ rows: SlaDailyRow[]; bytesBilled: number }> {
   if (ids.length === 0) return { rows: [], bytesBilled: 0 };
-  const [job] = await bigquery.createQueryJob({
-    query: buildReportRowsSql(),
-    params: { ids, firstDay, lastDay },
-    types: { ids: ["STRING"], firstDay: "DATE", lastDay: "DATE" },
-  });
+  const [job] = await bigquery.createQueryJob({ query: buildReportRowsSql(), ...reportRowsParams(ids, firstDay, lastDay) });
   const [raw] = await job.getQueryResults();
   const [meta] = await job.getMetadata();
   const bytesBilled = Number(meta?.statistics?.query?.totalBytesBilled ?? 0);

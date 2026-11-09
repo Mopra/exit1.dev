@@ -7,10 +7,12 @@ import {
   buildRollupMergeSql,
   buildRollupSelectSql,
   carryMsForFrequency,
+  reportRowsParams,
   rollupParams,
   SLA_DEFAULT_CARRY_MS,
 } from "../sla-rollup-sql";
 import { WAF_BLOCK_ERROR_PREFIXES } from "../public-monitor-blocked";
+import { BigQuery } from "@google-cloud/bigquery";
 
 const H = 3600_000;
 const D = 24 * H;
@@ -75,4 +77,16 @@ test("rows with a NULL key never reach the MERGE (check_sla_daily keys are REQUI
   const filters = select.match(/AND website_id IS NOT NULL AND user_id IS NOT NULL/g) ?? [];
   // Both history reads: the day's rows and the seed row.
   assert.equal(filters.length, 2);
+});
+
+test("report read sends real DATE values for its day bounds (regression: NULL bounds read 0 rows)", () => {
+  const { params, types } = reportRowsParams(["a"], "2026-10-31", "2026-11-09");
+  for (const key of ["firstDay", "lastDay"] as const) {
+    // What the client puts on the wire. A plain string with type DATE came
+    // out with no parameterValue, i.e. NULL.
+    const wire = (BigQuery as unknown as { valueToQueryParameter_: (v: unknown, t: unknown) => { parameterType: { type: string }; parameterValue?: { value?: string } } })
+      .valueToQueryParameter_(params[key], types[key]);
+    assert.equal(wire.parameterType.type, "DATE");
+    assert.equal(wire.parameterValue?.value, key === "firstDay" ? "2026-10-31" : "2026-11-09");
+  }
 });

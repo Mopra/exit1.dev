@@ -11,6 +11,7 @@
 // See docs/plans/sla-reporting.md, sections 3.4, 4.3 and 4.4.
 // ============================================================================
 
+import { BigQuery } from "@google-cloud/bigquery";
 import { WAF_BLOCK_ERROR_PREFIXES } from "./public-monitor-blocked";
 import { SLA_ROLLUP_VERSION } from "./sla-math";
 
@@ -217,4 +218,17 @@ FROM ${SLA_TABLE}
 WHERE website_id IN UNNEST(@ids)
   AND day >= @firstDay
   AND day <= @lastDay`;
+}
+
+/**
+ * Params for buildReportRowsSql. The day bounds MUST be BigQuery.date()
+ * values: a plain 'YYYY-MM-DD' string with an explicit DATE type is sent with
+ * no parameterValue at all, so the bound is NULL, `day >= NULL` matches
+ * nothing, and every report reads 0 rows (2026-11-09 production bug).
+ */
+export function reportRowsParams(ids: string[], firstDay: string, lastDay: string) {
+  return {
+    params: { ids, firstDay: BigQuery.date(firstDay), lastDay: BigQuery.date(lastDay) },
+    types: { ids: ["STRING"], firstDay: "DATE", lastDay: "DATE" },
+  };
 }
