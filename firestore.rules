@@ -218,7 +218,10 @@ service cloud.firestore {
       allow read: if canReadAccount(resource.data.userId);
       allow write: if false;
       match /periods/{period} {
-        allow read: if canReadAccount(resource.data.userId);
+        // A month that has not been computed yet has no doc. Answer that read
+        // with "missing" instead of permission-denied, which would end the
+        // app's listener and leave the report page loading forever.
+        allow read: if resource == null ? signedIn() : canReadAccount(resource.data.userId);
         allow write: if false;
       }
     }
