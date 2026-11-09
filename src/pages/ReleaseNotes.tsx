@@ -11,6 +11,20 @@ interface ReleaseNote {
 // Newest first. Edit here when shipping.
 const releaseNotes: ReleaseNote[] = [
   {
+    date: '2026-11-09',
+    title: 'Custom Status Page Domains & SLA Reports',
+    summary:
+      'Two Pro features: put a status page on your own domain, and track monthly availability against the targets you promise clients.',
+    items: [
+      'Custom status page domains: point status.yourcompany.com at exit1 with a TXT and a CNAME record, and HTTPS is set up for you. Up to 10 domains per Pro account, one per status page',
+      'SLA reports: group the checks behind a contract, set a target such as 99.9%, and see month to date availability, error budget and breach status',
+      'Each SLA report has its own time zone, so months start and end at your local midnight, daylight saving included',
+      'Maintenance windows, blocked probes and gaps with no data are left out of the numbers and shown as excluded time with a coverage figure',
+      'A branded monthly SLA email on the 1st, to up to 10 recipients, ready to forward to clients',
+      'SLA reports in the public API and as a get_sla_report tool for MCP',
+    ],
+  },
+  {
     date: '2026-06-05',
     title: 'Pushover, Public Monitors & In-App MCP',
     summary:

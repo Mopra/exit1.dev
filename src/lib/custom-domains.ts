@@ -5,7 +5,7 @@
 // launch (mirrors CUSTOM_DOMAINS_ENABLED in functions/src/config.ts), nothing
 // else needs to change. The custom host entry (CustomDomainApp) is not gated:
 // no hostname reaches it until Cloudflare routes one.
-export const CUSTOM_DOMAINS_ENABLED = false;
+export const CUSTOM_DOMAINS_ENABLED = true;
 
 /** Pro includes this many custom domains per account. Mirrors CUSTOM_DOMAIN.maxPerAccount. */
 export const MAX_CUSTOM_DOMAINS_PER_ACCOUNT = 10;

@@ -193,7 +193,7 @@ export const CUSTOM_DOMAIN = {
    * except admins and `allowUids`. The reconciler runs either way; with no
    * domain docs it costs a couple of empty queries an hour.
    */
-  enabled: false,
+  enabled: true,
   /** Accounts (owner uid) or actors that may use the feature while `enabled` is false. */
   allowUids: [] as readonly string[],
   /** Customer CNAME target. Also the Cloudflare for SaaS fallback origin. */
