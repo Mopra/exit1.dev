@@ -1328,7 +1328,14 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
                     </div>
                   )
                 )}
-                {showIncidents && <PastIncidents incidents={pageIncidents} checkNames={incidentCheckNames} />}
+                {showIncidents && (
+                  <PastIncidents
+                    incidents={pageIncidents}
+                    checkNames={incidentCheckNames}
+                    // Follow the 7d / 30d / 90d toggle when it is on screen; without it, show the full window.
+                    windowDays={historyControls ? historyDays : HEARTBEAT_DAYS}
+                  />
+                )}
               </div>
             </div>
           </PageContainer>
