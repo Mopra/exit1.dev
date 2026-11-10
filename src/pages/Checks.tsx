@@ -295,6 +295,14 @@ const Checks: React.FC = () => {
     });
   }, [bulkMoveToFolder, restoreCheckFolders]);
 
+  const handleCheckNow = useCallback((id: string) => {
+    manualCheck(id).catch((error: unknown) => {
+      toast.error('Check failed to run', {
+        description: error instanceof Error ? error.message : 'Please try again.',
+      });
+    });
+  }, [manualCheck]);
+
   const handleRefreshMetadata = useCallback(async (check: Website) => {
     const toastId = toast.loading(`Fetching geo data for ${check.name || check.url}…`);
     try {
@@ -757,7 +765,7 @@ const Checks: React.FC = () => {
                   });
                 }}
                 onBulkMoveToFolder={handleBulkMoveToFolder}
-                onCheckNow={manualCheck}
+                onCheckNow={handleCheckNow}
                 onRefreshMetadata={handleRefreshMetadata}
                 onEdit={(check) => {
                   setEditingCheck(check);

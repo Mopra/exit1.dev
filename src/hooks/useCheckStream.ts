@@ -922,6 +922,17 @@ function applyOverlay(check: Website, overlay: LiveFields): Website {
   // caught up with the WS broadcast (every ~5–10s on most cadences).
   // Returning the original ref lets downstream memos and React.memo
   // boundaries short-circuit instead of re-rendering on every WS tick.
+  // Firestore is fresher than the overlay when its lastChecked is newer.
+  // That happens after "Check now": the manual check runs in a Cloud
+  // Function, not on the VPS, so the VPS never broadcasts its result and
+  // the overlay would otherwise hide it until the next scheduled probe.
+  if (
+    typeof overlay.lastChecked === 'number' &&
+    typeof check.lastChecked === 'number' &&
+    check.lastChecked > overlay.lastChecked
+  ) {
+    return check;
+  }
   const checkBag = check as unknown as Record<string, unknown>;
   const overlayBag = overlay as unknown as Record<string, unknown>;
   let changed = false;
