@@ -24,6 +24,8 @@ import { useMobile } from "../../hooks/useMobile";
 type CheckMapViewProps = {
   checks: Website[];
   hideHeader?: boolean;
+  /** Fill the parent's height instead of keeping a fixed aspect ratio (dashboard widgets). */
+  fill?: boolean;
   /** When set, the selected-check callout shows an "Open check" action. */
   onOpenCheck?: (checkId: string) => void;
 };
@@ -299,7 +301,7 @@ function MapShell({ checks, hideHeader, isMobile, children }: { checks: Website[
   );
 }
 
-export default function CheckMapView({ checks, hideHeader = false, onOpenCheck }: CheckMapViewProps) {
+export default function CheckMapView({ checks, hideHeader = false, fill = false, onOpenCheck }: CheckMapViewProps) {
   const isMobile = useMobile(768);
   const uid = safeSvgId(React.useId());
   const mappable = React.useMemo(() => toMappableChecks(checks), [checks]);
@@ -681,9 +683,9 @@ export default function CheckMapView({ checks, hideHeader = false, onOpenCheck }
   return (
     <div className="flex flex-col h-full">
       {!hideHeader && <MapHeader checks={checks} />}
-      <GlowCard magic accent="blue" className={cn("flex flex-col border border-border/50 shadow-2xl relative w-full md:max-h-[800px]", isMobile ? "aspect-[4/3]" : "aspect-video")}>
+      <GlowCard magic accent="blue" className={cn("flex flex-col border border-border/50 shadow-2xl relative w-full", fill ? "flex-1 min-h-0" : cn("md:max-h-[800px]", isMobile ? "aspect-[4/3]" : "aspect-video"))}>
         <CardContent className="flex-1 min-h-0 p-0 relative">
-          <div ref={setContainerEl} className="relative h-full w-full overflow-hidden md:max-h-[800px]" onClick={() => { if (!draggingRef.current) setSelectedId(null); }}>
+          <div ref={setContainerEl} className={cn("relative h-full w-full overflow-hidden", !fill && "md:max-h-[800px]")} onClick={() => { if (!draggingRef.current) setSelectedId(null); }}>
             <MapLegend counts={counts} probes={probes} unmapped={unmapped} />
             <MapControls onZoomIn={() => zoomBy(1.6)} onZoomOut={() => zoomBy(1 / 1.6)} onReset={() => animateTo(initialZoomTransform)} />
             <div className="relative h-full w-full overflow-hidden">

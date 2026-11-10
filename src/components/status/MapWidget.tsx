@@ -83,8 +83,8 @@ export const MapWidget: React.FC<MapWidgetProps> = ({
         </>
       )}
 
-      <div className="flex-1 min-h-0 [&_.flex-col]:h-full [&_.flex-col]:min-h-0 [&>div]:h-full">
-        <CheckMapView checks={checks} hideHeader />
+      <div className="flex-1 min-h-0">
+        <CheckMapView checks={checks} hideHeader fill />
       </div>
     </GlowCard>
   );
