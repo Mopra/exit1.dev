@@ -698,8 +698,8 @@ export default function CheckMapView({ checks, hideHeader = false, fill = false,
                 </defs>
                 <g ref={mapGRef} transform={zoomTransform.toString()}>
                   {/* Globe outline and graticule give the ocean some structure */}
-                  <path d={sphereD} fill="color-mix(in oklch, var(--color-foreground) 1.5%, var(--color-background))" stroke="color-mix(in oklch, var(--color-foreground) 14%, var(--color-background))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-                  <path d={graticuleD} fill="none" stroke="color-mix(in oklch, var(--color-foreground) 6%, var(--color-background))" strokeWidth={0.6} vectorEffect="non-scaling-stroke" className="pointer-events-none" />
+                  <path d={sphereD} fill="color-mix(in oklab, var(--color-foreground) 1.5%, var(--color-background))" stroke="color-mix(in oklab, var(--color-foreground) 14%, var(--color-background))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                  <path d={graticuleD} fill="none" stroke="color-mix(in oklab, var(--color-foreground) 6%, var(--color-background))" strokeWidth={0.6} vectorEffect="non-scaling-stroke" className="pointer-events-none" />
                   <g>
                     {countryPaths.map((cp) => {
                       const active = activeCountries.has(cp.idx);
@@ -708,9 +708,9 @@ export default function CheckMapView({ checks, hideHeader = false, fill = false,
                           key={cp.idx}
                           d={cp.d}
                           fill={active
-                            ? "color-mix(in oklch, var(--color-primary) 10%, var(--color-background))"
-                            : "color-mix(in oklch, var(--color-foreground) 5%, var(--color-background))"}
-                          stroke="color-mix(in oklch, var(--color-foreground) 22%, var(--color-background))"
+                            ? "color-mix(in oklab, var(--color-primary) 10%, var(--color-background))"
+                            : "color-mix(in oklab, var(--color-foreground) 5%, var(--color-background))"}
+                          stroke="color-mix(in oklab, var(--color-foreground) 22%, var(--color-background))"
                           strokeWidth={0.6}
                           vectorEffect="non-scaling-stroke"
                           className={cn("transition-[fill] duration-300", active ? "hover:fill-primary/20" : "hover:fill-foreground/[0.08]")}
