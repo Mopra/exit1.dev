@@ -1,17 +1,12 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { GridLayout, verticalCompactor } from 'react-grid-layout';
 import type { Layout, LayoutItem } from 'react-grid-layout';
 import { WidgetToolbar } from './WidgetToolbar';
 import { WidgetConfigSheet } from './WidgetConfigSheet';
-import { TimelineWidget } from './TimelineWidget';
-import { TextWidget } from './TextWidget';
-import { UptimeWidget } from './UptimeWidget';
-import { IncidentsWidget } from './IncidentsWidget';
-import { DowntimeWidget } from './DowntimeWidget';
-import { MapWidget } from './MapWidget';
-import { StatusWidget } from './StatusWidget';
-import type { CustomLayoutWidget, CustomLayoutConfig, WidgetType, TextWidgetSize, IncidentsMode, DowntimeMode, Website } from '../../types';
-import { normalizeFolder } from '../../lib/folder-utils';
+import { WidgetBody } from './WidgetGrid';
+import { WidgetEditChrome, WIDGET_TYPES, isWidgetConfigured } from './WidgetEditChrome';
+import { ConfirmationModal } from '../ui';
+import type { CustomLayoutWidget, CustomLayoutConfig, WidgetType, Website } from '../../types';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
@@ -80,16 +75,8 @@ const layoutToWidgets = (
   return layout.map((item) => {
     const existing = existingWidgets.find((w) => w.id === item.i);
     return {
+      ...(existing ?? { type: 'timeline' as const }),
       id: item.i,
-      type: existing?.type ?? 'timeline',
-      checkId: existing?.checkId,
-      checkIds: existing?.checkIds,
-      folderPaths: existing?.folderPaths,
-      textContent: existing?.textContent,
-      textSize: existing?.textSize,
-      showCheckName: existing?.showCheckName,
-      showCheckCount: existing?.showCheckCount,
-      showStatus: existing?.showStatus,
       gridPosition: {
         col: item.x + 1, // Convert back to 1-indexed
         row: item.y + 1,
@@ -99,6 +86,16 @@ const layoutToWidgets = (
     };
   });
 };
+
+const samePositions = (a: CustomLayoutWidget[], b: CustomLayoutWidget[]) =>
+  a.length === b.length &&
+  a.every((w) => {
+    const other = b.find((o) => o.id === w.id);
+    if (!other) return false;
+    const p = w.gridPosition;
+    const q = other.gridPosition;
+    return p.col === q.col && p.row === q.row && p.colSpan === q.colSpan && p.rowSpan === q.rowSpan;
+  });
 
 export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
   initialLayout,
@@ -112,6 +109,8 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     initialLayout?.widgets ?? []
   );
   const [configWidgetId, setConfigWidgetId] = useState<string | null>(null);
+  const [deleteWidgetId, setDeleteWidgetId] = useState<string | null>(null);
+  const [scrollToId, setScrollToId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [containerWidth, setContainerWidth] = useState(1200);
@@ -127,12 +126,33 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
   }, []);
 
   const layout = useMemo(() => widgetsToLayout(widgets), [widgets]);
+  const layoutSettledRef = useRef(widgets.length === 0);
 
   const handleLayoutChange = (newLayout: Layout) => {
     const updatedWidgets = layoutToWidgets(newLayout, widgets);
+    // react-grid-layout also reports the layout on mount; only real moves count.
+    if (samePositions(updatedWidgets, widgets)) return;
     setWidgets(updatedWidgets);
+    // The first report is the grid compacting a saved layout with gaps. That is
+    // not an edit, so it must not raise "unsaved changes".
+    if (!layoutSettledRef.current) {
+      layoutSettledRef.current = true;
+      return;
+    }
     setHasChanges(true);
   };
+
+  // Bring a freshly added widget into view once the grid has placed it.
+  useEffect(() => {
+    if (!scrollToId) return;
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-widget-id="${scrollToId}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setScrollToId(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollToId, widgets]);
 
   const handleAddWidget = (type: WidgetType) => {
     // Find the next available position
@@ -149,7 +169,6 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     const newWidget: CustomLayoutWidget = {
       id: generateWidgetId(),
       type,
-      checkId: isTextWidget || isMapWidget ? undefined : '',
       textContent: isTextWidget ? '' : undefined,
       gridPosition: {
         col: 1,
@@ -161,84 +180,17 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
 
     setWidgets((prev) => [...prev, newWidget]);
     setHasChanges(true);
+    setScrollToId(newWidget.id);
+    // Go straight to picking checks. The map needs no setup.
+    if (!isMapWidget) setConfigWidgetId(newWidget.id);
   };
 
   const handleConfigureWidget = (widgetId: string) => {
     setConfigWidgetId(widgetId);
   };
 
-  const handleWidgetConfigSave = (widgetId: string, checkId: string, showCheckName?: boolean) => {
-    setWidgets((prev) =>
-      prev.map((w) => (w.id === widgetId ? { ...w, checkId, showCheckName } : w))
-    );
-    setHasChanges(true);
-    setConfigWidgetId(null);
-  };
-
-  const handleWidgetUptimeSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean) => {
-    setWidgets((prev) =>
-      prev.map((w) =>
-        w.id === widgetId
-          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName }
-          : w
-      )
-    );
-    setHasChanges(true);
-    setConfigWidgetId(null);
-  };
-
-  const handleWidgetIncidentsSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, incidentsMode?: IncidentsMode) => {
-    setWidgets((prev) =>
-      prev.map((w) =>
-        w.id === widgetId
-          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName, incidentsMode }
-          : w
-      )
-    );
-    setHasChanges(true);
-    setConfigWidgetId(null);
-  };
-
-  const handleWidgetDowntimeSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, downtimeMode?: DowntimeMode) => {
-    setWidgets((prev) =>
-      prev.map((w) =>
-        w.id === widgetId
-          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName, downtimeMode }
-          : w
-      )
-    );
-    setHasChanges(true);
-    setConfigWidgetId(null);
-  };
-
-  const handleWidgetTimelineSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, showCheckCount?: boolean, showStatus?: boolean) => {
-    setWidgets((prev) =>
-      prev.map((w) =>
-        w.id === widgetId
-          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName, showCheckCount, showStatus }
-          : w
-      )
-    );
-    setHasChanges(true);
-    setConfigWidgetId(null);
-  };
-
-  const handleWidgetStatusSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean) => {
-    setWidgets((prev) =>
-      prev.map((w) =>
-        w.id === widgetId
-          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName }
-          : w
-      )
-    );
-    setHasChanges(true);
-    setConfigWidgetId(null);
-  };
-
-  const handleWidgetTextSave = (widgetId: string, textContent: string, textSize: TextWidgetSize) => {
-    setWidgets((prev) =>
-      prev.map((w) => (w.id === widgetId ? { ...w, textContent, textSize } : w))
-    );
+  const handleWidgetSave = (widgetId: string, patch: Partial<CustomLayoutWidget>) => {
+    setWidgets((prev) => prev.map((w) => (w.id === widgetId ? { ...w, ...patch } : w)));
     setHasChanges(true);
     setConfigWidgetId(null);
   };
@@ -247,6 +199,7 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     setWidgets((prev) => prev.filter((w) => w.id !== widgetId));
     setHasChanges(true);
     setConfigWidgetId(null);
+    setDeleteWidgetId(null);
   };
 
   const handleSave = async () => {
@@ -259,7 +212,7 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
           type: widget.type,
           gridPosition: widget.gridPosition,
         };
-        if (widget.checkId !== undefined) clean.checkId = widget.checkId;
+        if (widget.checkId) clean.checkId = widget.checkId;
         if (widget.checkIds !== undefined && widget.checkIds.length > 0) clean.checkIds = widget.checkIds;
         if (widget.folderPaths !== undefined && widget.folderPaths.length > 0) clean.folderPaths = widget.folderPaths;
         if (widget.textContent !== undefined) clean.textContent = widget.textContent;
@@ -283,33 +236,6 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     }
   };
 
-  const getCheckForWidget = (widget: CustomLayoutWidget): BadgeData | null => {
-    return checks.find((check) => check.checkId === widget.checkId) || null;
-  };
-
-  const getChecksForWidget = (widget: CustomLayoutWidget): BadgeData[] => {
-    const ids = widget.checkIds?.length ? widget.checkIds : widget.checkId ? [widget.checkId] : [];
-    const idSet = new Set(ids);
-    // Also include checks from folder paths
-    if (widget.folderPaths?.length) {
-      const folderSet = new Set(widget.folderPaths);
-      for (const c of checks) {
-        const f = normalizeFolder(c.folder);
-        if (f && folderSet.has(f)) idSet.add(c.checkId);
-      }
-    }
-    return Array.from(idSet).map((id) => checks.find((c) => c.checkId === id)).filter((c): c is BadgeData => !!c);
-  };
-
-  const getHeartbeatForWidget = (widget: CustomLayoutWidget): HeartbeatDay[] => {
-    return heartbeatMap[widget.checkId ?? ''] || [];
-  };
-
-  const getHeartbeatsForWidget = (widget: CustomLayoutWidget): HeartbeatDay[][] => {
-    const ids = widget.checkIds?.length ? widget.checkIds : widget.checkId ? [widget.checkId] : [];
-    return ids.map((id) => heartbeatMap[id] || []);
-  };
-
   const configWidget = configWidgetId
     ? widgets.find((w) => w.id === configWidgetId) ?? null
     : null;
@@ -318,12 +244,28 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     <div className="pb-24">
       <div ref={containerRef} className="relative min-h-[400px]">
         {widgets.length === 0 ? (
-          <div className="flex items-center justify-center min-h-[400px] border-2 border-dashed border-muted-foreground/20 rounded-lg m-4">
-            <div className="text-center text-muted-foreground">
+          <div className="flex items-center justify-center min-h-[400px] border-2 border-dashed border-muted-foreground/20 rounded-lg m-4 p-6">
+            <div className="w-full max-w-2xl text-center">
               <p className="text-sm font-medium">No widgets yet</p>
-              <p className="text-xs mt-1">
-                Click "Add Widget" in the toolbar below to get started
+              <p className="text-xs text-muted-foreground mt-1">
+                Pick a widget to start your layout.
               </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4 text-left">
+                {WIDGET_TYPES.map(({ type, label, description, icon: Icon }) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => handleAddWidget(type)}
+                    className="flex items-start gap-3 text-left rounded-md border border-border/30 bg-card px-3 py-2.5 hover:bg-muted/40 transition-colors cursor-pointer"
+                  >
+                    <Icon className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-foreground">{label}</span>
+                      <span className="block text-xs text-muted-foreground">{description}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
@@ -347,62 +289,22 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
             onLayoutChange={handleLayoutChange}
           >
             {widgets.map((widget) => (
-              <div key={widget.id}>
-                {widget.type === 'text' ? (
-                  <TextWidget
+              <div key={widget.id} data-widget-id={widget.id}>
+                <WidgetEditChrome
+                  widgetId={widget.id}
+                  editMode
+                  configured={isWidgetConfigured(widget, checks)}
+                  onConfigure={handleConfigureWidget}
+                  onDelete={setDeleteWidgetId}
+                >
+                  <WidgetBody
                     widget={widget}
-                    editMode={true}
-                    onConfigure={handleConfigureWidget}
+                    checks={checks}
+                    fullChecks={fullChecks}
+                    heartbeatMap={heartbeatMap}
+                    editMode
                   />
-                ) : widget.type === 'uptime' ? (
-                  <UptimeWidget
-                    widget={widget}
-                    checks={getChecksForWidget(widget)}
-                    heartbeats={getHeartbeatsForWidget(widget)}
-                    editMode={true}
-                    onConfigure={handleConfigureWidget}
-                  />
-                ) : widget.type === 'incidents' ? (
-                  <IncidentsWidget
-                    widget={widget}
-                    checks={getChecksForWidget(widget)}
-                    heartbeats={getHeartbeatsForWidget(widget)}
-                    editMode={true}
-                    onConfigure={handleConfigureWidget}
-                  />
-                ) : widget.type === 'downtime' ? (
-                  <DowntimeWidget
-                    widget={widget}
-                    checks={getChecksForWidget(widget)}
-                    heartbeats={getHeartbeatsForWidget(widget)}
-                    editMode={true}
-                    onConfigure={handleConfigureWidget}
-                  />
-                ) : widget.type === 'status' ? (
-                  <StatusWidget
-                    widget={widget}
-                    checks={getChecksForWidget(widget)}
-                    editMode={true}
-                    onConfigure={handleConfigureWidget}
-                  />
-                ) : widget.type === 'map' ? (
-                  <MapWidget
-                    widget={widget}
-                    checks={fullChecks}
-                    editMode={true}
-                    onConfigure={handleConfigureWidget}
-                  />
-                ) : (
-                  <TimelineWidget
-                    widget={widget}
-                    check={getCheckForWidget(widget)}
-                    heartbeat={getHeartbeatForWidget(widget)}
-                    checks={getChecksForWidget(widget)}
-                    heartbeats={getHeartbeatsForWidget(widget)}
-                    editMode={true}
-                    onConfigure={handleConfigureWidget}
-                  />
-                )}
+                </WidgetEditChrome>
               </div>
             ))}
           </GridLayout>
@@ -421,15 +323,20 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
         isOpen={!!configWidgetId}
         widget={configWidget}
         checks={checks}
-        onSave={handleWidgetConfigSave}
-        onSaveTimeline={handleWidgetTimelineSave}
-        onSaveUptime={handleWidgetUptimeSave}
-        onSaveIncidents={handleWidgetIncidentsSave}
-        onSaveDowntime={handleWidgetDowntimeSave}
-        onSaveStatus={handleWidgetStatusSave}
-        onSaveText={handleWidgetTextSave}
+        onSave={handleWidgetSave}
         onClose={() => setConfigWidgetId(null)}
-        onDelete={handleWidgetDelete}
+        onDelete={setDeleteWidgetId}
+      />
+
+      <ConfirmationModal
+        isOpen={!!deleteWidgetId}
+        onClose={() => setDeleteWidgetId(null)}
+        onConfirm={() => {
+          if (deleteWidgetId) handleWidgetDelete(deleteWidgetId);
+        }}
+        title="Delete widget?"
+        message="This removes the widget from the layout. Visitors see the change once you save the layout."
+        confirmText="Delete"
       />
     </div>
   );

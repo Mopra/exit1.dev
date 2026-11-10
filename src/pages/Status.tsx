@@ -4,7 +4,7 @@ import { useAccount } from '@/AccountProvider';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap, AlertTriangle, Globe } from 'lucide-react';
+import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap, AlertTriangle, Globe, LayoutGrid } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
@@ -124,6 +124,11 @@ const validateImageDimensions = async (file: File, kind: BrandAssetKind) => {
   }
 };
 
+const hasBrandingSet = (page: StatusPage) => {
+  const b = page.branding;
+  return !!(b && (b.logoUrl || b.faviconUrl || b.brandColor || b.accentColor || b.font)) || page.showPoweredBy === false;
+};
+
 const Status: React.FC = () => {
   const { userId } = useAuth();
   const { accountId, canWrite } = useAccount();
@@ -162,7 +167,7 @@ const Status: React.FC = () => {
   const [formShowResponseTime, setFormShowResponseTime] = useState(true);
   const [logoUploading, setLogoUploading] = useState(false);
   const [faviconUploading, setFaviconUploading] = useState(false);
-  const [checksOpen, setChecksOpen] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [domainOpen, setDomainOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -307,7 +312,7 @@ const Status: React.FC = () => {
     setFormShowUptimeStats(true);
     setFormShowHistory(true);
     setFormShowResponseTime(true);
-    setChecksOpen(false);
+    setShowErrors(false);
     setAppearanceOpen(false);
     setDomainOpen(false);
     setSearchQuery('');
@@ -343,8 +348,8 @@ const Status: React.FC = () => {
     setFormShowUptimeStats(page.display?.showUptimeStats !== false);
     setFormShowHistory(page.display?.showHistory !== false);
     setFormShowResponseTime(page.display?.showResponseTime !== false);
-    setChecksOpen(true);
-    setAppearanceOpen(true);
+    setShowErrors(false);
+    setAppearanceOpen(hasBrandingSet(page));
     setSearchQuery('');
     setFormOpen(true);
   };
@@ -352,7 +357,7 @@ const Status: React.FC = () => {
   const closeForm = () => {
     setFormOpen(false);
     setEditingPage(null);
-    setChecksOpen(false);
+    setShowErrors(false);
     setAppearanceOpen(false);
     setDomainOpen(false);
   };
@@ -414,14 +419,15 @@ const Status: React.FC = () => {
     }
 
     const trimmedName = formName.trim();
-    if (trimmedName.length < 2) {
-      toast.error('Status page name must be at least 2 characters.');
+    // Checks are required to create a page. Existing pages whose checks were
+    // since deleted must still be able to save other settings.
+    if (trimmedName.length < 2 || (!editingPage && totalSelectedCount === 0)) {
+      setShowErrors(true);
       return;
     }
 
     if (isOverCheckLimit) {
       toast.error(`A status page can show at most ${MAX_STATUS_PAGE_CHECKS} checks. Remove ${checksOverLimitBy} to save.`);
-      setChecksOpen(true);
       return;
     }
 
@@ -483,14 +489,33 @@ const Status: React.FC = () => {
     try {
       if (editingPage) {
         await updateDoc(doc(db, 'status_pages', editingPage.id), payload);
+        if (effectiveLayout === 'custom' && editingPage.layout !== 'custom') {
+          // Just switched to a custom layout: go design it.
+          setFormOpen(false);
+          setEditingPage(null);
+          toast.success('Status page updated. Add your widgets.');
+          navigate(`/status/${editingPage.id}?edit=1`);
+          return;
+        }
         toast.success('Status page updated.');
       } else {
-        await addDoc(collection(db, 'status_pages'), {
+        const created = await addDoc(collection(db, 'status_pages'), {
           ...payload,
           userId: accountId,
           createdAt: now,
         });
-        toast.success('Status page created.');
+        setFormOpen(false);
+        setEditingPage(null);
+        if (effectiveLayout === 'custom') {
+          // A custom page starts empty: go straight to its layout editor.
+          toast.success('Status page created. Add your first widgets.');
+          navigate(`/status/${created.id}?edit=1`);
+        } else {
+          toast.success('Status page created.', {
+            action: { label: 'View page', onClick: () => window.open(`/status/${created.id}`, '_blank', 'noopener') },
+          });
+        }
+        return;
       }
       setFormOpen(false);
       setEditingPage(null);
@@ -525,6 +550,23 @@ const Status: React.FC = () => {
   };
 
   const hasRows = !loading && statusPages.length > 0;
+
+  // Checks a page shows: explicit picks plus the current contents of its folders.
+  const pageCheckCount = (page: StatusPage) => {
+    const ids = new Set(page.checkIds ?? []);
+    const folders = new Set(page.folderPaths ?? []);
+    if (folders.size > 0) {
+      for (const check of checks) {
+        const folder = normalizeFolder(check.folder);
+        if (folder && folders.has(folder)) ids.add(check.id);
+      }
+    }
+    return ids.size;
+  };
+  const renderCheckCount = (page: StatusPage) => {
+    const count = pageCheckCount(page);
+    return `${count} ${count === 1 ? 'check' : 'checks'}`;
+  };
 
   // Incidents: the sheet manages one page at a time.
   const incidentsPage = incidentsPageId ? statusPages.find((p) => p.id === incidentsPageId) ?? null : null;
@@ -588,7 +630,7 @@ const Status: React.FC = () => {
                 </Badge>
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                {page.checkIds?.length ?? 0} {page.checkIds?.length === 1 ? 'check' : 'checks'}
+                {renderCheckCount(page)}
               </div>
             </div>
             <div className="flex items-center gap-0.5 shrink-0">
@@ -623,6 +665,15 @@ const Status: React.FC = () => {
                     <Settings className="w-3 h-3" />
                     <span className="ml-2">Settings</span>
                   </DropdownMenuItem>
+                  {page.layout === 'custom' && canWrite && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`/status/${page.id}?edit=1`)}
+                      className="cursor-pointer font-mono"
+                    >
+                      <LayoutGrid className="w-3 h-3" />
+                      <span className="ml-2">Edit layout</span>
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={() => setDeleteTarget(page)}
@@ -688,7 +739,7 @@ const Status: React.FC = () => {
       return;
     }
 
-    kind === 'logo' ? setLogoUploading(true) : setFaviconUploading(true);
+    if (kind === 'logo') setLogoUploading(true); else setFaviconUploading(true);
     try {
       await validateImageDimensions(file, kind);
       const extension = file.name.split('.').pop()?.toLowerCase() || 'png';
@@ -715,7 +766,7 @@ const Status: React.FC = () => {
       const message = error instanceof Error ? error.message : `Failed to upload ${kind}.`;
       toast.error(message);
     } finally {
-      kind === 'logo' ? setLogoUploading(false) : setFaviconUploading(false);
+      if (kind === 'logo') setLogoUploading(false); else setFaviconUploading(false);
     }
   };
 
@@ -817,7 +868,7 @@ const Status: React.FC = () => {
                     </TableCell>
                     <TableCell className="px-4 py-4">
                       <div className="text-sm text-muted-foreground">
-                        {page.checkIds?.length ?? 0} {page.checkIds?.length === 1 ? 'check' : 'checks'}
+                        {renderCheckCount(page)}
                       </div>
                     </TableCell>
                     <TableCell className="px-4 py-4">
@@ -860,6 +911,15 @@ const Status: React.FC = () => {
                               <Settings className="w-3 h-3" />
                               <span className="ml-2">Settings</span>
                             </DropdownMenuItem>
+                            {page.layout === 'custom' && canWrite && (
+                              <DropdownMenuItem
+                                onClick={() => navigate(`/status/${page.id}?edit=1`)}
+                                className="cursor-pointer font-mono"
+                              >
+                                <LayoutGrid className="w-3 h-3" />
+                                <span className="ml-2">Edit layout</span>
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               onClick={() => setDeleteTarget(page)}
@@ -909,7 +969,7 @@ const Status: React.FC = () => {
       </div>
 
       <Sheet open={formOpen} onOpenChange={(open) => (open ? setFormOpen(true) : closeForm())}>
-        <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-hidden">
+        <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 gap-0 overflow-hidden">
           <SheetTitle className="sr-only">{editingPage ? 'Edit Status Page' : 'New Status Page'}</SheetTitle>
           <ScrollArea className="flex-1 min-h-0 [&_[data-slot=scroll-viewport]]:!overflow-x-hidden [&_[data-slot=scroll-viewport]>div]:!block [&_[data-slot=scroll-viewport]>div]:!w-full">
             <div className="p-7 sm:p-8 min-w-0">
@@ -943,27 +1003,40 @@ const Status: React.FC = () => {
                       onChange={(event) => setFormName(event.target.value)}
                       placeholder="Production Status"
                       className="h-10 text-sm mt-1.5"
+                      aria-invalid={showErrors && formName.trim().length < 2}
                       autoFocus
                     />
+                    {showErrors && formName.trim().length < 2 && (
+                      <p className="text-xs text-destructive mt-1.5">Give the page a name (at least 2 characters).</p>
+                    )}
                   </div>
 
                   <div>
-                    <Label className="text-xs font-medium text-muted-foreground">Visibility</Label>
-                    <Select
+                    <Label className="text-xs font-medium text-muted-foreground">Who can see it</Label>
+                    <RadioGroup
                       value={formVisibility}
                       onValueChange={(value) => setFormVisibility(value as StatusPageVisibility)}
+                      className="grid grid-cols-2 gap-2 mt-1.5"
                     >
-                      <SelectTrigger className="h-10 text-sm mt-1.5">
-                        <SelectValue placeholder="Select visibility" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="public">Public</SelectItem>
-                        <SelectItem value="private">Private</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground mt-1.5">
-                      Public pages can be viewed by anyone with the link.
-                    </p>
+                      {[
+                        { id: 'public', label: 'Public', desc: 'Anyone with the link' },
+                        { id: 'private', label: 'Private', desc: 'Only you and your team' },
+                      ].map((opt) => (
+                        <label
+                          key={opt.id}
+                          htmlFor={`status-visibility-${opt.id}`}
+                          className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+                            formVisibility === opt.id ? 'bg-primary/5 border-primary/30' : 'border-border/40 hover:bg-muted/30'
+                          }`}
+                        >
+                          <RadioGroupItem id={`status-visibility-${opt.id}`} value={opt.id} className="mt-0.5" />
+                          <div>
+                            <div className="text-xs font-medium">{opt.label}</div>
+                            <div className="text-[10px] text-muted-foreground">{opt.desc}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </RadioGroup>
                     {CUSTOM_DOMAINS_ENABLED && formVisibility === 'private' && editingPage?.customDomain && (
                       <p className="text-xs text-warning mt-1.5">
                         {editingPage.customDomain.hostname} will show "not available" until the page is public again.
@@ -972,38 +1045,12 @@ const Status: React.FC = () => {
                   </div>
                 </div>
 
-                {/* ── Submit Button ── */}
-                <Button
-                  onClick={handleSave}
-                  disabled={saving || isUploading || isOverCheckLimit}
-                  title={isOverCheckLimit ? `Remove ${checksOverLimitBy} check${checksOverLimitBy === 1 ? '' : 's'} — a status page can show at most ${MAX_STATUS_PAGE_CHECKS}.` : undefined}
-                  className="w-full h-11 text-sm font-medium"
-                >
-                  {isUploading ? (
-                    <>
-                      <Zap className="w-4 h-4 mr-2 animate-pulse" />
-                      Uploading...
-                    </>
-                  ) : saving ? (
-                    <>
-                      <Zap className="w-4 h-4 mr-2 animate-pulse" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      {editingPage ? <Check className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
-                      {editingPage ? 'Save Changes' : 'Create Status Page'}
-                    </>
-                  )}
-                </Button>
-
-                {/* ── Select Checks (collapsible) ── */}
-                <Collapsible open={checksOpen} onOpenChange={setChecksOpen}>
-                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
-                    <div className="h-px flex-1 bg-border/60" />
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                {/* ── Checks ── */}
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                       <Folder className="w-3.5 h-3.5" />
-                      Checks
+                      Checks on this page
                       {totalSelectedCount > 0 && (
                         <Badge
                           variant={isOverCheckLimit ? 'destructive' : 'secondary'}
@@ -1012,13 +1059,12 @@ const Status: React.FC = () => {
                           {totalSelectedCount}{isOverCheckLimit ? `/${MAX_STATUS_PAGE_CHECKS}` : ''}
                         </Badge>
                       )}
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${checksOpen ? 'rotate-180' : ''}`} />
-                    </span>
-                    <div className="h-px flex-1 bg-border/60" />
-                  </CollapsibleTrigger>
-
-                  <CollapsibleContent className="pt-2">
-                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-3">
+                    </div>
+                  </div>
+                  {showErrors && !editingPage && totalSelectedCount === 0 && (
+                    <p className="text-xs text-destructive">Pick at least one check or folder to show on the page.</p>
+                  )}
+                  <div className={`rounded-xl bg-muted/20 border p-4 space-y-3 ${showErrors && !editingPage && totalSelectedCount === 0 ? 'border-destructive/50' : 'border-border/30'}`}>
                       {isOverCheckLimit && (
                         <Alert variant="destructive">
                           <AlertTriangle />
@@ -1180,24 +1226,11 @@ const Status: React.FC = () => {
                           )}
                         </div>
                       </ScrollArea>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
+                  </div>
+                </section>
 
-                {/* ── Appearance (collapsible) ── */}
-                <Collapsible open={appearanceOpen} onOpenChange={setAppearanceOpen}>
-                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
-                    <div className="h-px flex-1 bg-border/60" />
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
-                      <Settings className="w-3.5 h-3.5" />
-                      Appearance
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${appearanceOpen ? 'rotate-180' : ''}`} />
-                    </span>
-                    <div className="h-px flex-1 bg-border/60" />
-                  </CollapsibleTrigger>
-
-                  <CollapsibleContent className="space-y-4 pt-2">
-                    {/* Layout */}
+                {/* ── Layout ── */}
+                <section className="space-y-4">
                     <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-3">
                       <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Layout</div>
                       <RadioGroup
@@ -1244,7 +1277,9 @@ const Status: React.FC = () => {
                                   {builderTierName}
                                 </Badge>
                               </div>
-                              <div className="text-[10px] text-muted-foreground">Drag and drop widgets</div>
+                              <div className="text-[10px] text-muted-foreground">
+                                Place widgets yourself. The editor opens on the page after you save.
+                              </div>
                             </div>
                           </label>
                           {!statusPageBuilder && (
@@ -1254,12 +1289,19 @@ const Status: React.FC = () => {
                           )}
                         </div>
                       </RadioGroup>
+                      {editingPage && editingPage.layout !== 'custom' && formLayout === 'custom' && (
+                        <p className="text-[10px] text-muted-foreground">
+                          The layout editor opens after you save.
+                        </p>
+                      )}
                     </div>
 
-                    {/* Options */}
+                    {/* Grid options and display toggles only apply to the preset layouts. */}
+                    {formLayout !== 'custom' && (
                     <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
+                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Display</div>
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
                           <div className="text-xs font-medium">Group by folder</div>
                           <div className="text-[10px] text-muted-foreground">Group checks under folder names on the public page</div>
                         </div>
@@ -1268,16 +1310,6 @@ const Status: React.FC = () => {
                           onCheckedChange={setFormGroupByFolder}
                         />
                       </div>
-                    </div>
-
-                    {/* Display — toggles for the standard (non-custom) layout. All on by default. */}
-                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
-                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Display</div>
-                      {formLayout === 'custom' && (
-                        <p className="text-[10px] text-muted-foreground">
-                          These apply to the grid layouts. The custom layout is controlled by its widgets instead.
-                        </p>
-                      )}
                       {[
                         {
                           label: 'Overall status banner',
@@ -1313,8 +1345,23 @@ const Status: React.FC = () => {
                         </div>
                       ))}
                     </div>
+                    )}
+                </section>
 
-                    {/* Branding */}
+                {/* ── Branding (collapsible, optional) ── */}
+                <Collapsible open={appearanceOpen} onOpenChange={setAppearanceOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                    <div className="h-px flex-1 bg-border/60" />
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                      <Settings className="w-3.5 h-3.5" />
+                      Branding
+                      <span className="font-normal text-muted-foreground/70">(optional)</span>
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${appearanceOpen ? 'rotate-180' : ''}`} />
+                    </span>
+                    <div className="h-px flex-1 bg-border/60" />
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent className="space-y-4 pt-2">
                     <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
@@ -1514,6 +1561,44 @@ const Status: React.FC = () => {
               </div>
             </div>
           </ScrollArea>
+          <div className="shrink-0 border-t border-border/60 bg-background/95 px-7 sm:px-8 py-4 flex items-center gap-3">
+            <p className="flex-1 min-w-0 text-[11px] text-muted-foreground truncate">
+              {isOverCheckLimit
+                ? `Remove ${checksOverLimitBy} ${checksOverLimitBy === 1 ? 'check' : 'checks'} (max ${MAX_STATUS_PAGE_CHECKS})`
+                : totalSelectedCount > 0
+                  ? `${totalSelectedCount} ${totalSelectedCount === 1 ? 'check' : 'checks'} selected`
+                  : 'No checks selected yet'}
+            </p>
+            <Button variant="ghost" onClick={closeForm} disabled={saving} className="cursor-pointer">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={saving || isUploading || isOverCheckLimit || !canWrite}
+              className="cursor-pointer"
+            >
+              {isUploading ? (
+                <>
+                  <Zap className="w-4 h-4 mr-2 animate-pulse" />
+                  Uploading...
+                </>
+              ) : saving ? (
+                <>
+                  <Zap className="w-4 h-4 mr-2 animate-pulse" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  {editingPage ? <Check className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                  {editingPage
+                    ? 'Save changes'
+                    : statusPageBuilder && formLayout === 'custom'
+                      ? 'Create and design layout'
+                      : 'Create status page'}
+                </>
+              )}
+            </Button>
+          </div>
         </SheetContent>
       </Sheet>
 

@@ -1,5 +1,4 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { GripVertical, Settings } from 'lucide-react';
 import { GlowCard } from '../ui';
 import type { CustomLayoutWidget } from '../../types';
 import { format } from 'date-fns';
@@ -23,7 +22,6 @@ interface TimelineWidgetProps {
   checks?: BadgeData[];            // Multi-check mode
   heartbeats?: HeartbeatDay[][];   // Multi-check mode
   editMode: boolean;
-  onConfigure: (widgetId: string) => void;
 }
 
 const getHealthTone = (status?: string) => {
@@ -160,7 +158,6 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
   checks,
   heartbeats,
   editMode,
-  onConfigure,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleDays, setVisibleDays] = useState(30);
@@ -221,30 +218,12 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
 
   if (isEmpty) {
     return (
-      <GlowCard className="group p-5 h-full flex flex-col items-center justify-center gap-2 border-dashed">
-        {editMode && (
-          <>
-            <div className="drag-handle absolute top-1 left-1 p-2 cursor-grab active:cursor-grabbing rounded hover:bg-muted/50 opacity-0 group-hover:opacity-100 transition-opacity">
-              <GripVertical className="w-5 h-5 text-muted-foreground" />
-            </div>
-            <div className="absolute bottom-2 right-2 pointer-events-none">
-              <svg width="14" height="14" viewBox="0 0 14 14" className="text-muted-foreground/50">
-                <path d="M12 2L2 12M12 7L7 12M12 12L12 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </div>
-          </>
-        )}
+      <GlowCard className="p-5 h-full flex flex-col items-center justify-center gap-2 border-dashed">
         <div className="text-sm text-muted-foreground text-center">
           No check selected
         </div>
         {editMode && (
-          <button
-            type="button"
-            onClick={() => onConfigure(widget.id)}
-            className="text-xs text-primary hover:underline cursor-pointer"
-          >
-            Configure widget
-          </button>
+          <span className="text-xs text-primary">Click to choose checks</span>
         )}
       </GlowCard>
     );
@@ -256,28 +235,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
     : getHealthSurface(check?.status);
 
   return (
-    <GlowCard className={`group p-5 h-full flex flex-col gap-3 min-w-0 ${surface}`}>
-      {editMode && (
-        <>
-          <div className="drag-handle absolute top-2 left-2 p-1.5 cursor-grab active:cursor-grabbing rounded-md bg-background/80 backdrop-blur-sm border border-border/50 shadow-sm hover:bg-background z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-            <GripVertical className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <button
-            type="button"
-            onClick={() => onConfigure(widget.id)}
-            className="absolute top-2 right-2 p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border/50 shadow-sm hover:bg-background z-10 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-            aria-label="Configure widget"
-          >
-            <Settings className="w-4 h-4 text-muted-foreground" />
-          </button>
-          <div className="absolute bottom-2 right-2 pointer-events-none z-10">
-            <svg width="14" height="14" viewBox="0 0 14 14" className="text-muted-foreground/60">
-              <path d="M12 2L2 12M12 7L7 12M12 12L12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </div>
-        </>
-      )}
-
+    <GlowCard className={`p-5 h-full flex flex-col gap-3 min-w-0 ${surface}`}>
       {/* Header - multi-check aggregated or single check */}
       {isMultiCheck ? (
         (widget.showCheckCount !== false || widget.showStatus !== false) && (

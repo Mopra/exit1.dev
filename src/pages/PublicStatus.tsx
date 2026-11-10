@@ -325,6 +325,19 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
 
   const canEdit = isOwner && canWrite && statusPage?.layout === 'custom';
 
+  // The app links here with ?edit=1 right after creating a custom page (and from
+  // "Edit layout"), so the owner lands in the editor instead of an empty page.
+  // Read window.location directly: this page also renders on custom domains.
+  useEffect(() => {
+    if (!canEdit) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('edit') !== '1') return;
+    setEditMode(true);
+    params.delete('edit');
+    const query = params.toString();
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  }, [canEdit]);
+
   // History window the viewer is looking at (7 / 30 / 90 days). Defaults to a
   // shorter span on small screens so the bars stay legible.
   const [historyDays, setHistoryDays] = useState<number>(() =>
@@ -1262,6 +1275,15 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
                       heartbeatMap={heartbeatMap}
                       onSave={handleSaveCustomLayout}
                       onCancel={() => setEditMode(false)}
+                    />
+                  ) : (statusPage?.customLayout?.widgets?.length ?? 0) === 0 ? (
+                    <EmptyState
+                      variant="empty"
+                      title={canEdit ? 'Your layout is empty' : 'This status page is being set up'}
+                      description={canEdit
+                        ? 'Add widgets to choose what visitors see on this page.'
+                        : 'Check back soon.'}
+                      action={canEdit ? { label: 'Design layout', onClick: () => setEditMode(true) } : undefined}
                     />
                   ) : (
                     <WidgetGrid
