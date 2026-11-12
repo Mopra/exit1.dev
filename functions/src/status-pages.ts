@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { onCall, HttpsError, type CallableRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
+import { FieldPath } from "firebase-admin/firestore";
 import { firestore } from "./init";
 import { resolveAccount } from "./team-access";
 
@@ -27,12 +28,31 @@ const UPTIME_LOOKBACK_MS = 30 * DAY_MS;
 // With 75 s a lone viewer hits every second poll, and the worst case from a
 // status change in Firestore to an open tab showing it is 75 s + the 60 s poll.
 export const SNAPSHOT_TTL_MS = 75 * 1000;
-// Folder pages: how long the resolved check id list is reused. A check moved
-// into or out of a folder shows up on the page within this (plus one snapshot
-// TTL). Edits to the page itself (checks or folders picked) apply at once,
-// because the cache is keyed on them. One scan per 5 min is 288 scans a day
-// per polled page instead of 1,728.
-export const RESOLVED_IDS_TTL_MS = 5 * 60 * 1000;
+// Folder pages. The checks in a page's folders are found with an indexed
+// query (userId + folder) limited to the checks the page can show, so it reads
+// at most about MAX_CHECKS docs, not every check the owner has (702 on the
+// largest account, 327 of them in the page's folder).
+//
+// A marker bumped on every folder change would be cheaper still, but the app
+// writes check folders straight to Firestore from the browser (useChecks.ts:
+// move, bulk move, rename, delete folder), so no server hook sees a move.
+//
+// The snapshot runs that query on every memo miss and uses the docs it
+// returns as its check reads, so finding the checks costs it no extra reads
+// and a folder move shows on the page within one SNAPSHOT_TTL_MS.
+// The heartbeat and uptime calls only need the ids. They reuse the list the
+// snapshot stores in the cache doc for RESOLVED_IDS_TTL_MS, and run the query
+// themselves (up to MAX_CHECKS reads) only when no snapshot kept it fresh.
+// Edits to the page itself (checks or folders picked) apply at once, because
+// the stored list is keyed on them.
+export const RESOLVED_IDS_TTL_MS = 10 * 60 * 1000;
+// The snapshot rewrites the stored list when it changed or has less than this
+// left. A lone viewer misses the snapshot memo about every 2 min, so 3 min
+// keeps the list from expiring under the heartbeat while a tab is open.
+// Cost: 1 write per 7 to 8 min per polled folder page, about 190 a day.
+export const RESOLVED_REFRESH_MARGIN_MS = 3 * 60 * 1000;
+// Firestore allows 30 values in an `in` filter.
+const FOLDER_IN_LIMIT = 30;
 // The snapshot is also shared through Firestore (one write per miss) so
 // another instance can serve it for 2 reads. A write costs 3 reads and saves
 // N reads only when the next call lands on a different instance, so it pays
@@ -164,6 +184,54 @@ export function matchFolderCheckIds(
     if (folder && folderPaths.includes(folder)) all.add(check.id);
   }
   return Array.from(all);
+}
+
+/**
+ * The page folders an exact-match query can find. Checks store their folder
+ * normalized (the app and the public API both normalize before writing), and
+ * matchFolderCheckIds compares against the normalized form, so a page folder
+ * that is not in that form matches nothing and is not worth a query.
+ */
+export function queryableFolderPaths(folderPaths: string[]): string[] {
+  return Array.from(new Set(folderPaths.filter((path) => normalizeFolder(path) === path)));
+}
+
+/** How many folder checks still fit on a page after its explicit checks. */
+export function folderSlotsLeft(explicitCheckIds: string[], maxChecks: number): number {
+  return Math.max(0, maxChecks - new Set(explicitCheckIds).size);
+}
+
+/**
+ * The page's check ids from the folder query results: explicit ids first, then
+ * folder checks in id order (the order a scan of the owner's checks gives),
+ * cut to what the page shows.
+ */
+export function pickPageCheckIds(
+  explicitCheckIds: string[],
+  folderPaths: string[],
+  candidates: Array<{ id: string; folder?: string | null; type?: string }>,
+  maxChecks: number,
+): string[] {
+  const sorted = [...candidates].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return matchFolderCheckIds(explicitCheckIds, folderPaths, sorted).slice(0, maxChecks);
+}
+
+/**
+ * Whether the snapshot should store the list it just resolved: when nothing
+ * usable is stored for this page setup, when the list changed, or when the
+ * stored one is within RESOLVED_REFRESH_MARGIN_MS of expiring.
+ */
+export function shouldRewriteResolved(
+  entry: { checkIds?: unknown; expiresAt: number; sourceKey: string } | null | undefined,
+  sourceKey: string,
+  checkIds: string[],
+  now: number,
+): boolean {
+  const fresh = pickFreshEntry(entry, sourceKey, now, RESOLVED_IDS_TTL_MS);
+  if (!fresh || !Array.isArray(fresh.checkIds)) return true;
+  if (fresh.checkIds.length !== checkIds.length) return true;
+  if (fresh.checkIds.some((id, i) => id !== checkIds[i])) return true;
+  return fresh.expiresAt - now < RESOLVED_REFRESH_MARGIN_MS;
 }
 
 /** Entries written before the onlineChecks/offlineChecks fields existed are not usable. */
@@ -356,20 +424,86 @@ function normalizeFolder(folder?: string | null): string | null {
 
 type PageSources = { explicitCheckIds: string[]; folderPaths: string[] };
 
-// Concurrent calls for a folder page on the same instance share one scan of
-// the owner's checks. Each callable is its own service, so the snapshot and
-// the heartbeat on page load do not share it: with an expired cache entry a
-// page load can scan once per function.
-const resolveInFlight = new Map<string, Promise<string[]>>();
+type CheckDocData = FirebaseFirestore.DocumentData;
+
+type ResolvedPage = {
+  checkIds: string[];
+  /** Check docs the folder query already read, so callers do not read them again. */
+  docs: Map<string, CheckDocData> | null;
+  /** When those docs were read. */
+  readAt: number;
+};
+
+// Concurrent calls for a folder page on the same instance share one query.
+const resolveInFlight = new Map<string, Promise<ResolvedPage>>();
 
 /**
- * The check ids a page shows: its explicit ids plus the checks in its folders.
+ * The owner's checks in the page's folders, in id order, read until `slots`
+ * of them can be shown. Reads: one per doc returned, so about `slots`, plus
+ * the explicit and domain-only checks that sit in the same folders (at least
+ * 1 for an empty folder). Uses the existing userId + folder index.
+ */
+async function queryFolderChecks(
+  userId: string,
+  folderPaths: string[],
+  explicitCheckIds: string[],
+  slots: number,
+): Promise<Map<string, CheckDocData>> {
+  const docs = new Map<string, CheckDocData>();
+  const paths = queryableFolderPaths(folderPaths);
+  if (slots <= 0 || paths.length === 0) return docs;
+
+  const explicit = new Set(explicitCheckIds);
+  for (let i = 0; i < paths.length; i += FOLDER_IN_LIMIT) {
+    const chunk = paths.slice(i, i + FOLDER_IN_LIMIT);
+    let usable = 0;
+    let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+    for (;;) {
+      let query = firestore
+        .collection('checks')
+        .where('userId', '==', userId)
+        .where('folder', 'in', chunk)
+        .orderBy(FieldPath.documentId())
+        .limit(slots);
+      if (cursor) query = query.startAfter(cursor);
+      const page = await query.get();
+      for (const doc of page.docs) {
+        const data = doc.data();
+        docs.set(doc.id, data);
+        // Explicit checks already have a place and domain-only checks are not
+        // shown, so neither fills a slot.
+        if (data.type !== 'domain' && !explicit.has(doc.id)) usable++;
+      }
+      if (page.size < slots || usable >= slots) break;
+      cursor = page.docs[page.docs.length - 1];
+    }
+  }
+  return docs;
+}
+
+/** Fallback: every check the owner has, one read per check. */
+async function scanOwnerChecks(userId: string, sources: PageSources): Promise<string[]> {
+  const checksSnapshot = await firestore
+    .collection('checks')
+    .where('userId', '==', userId)
+    .get();
+  const ownerChecks = checksSnapshot.docs.map((doc) => {
+    const data = doc.data() as { folder?: string | null; type?: string };
+    return { id: doc.id, folder: data.folder, type: data.type };
+  });
+  return matchFolderCheckIds(sources.explicitCheckIds, sources.folderPaths, ownerChecks);
+}
+
+/**
+ * The check ids a page shows: its explicit ids plus the checks in its folders,
+ * at most MAX_CHECKS.
  *
- * Folder matching needs every check the owner has (folder strings are stored
- * as typed, so they cannot be queried exactly), which is one read per check.
- * The result is kept in the page's cache doc for RESOLVED_IDS_TTL_MS, so that
- * scan runs once per TTL per page instead of on every call.
- * Cost: (owner's checks) reads + 1 write, at most 288 times a day per page.
+ * `live` (the snapshot) always asks Firestore, because it needs those check
+ * docs anyway. Without it (heartbeat, uptime) the list stored in the cache doc
+ * is used while it is fresh. See RESOLVED_IDS_TTL_MS for the cost.
+ *
+ * If the folder query fails, the stored list is used, or else the owner's
+ * checks are scanned as before and that list is stored for the TTL.
  */
 async function resolvePageCheckIds(
   statusPageId: string,
@@ -377,41 +511,80 @@ async function resolvePageCheckIds(
   sources: PageSources,
   sourceKey: string,
   cache: FirestoreCacheDoc | null,
-): Promise<string[]> {
+  live = false,
+): Promise<ResolvedPage> {
   if (sources.folderPaths.length === 0) {
-    return matchFolderCheckIds(sources.explicitCheckIds, [], []);
+    return { checkIds: matchFolderCheckIds(sources.explicitCheckIds, [], []), docs: null, readAt: Date.now() };
   }
 
-  const cached = pickFreshEntry(cache?.resolved, sourceKey, Date.now(), RESOLVED_IDS_TTL_MS);
-  if (cached && Array.isArray(cached.checkIds)) {
-    return [...cached.checkIds];
+  const stored = pickFreshEntry(cache?.resolved, sourceKey, Date.now(), RESOLVED_IDS_TTL_MS);
+  const storedIds = stored && Array.isArray(stored.checkIds) ? stored.checkIds : null;
+  if (storedIds && !live) {
+    return { checkIds: [...storedIds], docs: null, readAt: Date.now() };
   }
 
   const flightKey = `${statusPageId}:${sourceKey}`;
   let flight = resolveInFlight.get(flightKey);
   if (!flight) {
-    flight = (async () => {
-      const checksSnapshot = await firestore
-        .collection('checks')
-        .where('userId', '==', userId)
-        .get();
-      const ownerChecks = checksSnapshot.docs.map((doc) => {
-        const data = doc.data() as { folder?: string | null; type?: string };
-        return { id: doc.id, folder: data.folder, type: data.type };
-      });
-      const checkIds = matchFolderCheckIds(sources.explicitCheckIds, sources.folderPaths, ownerChecks);
-      // Awaited: losing this write means the next call repeats the whole scan.
-      await setFirestoreCache(statusPageId, 'resolved', {
-        checkIds,
-        expiresAt: Date.now() + RESOLVED_IDS_TTL_MS,
-        sourceKey,
-      });
-      return checkIds;
+    flight = (async (): Promise<ResolvedPage> => {
+      const readAt = Date.now();
+      let checkIds: string[];
+      let docs: Map<string, CheckDocData> | null = null;
+      try {
+        docs = await queryFolderChecks(
+          userId,
+          sources.folderPaths,
+          sources.explicitCheckIds,
+          folderSlotsLeft(sources.explicitCheckIds, MAX_CHECKS),
+        );
+        const candidates = Array.from(docs, ([id, data]) => ({ id, folder: data.folder, type: data.type }));
+        checkIds = pickPageCheckIds(sources.explicitCheckIds, sources.folderPaths, candidates, MAX_CHECKS);
+      } catch (e) {
+        logger.warn(`[status-page] Folder query failed for ${statusPageId}, falling back:`, e);
+        if (storedIds) return { checkIds: storedIds, docs: null, readAt };
+        docs = null;
+        checkIds = await scanOwnerChecks(userId, sources);
+      }
+      if (shouldRewriteResolved(cache?.resolved, sourceKey, checkIds, Date.now())) {
+        // Awaited: losing this write means the heartbeat repeats the query.
+        await setFirestoreCache(statusPageId, 'resolved', {
+          checkIds,
+          expiresAt: Date.now() + RESOLVED_IDS_TTL_MS,
+          sourceKey,
+        });
+      }
+      return { checkIds, docs, readAt };
     })().finally(() => resolveInFlight.delete(flightKey));
     resolveInFlight.set(flightKey, flight);
   }
   // Callers trim the list in place, so each gets its own copy.
-  return [...(await flight)];
+  const resolved = await flight;
+  return { ...resolved, checkIds: [...resolved.checkIds] };
+}
+
+/**
+ * The check docs for these ids, keyed by id; deleted checks are left out.
+ * Docs the folder query already returned are not read again.
+ */
+async function readCheckDocs(
+  checkIds: string[],
+  prefetched: Map<string, CheckDocData> | null,
+): Promise<Map<string, CheckDocData>> {
+  const out = new Map<string, CheckDocData>();
+  const missing: string[] = [];
+  for (const id of checkIds) {
+    const data = prefetched?.get(id);
+    if (data) out.set(id, data);
+    else missing.push(id);
+  }
+  if (missing.length > 0) {
+    const snaps = await firestore.getAll(...missing.map((id) => firestore.collection('checks').doc(id)));
+    for (const snap of snaps) {
+      const data = snap.data();
+      if (snap.exists && data) out.set(snap.id, data);
+    }
+  }
+  return out;
 }
 
 /**
@@ -469,7 +642,7 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
   const cache = await getFirestoreCache(statusPageId);
 
   // Resolve all check IDs (explicit + from folders)
-  const checkIds = await resolvePageCheckIds(statusPageId, statusPage.userId, sources, sourceKey, cache);
+  const { checkIds, docs: prefetched } = await resolvePageCheckIds(statusPageId, statusPage.userId, sources, sourceKey, cache);
 
   if (checkIds.length === 0) {
     return { success: true, data: { checkUptime: [] } };
@@ -482,13 +655,10 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
 
   // Fetch check metadata to filter out deleted checks and domain-only entries
   // (the latter have no uptime data: they're RDAP-tracked, not probed).
-  const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
-  const checkSnaps = await firestore.getAll(...checkRefs);
-  const validCheckIds: string[] = [];
-  checkSnaps.forEach((snap) => {
-    if (!snap.exists) return;
-    if ((snap.data() as { type?: string })?.type === 'domain') return;
-    validCheckIds.push(snap.id);
+  const checkDocs = await readCheckDocs(checkIds, prefetched);
+  const validCheckIds = checkIds.filter((id) => {
+    const data = checkDocs.get(id);
+    return !!data && data.type !== 'domain';
   });
 
   if (validCheckIds.length === 0) {
@@ -530,7 +700,8 @@ function rememberSnapshot(statusPageId: string, entry: SnapshotMemoEntry): Snaps
  * Builds the snapshot of a page on a memo miss.
  * Reads: 1 (cache doc) when another instance shared a fresh snapshot;
  * otherwise 1 + N check docs, plus 1 write on pages of
- * SHARED_SNAPSHOT_MIN_CHECKS or more, plus the folder scan when it is due.
+ * SHARED_SNAPSHOT_MIN_CHECKS or more. On a folder page the folder query
+ * supplies those check docs, so it costs the same N (see RESOLVED_IDS_TTL_MS).
  */
 async function buildSnapshot(
   statusPageId: string,
@@ -551,8 +722,11 @@ async function buildSnapshot(
     });
   }
 
-  // Resolve all check IDs (explicit + from folders)
-  const checkIds = await resolvePageCheckIds(statusPageId, statusPage.userId, sources, sourceKey, cache);
+  // Resolve all check IDs (explicit + from folders), always live: the folder
+  // query returns the check docs this snapshot needs anyway.
+  const { checkIds, docs: prefetched, readAt } = await resolvePageCheckIds(
+    statusPageId, statusPage.userId, sources, sourceKey, cache, true,
+  );
 
   if (checkIds.length > MAX_CHECKS) {
     logger.warn(`[getStatusPageSnapshot] Too many checks (${checkIds.length}) on ${statusPageId}, trimming to ${MAX_CHECKS}`);
@@ -561,7 +735,7 @@ async function buildSnapshot(
 
   // The TTL counts from the moment the check docs are read, not from the end
   // of the (possibly slow) uptime lookup below.
-  const expiresAt = Date.now() + SNAPSHOT_TTL_MS;
+  const expiresAt = (prefetched ? readAt : Date.now()) + SNAPSHOT_TTL_MS;
 
   if (checkIds.length === 0) {
     return rememberSnapshot(statusPageId, { expiresAt, sourceKey, result: { success: true, data: { checks: [] } } });
@@ -570,12 +744,10 @@ async function buildSnapshot(
   // Read check docs from Firestore. These already contain status, lastChecked, etc.
   // from the scheduler's status-buffer writes (every 2 min).
   // This eliminates the need for a separate BigQuery getLatestCheckStatuses query.
-  const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
-  const checkSnaps = await firestore.getAll(...checkRefs);
+  const checkDocs = await readCheckDocs(checkIds, prefetched);
   const checkMeta = new Map<string, { name: string; url: string; disabled?: boolean; folder?: string | null; status?: string; lastChecked?: number; responseTime?: number | null }>();
-  checkSnaps.forEach((snap) => {
-    if (!snap.exists) return;
-    const data = snap.data() as { type?: string; name?: unknown; url?: unknown; disabled?: unknown; folder?: unknown; status?: unknown; lastChecked?: unknown; responseTime?: unknown };
+  checkDocs.forEach((raw, id) => {
+    const data = raw as { type?: string; name?: unknown; url?: unknown; disabled?: unknown; folder?: unknown; status?: unknown; lastChecked?: unknown; responseTime?: unknown };
     if (data.type === 'domain') return; // domain-only checks have no uptime data
     const name = typeof data.name === 'string' && data.name.trim() ? data.name : 'Untitled check';
     const url = typeof data.url === 'string' ? data.url : '';
@@ -584,7 +756,7 @@ async function buildSnapshot(
     const status = typeof data.status === 'string' ? data.status : 'unknown';
     const lastChecked = typeof data.lastChecked === 'number' ? data.lastChecked : 0;
     const responseTime = typeof data.responseTime === 'number' ? data.responseTime : null;
-    checkMeta.set(snap.id, { name, url, disabled, folder, status, lastChecked, responseTime });
+    checkMeta.set(id, { name, url, disabled, folder, status, lastChecked, responseTime });
   });
 
   // Uptime % requires BigQuery: use the Firestore-cached result (UPTIME_CACHE_TTL_MS).
@@ -648,6 +820,8 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
 // Polled every 5 min per open tab. Reads per call: 2 (page doc + cache doc)
 // while the hourly heartbeat cache is valid for the page's checks, whatever
 // the page size. Once an hour it also reads the N check docs and BigQuery.
+// A folder page adds the folder query (up to N reads) only when no snapshot
+// call kept the stored id list fresh.
 export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, async (request) => {
   const statusPageId = requireStatusPageId(request);
   const [statusPage, cache] = await Promise.all([
@@ -659,7 +833,7 @@ export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, a
   const sourceKey = buildPageSourceKey(statusPage.userId, sources.explicitCheckIds, sources.folderPaths);
 
   // Resolve all check IDs (explicit + from folders)
-  const checkIds = await resolvePageCheckIds(statusPageId, statusPage.userId, sources, sourceKey, cache);
+  const { checkIds, docs: prefetched } = await resolvePageCheckIds(statusPageId, statusPage.userId, sources, sourceKey, cache);
 
   if (checkIds.length === 0) {
     return { success: true, data: { heartbeat: [], days: HEARTBEAT_DAYS } };
@@ -682,13 +856,10 @@ export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, a
 
   // Fetch check metadata to filter out deleted checks and domain-only entries
   // (the latter have no uptime data: they're RDAP-tracked, not probed).
-  const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
-  const checkSnaps = await firestore.getAll(...checkRefs);
-  const validCheckIds: string[] = [];
-  checkSnaps.forEach((snap) => {
-    if (!snap.exists) return;
-    if ((snap.data() as { type?: string })?.type === 'domain') return;
-    validCheckIds.push(snap.id);
+  const checkDocs = await readCheckDocs(checkIds, prefetched);
+  const validCheckIds = checkIds.filter((id) => {
+    const data = checkDocs.get(id);
+    return !!data && data.type !== 'domain';
   });
 
   if (validCheckIds.length === 0) {

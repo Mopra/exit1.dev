@@ -3,13 +3,18 @@ import assert from "node:assert/strict";
 
 import {
   RESOLVED_IDS_TTL_MS,
+  RESOLVED_REFRESH_MARGIN_MS,
   SHARED_SNAPSHOT_MIN_CHECKS,
   SNAPSHOT_TTL_MS,
   buildPageSourceKey,
+  folderSlotsLeft,
   matchFolderCheckIds,
   pickFreshEntry,
   pickHeartbeatBySource,
+  pickPageCheckIds,
+  queryableFolderPaths,
   readPageSources,
+  shouldRewriteResolved,
   shouldShareSnapshot,
   type HeartbeatEntry,
 } from "../status-pages";
@@ -74,17 +79,101 @@ test("a lone viewer polling every 60 s hits the snapshot cache every second poll
   assert.equal(misses, 5);
 });
 
-test("a folder page polled every 60 s scans the owner's checks once per 5 min", () => {
-  let entry: { expiresAt: number; sourceKey: string } | null = null;
-  let scans = 0;
-  for (let poll = 0; poll < 60; poll++) {
-    const now = NOW + poll * 60_000;
-    if (!pickFreshEntry(entry, "k", now, RESOLVED_IDS_TTL_MS)) {
-      scans++;
-      entry = { expiresAt: now + RESOLVED_IDS_TTL_MS, sourceKey: "k" };
+test("queryableFolderPaths keeps normalized folders once and drops the rest", () => {
+  assert.deepEqual(
+    queryableFolderPaths(["Prod", "Prod/APIs", "Prod", " Prod", "Prod/", "a//b", "a\\b", "two  spaces"]),
+    ["Prod", "Prod/APIs"],
+  );
+  assert.deepEqual(queryableFolderPaths([]), []);
+});
+
+test("folderSlotsLeft counts each explicit check once and never goes negative", () => {
+  assert.equal(folderSlotsLeft([], 50), 50);
+  assert.equal(folderSlotsLeft(["a", "b", "a"], 50), 48);
+  assert.equal(folderSlotsLeft(Array.from({ length: 60 }, (_, i) => `c${i}`), 50), 0);
+});
+
+test("pickPageCheckIds lists explicit checks first, then folder checks in id order", () => {
+  const candidates = [
+    { id: "c3", folder: "Prod" },
+    { id: "c1", folder: "Prod" },
+    { id: "x", folder: "Prod" },
+    { id: "c2", folder: "Staging" },
+  ];
+  assert.deepEqual(pickPageCheckIds(["x", "e"], ["Prod", "Staging"], candidates, 50), ["x", "e", "c1", "c2", "c3"]);
+});
+
+test("pickPageCheckIds skips domain checks and checks outside the page folders", () => {
+  const candidates = [
+    { id: "c1", folder: "Prod", type: "domain" },
+    { id: "c2", folder: "Other" },
+    { id: "c3", folder: "Prod", type: "website" },
+  ];
+  assert.deepEqual(pickPageCheckIds([], ["Prod"], candidates, 50), ["c3"]);
+});
+
+test("pickPageCheckIds cuts the list to what the page shows", () => {
+  const candidates = ["c4", "c2", "c1", "c3"].map((id) => ({ id, folder: "Prod" }));
+  assert.deepEqual(pickPageCheckIds(["e"], ["Prod"], candidates, 3), ["e", "c1", "c2"]);
+  assert.deepEqual(pickPageCheckIds(["e1", "e2", "e3"], ["Prod"], candidates, 2), ["e1", "e2"]);
+});
+
+test("pickPageCheckIds gives the same list as a full scan cut to the page size", () => {
+  const owner = Array.from({ length: 40 }, (_, i) => ({
+    id: `c${String(i).padStart(2, "0")}`,
+    folder: i % 3 === 0 ? "Prod" : i % 3 === 1 ? "Staging" : null,
+    type: i % 10 === 0 ? "domain" : "website",
+  }));
+  const explicit = ["c05", "zz"];
+  const folders = ["Prod", "Staging"];
+  const max = 12;
+  const fullScan = matchFolderCheckIds(explicit, folders, owner).slice(0, max);
+  // The query returns only checks in the folders, in any order across chunks.
+  const queried = owner.filter((c) => c.folder !== null).reverse();
+  assert.deepEqual(pickPageCheckIds(explicit, folders, queried, max), fullScan);
+});
+
+test("shouldRewriteResolved stores a list when none is usable for this page setup", () => {
+  const ids = ["a", "b"];
+  assert.equal(shouldRewriteResolved(null, "k", ids, NOW), true);
+  assert.equal(shouldRewriteResolved({ checkIds: ids, expiresAt: NOW - 1, sourceKey: "k" }, "k", ids, NOW), true);
+  assert.equal(shouldRewriteResolved({ checkIds: ids, expiresAt: NOW + RESOLVED_IDS_TTL_MS, sourceKey: "old" }, "k", ids, NOW), true);
+  assert.equal(shouldRewriteResolved({ checkIds: "nope", expiresAt: NOW + RESOLVED_IDS_TTL_MS, sourceKey: "k" }, "k", ids, NOW), true);
+});
+
+test("shouldRewriteResolved stores a changed list at once", () => {
+  const entry = { checkIds: ["a", "b"], expiresAt: NOW + RESOLVED_IDS_TTL_MS, sourceKey: "k" };
+  assert.equal(shouldRewriteResolved(entry, "k", ["a", "b"], NOW), false);
+  assert.equal(shouldRewriteResolved(entry, "k", ["a"], NOW), true);
+  assert.equal(shouldRewriteResolved(entry, "k", ["a", "c"], NOW), true);
+  assert.equal(shouldRewriteResolved(entry, "k", ["b", "a"], NOW), true);
+  assert.equal(shouldRewriteResolved(entry, "k", ["a", "b", "c"], NOW), true);
+});
+
+test("shouldRewriteResolved renews an unchanged list only near its expiry", () => {
+  const ids = ["a"];
+  const atMargin = { checkIds: ids, expiresAt: NOW + RESOLVED_REFRESH_MARGIN_MS, sourceKey: "k" };
+  assert.equal(shouldRewriteResolved(atMargin, "k", ids, NOW), false);
+  assert.equal(shouldRewriteResolved(atMargin, "k", ids, NOW + 1), true);
+});
+
+test("a lone viewer's snapshot keeps the stored list fresh for the heartbeat", () => {
+  // The snapshot misses its memo every 120 s and resolves live each time.
+  // The stored list must never be expired when a heartbeat could read it.
+  const ids = ["a"];
+  let entry: { checkIds: string[]; expiresAt: number; sourceKey: string } | null = null;
+  let writes = 0;
+  const day = 24 * 60 * 60 * 1000;
+  for (let t = 0; t < day; t += 120_000) {
+    const now = NOW + t;
+    if (t > 0) assert.ok(pickFreshEntry(entry, "k", now, RESOLVED_IDS_TTL_MS), "stored list expired between snapshots");
+    if (shouldRewriteResolved(entry, "k", ids, now)) {
+      writes++;
+      entry = { checkIds: ids, expiresAt: now + RESOLVED_IDS_TTL_MS, sourceKey: "k" };
     }
   }
-  assert.equal(scans, 12);
+  // One write per 8 min.
+  assert.equal(writes, 180);
 });
 
 test("only pages at or above the threshold share their snapshot through Firestore", () => {
