@@ -71,6 +71,8 @@ export class CheckSchedule {
   private onHeartbeatChange: ((action: 'added' | 'modified' | 'removed', checkId: string, check?: Website) => void) | null = null;
   private onLiveFieldsChange: ((checkId: string, ownerUserId: string, delta: LiveFields) => void) | null = null;
   private onSettingsEdit: ((userId: string) => void) | null = null;
+  private onCheckEdited: ((checkId: string, gone: boolean) => void) | null = null;
+  private onCheckResynced: ((checkId: string, doc: Record<string, unknown>) => void) | null = null;
 
   /**
    * Register a callback fired when a user's alert settings (emailSettings,
@@ -82,6 +84,28 @@ export class CheckSchedule {
    */
   setSettingsEditCallback(cb: (userId: string) => void): void {
     this.onSettingsEdit = cb;
+  }
+
+  /**
+   * Register a callback fired for every `check_edits` notification (added,
+   * modified or removed). An edit means another writer changed the check doc,
+   * so the runner drops what the status buffer remembers having written: the
+   * steady-state flush skip must not leave a foreign value (an edit resets
+   * lastChecked to 0, for example) in the doc until the refresh floor.
+   * `gone` is true when this region no longer owns the check (deleted, or
+   * moved to another region): anything still buffered for it must be dropped.
+   */
+  setCheckEditedCallback(cb: (checkId: string, gone: boolean) => void): void {
+    this.onCheckEdited = cb;
+  }
+
+  /**
+   * Register a callback fired with every check doc read by fullResync, before
+   * the swap. Lets the runner notice docs another writer changed without an
+   * edit notification reaching it.
+   */
+  setCheckResyncedCallback(cb: (checkId: string, doc: Record<string, unknown>) => void): void {
+    this.onCheckResynced = cb;
   }
 
   /** Register a callback for heartbeat check changes (add/modify/remove). */
@@ -224,6 +248,7 @@ export class CheckSchedule {
    * Fetches the current check data from Firestore for adds/modifications.
    */
   private handleCheckEdit(checkId: string, action: 'added' | 'modified' | 'removed'): void {
+    this.onCheckEdited?.(checkId, action === 'removed');
     if (action === 'removed') {
       const removedCheck = this.checks.get(checkId);
       if (removedCheck?.type === 'heartbeat' && this.onHeartbeatChange) {
@@ -244,6 +269,7 @@ export class CheckSchedule {
       .then((doc) => {
         if (!doc.exists) {
           // Check was deleted between the edit notification and our read
+          this.onCheckEdited?.(checkId, true);
           this.checks.delete(checkId);
           this.removeFromSchedule(checkId);
           return;
@@ -258,6 +284,7 @@ export class CheckSchedule {
         // this branch, the losing region keeps a stale entry until the next
         // 30-minute fullResync().
         if (data.checkRegion && data.checkRegion !== this.region) {
+          this.onCheckEdited?.(checkId, true);
           if (this.checks.has(checkId)) {
             const stale = this.checks.get(checkId);
             if (stale?.type === 'heartbeat' && this.onHeartbeatChange) {
@@ -453,6 +480,7 @@ export class CheckSchedule {
     for (const doc of snapshot.docs) {
       const data = { ...doc.data(), id: doc.id } as Website;
       newChecks.set(doc.id, data);
+      this.onCheckResynced?.(doc.id, data as unknown as Record<string, unknown>);
       if (data.userId) {
         let set = newUserIndex.get(data.userId);
         if (!set) {

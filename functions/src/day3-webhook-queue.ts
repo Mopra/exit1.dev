@@ -26,10 +26,9 @@ const COLLECTION = "day3WebhookEvents";
 // Day3 gives up retrying after ~8h. Two days of history is plenty to absorb a
 // duplicate and still short enough that the collection stays small.
 //
-// NOTE: the TTL policy on `expireAt` must be created in the GCP console for
-// this collection — Firestore TTL is not declared in firestore.indexes.json.
-// Without it the docs simply accumulate; nothing breaks, but nothing is
-// reclaimed either.
+// The TTL policy on `expireAt` is declared in firestore.indexes.json and has
+// been active since 2026-11-12. It can delete an event still queued when the
+// drain has been down for longer than this window.
 export const DAY3_EVENT_TTL_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** How long a claimed-but-unfinished doc may sit before another drain retries it. */

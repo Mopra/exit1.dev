@@ -552,12 +552,24 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
   const REFRESH_INTERVAL = 60000; // 60 seconds
   const HEARTBEAT_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
+  // The effects below depend on the page id and on what the page shows, not
+  // on the page doc object: that object is replaced on every doc update (an
+  // incident posted, a layout edit), and each replacement used to refetch the
+  // snapshot and the heartbeat.
+  const statusPageDocId = statusPage?.id ?? null;
+  const hasStatusSources =
+    (statusPage?.checkIds?.length ?? 0) > 0 || (statusPage?.folderPaths?.length ?? 0) > 0;
+  // Whether a snapshot is on screen. A ref, so that the first response
+  // arriving does not give loadStatuses a new identity: that restarted the
+  // polling effect and fetched the snapshot a second time on every page load.
+  const hasStatusChecksRef = useRef(false);
+
   const loadStatuses = React.useCallback(async (isManualRefresh = false) => {
-    if (!statusPage) return;
-    
+    if (!statusPageDocId) return;
+
     // Only show full loading state on initial load (when no data exists)
-    const isInitialLoad = statusChecks.length === 0;
-    
+    const isInitialLoad = !hasStatusChecksRef.current;
+
     if (isInitialLoad) {
       setStatusChecksLoading(true);
     } else if (isManualRefresh) {
@@ -565,14 +577,16 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
     }
     
     try {
-      const result = await apiClient.getStatusPageSnapshot(statusPage.id);
+      const result = await apiClient.getStatusPageSnapshot(statusPageDocId);
       if (result.success && result.data?.checks) {
+        hasStatusChecksRef.current = result.data.checks.length > 0;
         setStatusChecks(result.data.checks);
         setLastUpdateTime(Date.now());
         if (isManualRefresh) {
           toast.success('Status updated');
         }
       } else {
+        hasStatusChecksRef.current = false;
         setStatusChecks([]);
       }
     } catch (error) {
@@ -587,14 +601,14 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
         setIsRefreshing(false);
       }
     }
-  }, [statusPage, statusChecks.length]);
+  }, [statusPageDocId]);
 
   const loadHeartbeat = React.useCallback(async () => {
-    if (!statusPage) return;
+    if (!statusPageDocId) return;
 
     setHeartbeatLoading(true);
     try {
-      const result = await apiClient.getStatusPageHeartbeat(statusPage.id);
+      const result = await apiClient.getStatusPageHeartbeat(statusPageDocId);
       if (result.success && result.data?.heartbeat) {
         const nextMap: Record<string, HeartbeatDay[]> = {};
         result.data.heartbeat.forEach((entry) => {
@@ -621,16 +635,15 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
     } finally {
       setHeartbeatLoading(false);
     }
-  }, [statusPage]);
+  }, [statusPageDocId]);
 
   const isPageDisabled = statusPage?.enabled === false;
 
   useEffect(() => {
-    if (mode !== 'status' || statusPageError || !statusPage || isPageDisabled) return;
+    if (mode !== 'status' || statusPageError || !statusPageDocId || isPageDisabled) return;
 
-    const checkIds = statusPage.checkIds ?? [];
-    const folderPaths = statusPage.folderPaths ?? [];
-    if (checkIds.length === 0 && folderPaths.length === 0) {
+    if (!hasStatusSources) {
+      hasStatusChecksRef.current = false;
       setStatusChecks([]);
       setStatusChecksLoading(false);
       return;
@@ -652,14 +665,12 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
       clearInterval(interval);
       document.removeEventListener('visibilitychange', poll);
     };
-  }, [mode, statusPageError, checkIdsKey, statusPage, loadStatuses, isPageDisabled]);
+  }, [mode, statusPageError, checkIdsKey, statusPageDocId, hasStatusSources, loadStatuses, isPageDisabled]);
 
   useEffect(() => {
-    if (mode !== 'status' || statusPageError || !statusPage || isPageDisabled) return;
+    if (mode !== 'status' || statusPageError || !statusPageDocId || isPageDisabled) return;
 
-    const checkIds = statusPage.checkIds ?? [];
-    const folderPaths = statusPage.folderPaths ?? [];
-    if (checkIds.length === 0 && folderPaths.length === 0) {
+    if (!hasStatusSources) {
       setHeartbeatMap({});
       setHeartbeatLoading(false);
       return;
@@ -672,7 +683,7 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ statusPageId: statusPageIdP
     return () => {
       clearInterval(interval);
     };
-  }, [mode, statusPageError, checkIdsKey, statusPage, loadHeartbeat, isPageDisabled]);
+  }, [mode, statusPageError, checkIdsKey, statusPageDocId, hasStatusSources, loadHeartbeat, isPageDisabled]);
 
   const hasDownChecks = React.useMemo(
     () => statusChecks.some((check) => check.status === 'offline' || check.status === 'DOWN'),

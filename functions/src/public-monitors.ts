@@ -27,6 +27,7 @@ import {
   type IncidentIsland,
   type PublicIncident,
 } from "./public-incidents";
+import { applyIndexFreshness, planPageWrite, stalePageSlugs } from "./public-monitor-persist";
 
 const bigquery = createBigQuery();
 const DATASET_ID = "checks";
@@ -49,6 +50,9 @@ const PAGE_CACHE_CONTROL = "public, max-age=60, s-maxage=60, stale-while-revalid
 // In-memory cache survives within a warm instance between requests.
 const MEM_TTL_MS = 10 * 60 * 1000;
 const PAGE_MEM_TTL_MS = 60 * 1000;
+// How old the cached index may be when getPublicMonitor takes a page's clock
+// from it. Costs at most one index read per 5 minutes per warm instance.
+const INDEX_FRESHNESS_TTL_MS = 5 * 60 * 1000;
 
 type HeartbeatDay = {
   day: number;            // start-of-day UTC, ms
@@ -449,14 +453,20 @@ async function fetchIncidentIslands(
 /** Freshly derived incidents per slug over [windowStart, now], or null when the read failed. */
 type FreshIncidents = { windowStart: number; bySlug: Map<string, PublicIncident[]> } | null;
 
+/** Page docs as read during the build, by slug. A slug with no doc is absent. */
+type StoredPages = Map<string, Record<string, unknown>>;
+// The hourly refresh lists the whole pages collection in this UTC hour only.
+const FULL_PRUNE_SWEEP_UTC_HOUR = 3;
+
 /**
  * Build the full set of public monitor pages + index from Firestore + BigQuery.
  * Pure-ish: returns the artifacts so both the cron and the cold-start fallback
- * can persist them.
+ * can persist them. `stored` is the one read of the page docs per run: the
+ * persist step diffs against it, so it must not read them again.
  */
 export async function buildPublicMonitors(
   incidentLookbackMs: number = INCIDENT_LOOKBACK_MS,
-): Promise<{ index: MonitorIndexEntry[]; pages: MonitorPage[]; incidents: FreshIncidents }> {
+): Promise<{ index: MonitorIndexEntry[]; pages: MonitorPage[]; incidents: FreshIncidents; stored: StoredPages }> {
   const snap = await firestore.collection('checks').where('public', '==', true).get();
 
   type CheckMeta = {
@@ -500,7 +510,7 @@ export async function buildPublicMonitors(
   }
 
   if (!checks.length) {
-    return { index: [], pages: [], incidents: null };
+    return { index: [], pages: [], incidents: null, stored: new Map() };
   }
 
   // Resolve unique slugs (explicit publicSlug wins; else hostname; suffix on collision).
@@ -552,11 +562,14 @@ export async function buildPublicMonitors(
   // rows are written while a check stays down, so an outage still open began
   // with a row that may sit before the lookback: read back to its start.
   let windowStart = endDate - incidentLookbackMs;
+  const stored: StoredPages = new Map();
   for (let i = 0; i < checks.length; i += FIRESTORE_BATCH_LIMIT) {
     const refs = checks
       .slice(i, i + FIRESTORE_BATCH_LIMIT)
       .map((c) => firestore.collection(PAGES_COLLECTION).doc(slugOf.get(c.id)!));
     for (const doc of await firestore.getAll(...refs)) {
+      const data = doc.data();
+      if (data) stored.set(doc.id, data);
       for (const inc of normalizeStoredIncidents(doc.get("incidents"))) {
         if (inc.ongoing && inc.startedAt < windowStart) windowStart = inc.startedAt - 60 * 1000;
       }
@@ -642,98 +655,140 @@ export async function buildPublicMonitors(
   }
 
   index.sort((a, b) => a.name.localeCompare(b.name));
-  return { index, pages, incidents: incidentsOk ? { windowStart, bySlug: incidentsBySlug } : null };
+  return { index, pages, incidents: incidentsOk ? { windowStart, bySlug: incidentsBySlug } : null, stored };
 }
 
-/** Persist the index doc + per-slug page docs, pruning stale page docs. */
+/**
+ * Persist the index doc + the page docs that changed, pruning stale page docs.
+ * Firestore cost per run: 1 read (previous index) + 1 write (index) + 1 read
+ * and 1 write per changed page, plus one listing of the collection a day.
+ * See public-monitor-persist.ts for the rules.
+ */
 async function persistPublicMonitors(
   index: MonitorIndexEntry[],
   pages: MonitorPage[],
   buildStartedAt: number,
   incidents: FreshIncidents,
-): Promise<void> {
+  stored: StoredPages,
+): Promise<{ written: number; pruned: number }> {
   const updatedAt = Date.now();
-  await firestore.doc(INDEX_DOC).set({ monitors: index, count: index.length, updatedAt });
+  const indexRef = firestore.doc(INDEX_DOC);
+  const pagesRef = firestore.collection(PAGES_COLLECTION);
+  const previousIndex = await indexRef.get();
 
-  // Upsert page docs in chunks. Merge keeps statusChangedAt/To, which only the
-  // transition push writes. A push that landed while this build was reading
-  // BigQuery is newer than our snapshot of the check, so its status and
-  // lastChecked win.
-  for (let i = 0; i < pages.length; i += FIRESTORE_BATCH_LIMIT) {
-    const chunk = pages.slice(i, i + FIRESTORE_BATCH_LIMIT);
-    const refs = chunk.map((page) => firestore.collection(PAGES_COLLECTION).doc(page.slug));
-    const existing = await firestore.getAll(...refs);
+  const plan = (page: MonitorPage, existing: Record<string, unknown> | undefined) => {
+    if (incidents) {
+      page.incidents = mergeIncidentHistory(
+        normalizeStoredIncidents(existing?.incidents),
+        incidents.bySlug.get(page.slug) ?? [],
+        incidents.windowStart,
+        updatedAt,
+      );
+    }
+    return planPageWrite(existing, page, buildStartedAt, updatedAt);
+  };
+
+  // First pass against the docs read at the start of the build: most pages
+  // need no write. `stored` is minutes old by now (the incident queries ran in
+  // between), so the few pages that do need one are read again and planned
+  // against the fresh doc. A transition push that landed during the build
+  // then keeps its status and lastChecked. Costs 1 read per written page.
+  const candidates = pages.filter((page) => plan(page, stored.get(page.slug)) !== null);
+
+  // Merge keeps statusChangedAt/To, which only the transition push writes.
+  let written = 0;
+  for (let i = 0; i < candidates.length; i += FIRESTORE_BATCH_LIMIT) {
+    const chunk = candidates.slice(i, i + FIRESTORE_BATCH_LIMIT);
+    const fresh = await firestore.getAll(...chunk.map((page) => pagesRef.doc(page.slug)));
     const batch = firestore.batch();
+    let pending = 0;
     chunk.forEach((page, j) => {
-      if (incidents) {
-        page.incidents = mergeIncidentHistory(
-          normalizeStoredIncidents(existing[j].get("incidents")),
-          incidents.bySlug.get(page.slug) ?? [],
-          incidents.windowStart,
-          updatedAt,
-        );
-      }
-      const pushedAt = existing[j].get("statusChangedAt");
-      if (typeof pushedAt === "number" && pushedAt > buildStartedAt) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { status, lastChecked, ...rest } = page;
-        batch.set(refs[j], rest, { merge: true });
-      } else {
-        batch.set(refs[j], page, { merge: true });
-      }
+      const patch = plan(page, fresh[j].data());
+      if (!patch) return;
+      batch.set(pagesRef.doc(page.slug), patch, { merge: true });
+      pending += 1;
     });
-    await batch.commit();
+    if (pending > 0) await batch.commit();
+    written += pending;
   }
 
-  // Prune page docs whose slug no longer appears (unflagged / deleted checks).
+  // Prune page docs whose slug no longer appears (unflagged / deleted checks):
+  // whatever the previous index listed and this one does not. Without a
+  // readable previous index, list the collection (one read per page doc).
+  // The index diff misses a page written by a run that died before its index
+  // write, so one run a day lists the collection as well.
   const liveSlugs = new Set(pages.map((p) => p.slug));
-  const existing = await firestore.collection(PAGES_COLLECTION).listDocuments();
-  const stale = existing.filter((ref) => !liveSlugs.has(ref.id));
-  for (let i = 0; i < stale.length; i += FIRESTORE_BATCH_LIMIT) {
-    const batch = firestore.batch();
-    for (const ref of stale.slice(i, i + FIRESTORE_BATCH_LIMIT)) batch.delete(ref);
-    await batch.commit();
+  const fullSweep = new Date(updatedAt).getUTCHours() === FULL_PRUNE_SWEEP_UTC_HOUR;
+  const staleSlugs =
+    (fullSweep
+      ? null
+      : stalePageSlugs(previousIndex.exists ? previousIndex.get("monitors") : undefined, liveSlugs)) ??
+    (await pagesRef.listDocuments()).map((ref) => ref.id).filter((id) => !liveSlugs.has(id));
+  for (let i = 0; i < staleSlugs.length; i += FIRESTORE_BATCH_LIMIT) {
+    const pruneBatch = firestore.batch();
+    for (const slug of staleSlugs.slice(i, i + FIRESTORE_BATCH_LIMIT)) pruneBatch.delete(pagesRef.doc(slug));
+    await pruneBatch.commit();
   }
+
+  // The index goes last. It is what the next run prunes against, so a run that
+  // dies before this point leaves the old index and the next run retries the
+  // same prune. It also carries the clock for every page this run left alone.
+  await indexRef.set({ monitors: index, count: index.length, updatedAt });
+  return { written, pruned: staleSlugs.length };
 }
 
 export async function runPublicMonitorsRefresh(incidentLookbackMs: number = INCIDENT_LOOKBACK_MS): Promise<void> {
   try {
     const buildStartedAt = Date.now();
-    const { index, pages, incidents } = await buildPublicMonitors(incidentLookbackMs);
-    await persistPublicMonitors(index, pages, buildStartedAt, incidents);
-    logger.info(`[public-monitors] refreshed ${index.length} public monitors`);
+    const { index, pages, incidents, stored } = await buildPublicMonitors(incidentLookbackMs);
+    const { written, pruned } = await persistPublicMonitors(index, pages, buildStartedAt, incidents, stored);
+    logger.info(
+      `[public-monitors] refreshed ${index.length} public monitors (${written} page docs written, ${pruned} pruned)`,
+    );
   } catch (error) {
     logger.error("[public-monitors] refresh failed:", error);
   }
 }
 
-let indexMemCache: { data: MonitorIndexEntry[]; expiresAt: number } | null = null;
+type IndexSnapshot = {
+  monitors: MonitorIndexEntry[];
+  bySlug: Map<string, MonitorIndexEntry>;
+  updatedAt: unknown;
+  fetchedAt: number;
+};
+let indexMemCache: IndexSnapshot | null = null;
+
+function cacheIndex(monitors: MonitorIndexEntry[], updatedAt: unknown, fetchedAt: number): IndexSnapshot {
+  indexMemCache = { monitors, bySlug: new Map(monitors.map((m) => [m.slug, m])), updatedAt, fetchedAt };
+  return indexMemCache;
+}
+
+/** The index doc, from memory when younger than `maxAgeMs`. Null when the doc does not exist. */
+async function loadIndex(now: number, maxAgeMs: number): Promise<IndexSnapshot | null> {
+  if (indexMemCache && now - indexMemCache.fetchedAt < maxAgeMs) return indexMemCache;
+  const snap = await firestore.doc(INDEX_DOC).get();
+  if (!snap.exists) return null;
+  const monitors = snap.get("monitors");
+  return cacheIndex(Array.isArray(monitors) ? (monitors as MonitorIndexEntry[]) : [], snap.get("updatedAt"), now);
+}
 
 export const getPublicMonitors = onRequest(
   { cors: true, memory: "256MiB", timeoutSeconds: 30 },
   async (_req, res) => {
     try {
       const now = Date.now();
-      if (indexMemCache && indexMemCache.expiresAt > now) {
-        res.set("Cache-Control", CACHE_CONTROL);
-        res.json({ monitors: indexMemCache.data, count: indexMemCache.data.length });
-        return;
-      }
-
-      const snap = await firestore.doc(INDEX_DOC).get();
-      let monitors = snap.exists ? ((snap.data()?.monitors as MonitorIndexEntry[]) ?? []) : [];
+      let snapshot = await loadIndex(now, MEM_TTL_MS);
 
       // Cold path: index doc missing (first deploy before cron runs).
-      if (!snap.exists) {
+      if (!snapshot) {
         const buildStartedAt = Date.now();
         const built = await buildPublicMonitors();
-        await persistPublicMonitors(built.index, built.pages, buildStartedAt, built.incidents);
-        monitors = built.index;
+        await persistPublicMonitors(built.index, built.pages, buildStartedAt, built.incidents, built.stored);
+        snapshot = cacheIndex(built.index, Date.now(), now);
       }
 
-      indexMemCache = { data: monitors, expiresAt: now + MEM_TTL_MS };
       res.set("Cache-Control", CACHE_CONTROL);
-      res.json({ monitors, count: monitors.length });
+      res.json({ monitors: snapshot.monitors, count: snapshot.monitors.length });
     } catch (error) {
       logger.error("[public-monitors] getPublicMonitors failed:", error);
       res.status(500).json({ error: "Failed to load monitors" });
@@ -771,7 +826,16 @@ export const getPublicMonitor = onRequest(
         return;
       }
 
-      const monitor = doc.data() as MonitorPage;
+      // The refresh only rewrites a page doc when its content changed, so the
+      // doc's own updatedAt/lastChecked can be hours old. The index doc is
+      // written every run and holds the current values.
+      let monitor = doc.data() as MonitorPage;
+      try {
+        const index = await loadIndex(now, INDEX_FRESHNESS_TTL_MS);
+        if (index) monitor = applyIndexFreshness(monitor, index.bySlug.get(slug), index.updatedAt);
+      } catch (error) {
+        logger.warn("[public-monitors] index freshness read failed:", error);
+      }
       pageMemCache.set(slug, { data: monitor, expiresAt: now + PAGE_MEM_TTL_MS });
       res.set("Cache-Control", fresh ? "no-store" : PAGE_CACHE_CONTROL);
       res.json({ monitor });

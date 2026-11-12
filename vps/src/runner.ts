@@ -31,7 +31,7 @@ const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { firestore, getUserTierDetailed, auth } = await import('../../functions/lib/init.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates, statusUpdateBuffer, markShuttingDown: markStatusBufferShuttingDown, setHeartbeatDeferEnabled, flushDeferredHeartbeats, getHeartbeatDeferStats } = await import('../../functions/lib/status-buffer.js');
+const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates, statusUpdateBuffer, markShuttingDown: markStatusBufferShuttingDown, setHeartbeatDeferEnabled, flushDeferredHeartbeats, getHeartbeatDeferStats, forgetWrittenState, discardPendingStatus, reconcileWrittenState } = await import('../../functions/lib/status-buffer.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { insertCheckHistory, flushBigQueryInserts, markShuttingDown: markBigQueryShuttingDown, getBigQueryInsertBufferSize } = await import('../../functions/lib/bigquery.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
@@ -1421,6 +1421,29 @@ schedule.setSettingsEditCallback((userId) => {
   if (settingsCache.delete(userId)) {
     console.info(`[Settings] Cache evicted for ${userId} (settings edit)`);
   }
+});
+
+// A check edit means another writer touched the doc. Forget what the status
+// buffer last wrote for it so the next flush writes through instead of
+// steady-skipping over the edited doc.
+schedule.setCheckEditedCallback((checkId, gone) => {
+  if (gone) discardPendingStatus(checkId);
+  else forgetWrittenState(checkId);
+});
+
+// Same for a foreign write no edit notification told us about (a missed
+// listener event, or a cron that writes cert or target fields): the periodic
+// full resync compares each doc with what the buffer last wrote.
+let resyncForgotten = 0;
+let resyncForgottenLogTimer: NodeJS.Timeout | null = null;
+schedule.setCheckResyncedCallback((checkId, doc) => {
+  if (!reconcileWrittenState(checkId, doc)) return;
+  resyncForgotten += 1;
+  resyncForgottenLogTimer ??= setTimeout(() => {
+    console.info(`[CheckSchedule] Resync found ${resyncForgotten} check docs changed by another writer`);
+    resyncForgotten = 0;
+    resyncForgottenLogTimer = null;
+  }, 5_000);
 });
 
 schedule.startRealtimeSync();
