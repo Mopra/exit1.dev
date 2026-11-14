@@ -1,7 +1,14 @@
 import http from "http";
 import https from "https";
 import zlib from "zlib";
-import { assertPublicHost, blockedPeerError, guardedSystemLookupOption } from "./ssrf-guard";
+import dns from "dns";
+import {
+  assertPublicHost,
+  BlockedAddressError,
+  blockedPeerError,
+  guardedSystemLookupOption,
+  reservedAddressReason,
+} from "./ssrf-guard";
 
 /**
  * fetch for URLs a customer chose (webhook endpoints, a site to probe).
@@ -43,6 +50,44 @@ const CREDENTIAL_HEADERS = new Set(["authorization", "cookie", "proxy-authorizat
 const BODY_HEADERS = new Set(["content-type", "content-length", "content-encoding", "content-language"]);
 // Set by this module from the real body. A customer value would corrupt the request.
 const FRAMING_HEADERS = new Set(["content-length", "transfer-encoding", "connection"]);
+
+/**
+ * Our own services that customers (and we) deliver webhooks to, and that live
+ * on a runner box. The guard refuses a box's own public address, because from
+ * the box itself that address also reaches ports the firewall hides from the
+ * internet. For these names, on HTTPS port 443 only, that one rule is waived:
+ * 443 is the public front door either way. Private and local ranges stay
+ * refused. Comma separated in WEBHOOK_TRUSTED_HOSTS.
+ */
+const TRUSTED_OWN_HOSTS = new Set(
+  (process.env.WEBHOOK_TRUSTED_HOSTS ?? "automation.exit1.dev")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean),
+);
+
+function isTrustedOwnTarget(url: URL): boolean {
+  return (
+    url.protocol === "https:" &&
+    (url.port === "" || url.port === "443") &&
+    TRUSTED_OWN_HOSTS.has(url.hostname.toLowerCase())
+  );
+}
+
+/** dns.lookup that refuses reserved ranges but lets the box's own public address through. */
+const reservedOnlyLookup = ((hostname: string, options: dns.LookupOptions, callback: (...args: unknown[]) => void) => {
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (err) return callback(err, address, family);
+    const list = Array.isArray(address) ? address : [{ address, family }];
+    const allowed = list.filter((entry) => !reservedAddressReason(entry.address));
+    if (allowed.length === 0) {
+      const first = list[0]?.address ?? "";
+      return callback(new BlockedAddressError(hostname, first, reservedAddressReason(first) ?? "private"));
+    }
+    if (Array.isArray(address)) return callback(null, allowed);
+    return callback(null, allowed[0].address, allowed[0].family);
+  });
+}) as unknown as typeof dns.lookup;
 
 // Fresh sockets only. A pooled socket could have been opened by unguarded
 // code, and a stale keep-alive socket fails a POST that cannot be replayed.
@@ -127,6 +172,7 @@ function requestOnce(
     }
 
     const isHttps = url.protocol === "https:";
+    const trustedOwn = isTrustedOwnTarget(url);
     const payload = body === undefined ? undefined : Buffer.from(body, "utf8");
     const sendHeaders = filterHeaders(headers, (name) => FRAMING_HEADERS.has(name));
     if (payload) sendHeaders["Content-Length"] = String(payload.length);
@@ -157,11 +203,11 @@ function requestOnce(
           method,
           headers: sendHeaders,
           agent: isHttps ? httpsAgent : httpAgent,
-          lookup: guardedSystemLookupOption,
+          lookup: trustedOwn ? reservedOnlyLookup : guardedSystemLookupOption,
           signal,
         },
         (res) => {
-          const blocked = blockedPeerError(url.hostname, res.socket?.remoteAddress);
+          const blocked = trustedOwn ? undefined : blockedPeerError(url.hostname, res.socket?.remoteAddress);
           if (blocked) {
             request.destroy();
             fail(blocked);
