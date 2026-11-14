@@ -18,6 +18,17 @@ import { DnsRecordType } from "./types";
 import { normalizeDnsValues } from "./dns-normalize";
 import { evaluateResponseValidation } from "./response-validation";
 import { detectWafBlock, describeWafBlock, mayBeWafResponse } from "./waf-block";
+import {
+  describeProbeBlock,
+  isConnectStageFailure,
+  probeBlockerFor,
+  withBlockerReroute,
+  type LookupFn,
+} from "./probe-blockers";
+
+// DNS lookup for HTTP probes: cached c-ares, with addresses that are known to
+// drop our probes swapped for a working one (see probe-blockers.ts).
+const probeLookup = withBlockerReroute(cachedLookup as LookupFn);
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   try {
@@ -300,6 +311,24 @@ export const performHttpRequest = async ({
 
     totalTimeoutId = setTimeout(() => abortWithStage(currentStage, totalTimeoutMs), totalTimeoutMs);
 
+    // Observe the lookup here, not only on the socket's "lookup" event: a DNS
+    // cache hit answers before the "socket" listener below is attached, so the
+    // event is missed, the stage stays DNS and the failing IP is never
+    // reported. That mislabeled connect timeouts as "DNS timeout".
+    const requestLookup: LookupFn = (hostname, options, callback) => {
+      probeLookup(hostname, options, (err, address, family) => {
+        if (!err) {
+          const first = Array.isArray(address) ? address[0] : { address, family: family ?? 0 };
+          dnsAt ??= Date.now();
+          if (currentStage === "DNS") setStage("CONNECT");
+          if (first?.address && onResolved) {
+            onResolved(first.address, first.family || net.isIP(first.address) || 4);
+          }
+        }
+        callback(err, address, family);
+      });
+    };
+
     const req = transport.request(
       {
         protocol: urlObj.protocol,
@@ -309,7 +338,7 @@ export const performHttpRequest = async ({
         method: usedMethod,
         headers: requestHeaders,
         agent: false,
-        lookup: cachedLookup as unknown as typeof import("dns").lookup,
+        lookup: requestLookup as unknown as typeof import("dns").lookup,
         ...(ignoreSslErrors ? { rejectUnauthorized: false } : {}),
       },
       async (res) => {
@@ -358,8 +387,8 @@ export const performHttpRequest = async ({
 
     req.on("socket", (socket) => {
       socket.once("lookup", (err, address, family) => {
-        dnsAt = Date.now();
-        setStage("CONNECT");
+        dnsAt ??= Date.now();
+        if (currentStage === "DNS") setStage("CONNECT");
         if (!err && address && onResolved) {
           onResolved(address, typeof family === "number" ? family : (net.isIP(address) || 4));
         }
@@ -824,6 +853,9 @@ export async function checkRestEndpoint(
   redirectLocation?: string;
   redirectChain?: string[];
   responseBodySample?: string;
+  // The target is known to drop our probes and this one never connected.
+  // Not evidence of downtime: callers must not flip status or alert on it.
+  probeBlocked?: boolean;
 }> {
   // Initialize with empty values to ensure safety
   let securityChecks: {
@@ -911,6 +943,9 @@ export async function checkRestEndpoint(
   // connect failure is exactly when knowing which IP we hit matters most.
   let observedIp: string | undefined;
   let observedIpFamily: number | undefined;
+  // The address of the request in flight. Unlike observedIp it follows every
+  // hop, so a failure is attributed to the host that actually failed.
+  let lastRequestIp: string | undefined;
 
   try {
     // Determine default values based on website type
@@ -961,8 +996,9 @@ export async function checkRestEndpoint(
       method: string,
       body?: string,
       timeoutMs: number = totalTimeoutMs
-    ) =>
-      performHttpRequest({
+    ) => {
+      lastRequestIp = undefined;
+      return performHttpRequest({
         url,
         method,
         headers: requestHeaders,
@@ -975,11 +1011,13 @@ export async function checkRestEndpoint(
         // can point at a different host, and targetIp/targetHostname must stay
         // describing the URL the user actually monitors.
         onResolved: (ip, family) => {
+          lastRequestIp = ip;
           if (observedIp !== undefined) return;
           observedIp = ip;
           observedIpFamily = family;
         },
       });
+    };
 
     let httpResult: HttpRequestResult;
     try {
@@ -1326,15 +1364,24 @@ export async function checkRestEndpoint(
     // Timeouts are less definitive - the site might be slow but still responding
     // Connection errors (statusCode 0) indicate the site is likely down
     const timeoutStatusCode = isTimeout ? -1 : 0;
-    
+
     // Timeouts are treated as DOWN per uptime rules
     const timeoutDetailedStatus = 'DOWN';
-    
+
+    // A connect that never completes against a host known to drop our probes
+    // says nothing about the site. Flag it so the scheduler ignores it.
+    const blocker = probeBlockerFor(lastRequestIp);
+    const probeBlocked = Boolean(blocker) && isConnectStageFailure(
+      timeoutStage,
+      (error as NodeJS.ErrnoException | undefined)?.code
+    );
+
     return {
       status: 'offline',
       responseTime,
       statusCode: timeoutStatusCode,
-      error: errorMessage,
+      error: probeBlocked && blocker ? describeProbeBlock(blocker, errorMessage) : errorMessage,
+      ...(probeBlocked ? { probeBlocked: true } : {}),
       // Include timing data even for errors - totalMs is the only meaningful value here
       timings: { totalMs: responseTime },
       sslCertificate: securityChecks.sslCertificate,

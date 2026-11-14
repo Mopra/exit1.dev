@@ -1388,6 +1388,23 @@ export async function processOneCheck(
       return { id: check.id, skipped: true, reason: 'dns_grace', status: check.status ?? 'unknown' };
     }
 
+    // ── Probe blocked by the target's network ──
+    // The host is on the known-blocker list (probe-blockers.ts) and this probe
+    // never got a TCP connection, even on the fallback route. That is our
+    // reachability problem, not downtime: record that we tried and leave
+    // status, counters, history and alerts alone. Sits before the peer gate
+    // because the peer VPS is blocked the same way and would confirm DOWN.
+    if ((checkResult as { probeBlocked?: boolean }).probeBlocked === true) {
+      const blockedNow = Date.now();
+      logger.warn(`Probe blocked: ignoring "${checkResult.error}" for check ${check.id} (${check.name || check.url})`);
+      await addStatusUpdate(check.id, {
+        lastChecked: blockedNow,
+        updatedAt: blockedNow,
+        nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, blockedNow),
+      } as StatusUpdateData);
+      return { id: check.id, skipped: true, reason: 'probe_blocked', status: check.status ?? 'unknown' };
+    }
+
     // Widen to include "unknown" so peer-suppression can fall back to the
     // previous check.status value (which may itself be "unknown" on a
     // brand-new check). All downstream consumers (Firestore status field,
@@ -4025,6 +4042,12 @@ export const manualCheck = onCall({
       // overwritten when the fresh observation succeeds, so a failed re-read
       // can't wipe known-good data.
       const checkResult = await executeCheckViaVps({ ...website, sslCertificate: undefined }, checkType);
+      // The target's network dropped our probe (probe-blockers.ts). That is
+      // no observation: keep the stored status, write nothing, alert nobody.
+      if ((checkResult as { probeBlocked?: boolean }).probeBlocked === true) {
+        logger.warn(`Manual check: probe blocked for ${checkId}: ${checkResult.error}`);
+        return { status: website.status ?? 'unknown', lastChecked: Date.now() };
+      }
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
       const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);
