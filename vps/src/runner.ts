@@ -48,7 +48,10 @@ const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confir
 // stream the team's checks over the live socket.
 // @ts-expect-error: functions/lib/ has no .d.ts files; types are verified at the source level
 const { getMemberAccess } = await import('../../functions/lib/team-access.js');
+// @ts-expect-error: functions/lib/ has no .d.ts files; types are verified at the source level
+const { CONFIG } = await import('../../functions/lib/config.js');
 import { CheckSchedule } from './check-schedule.js';
+import { FORWARDED_HEADER, createHeartbeatForwarder } from './heartbeat-forward.js';
 import { startCronHost } from './cron.js';
 import { attachWsServer, broadcastState, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
 import { LIVE_FIELD_NAMES, type ChartPoint, type CheckStateKind, type LiveCheck, type LiveFields, type StateSegment } from './ws-protocol.js';
@@ -364,7 +367,7 @@ async function handlePeerConfirm(req: IncomingMessage, res: ServerResponse) {
 
 // ── Heartbeat Ping Handler ─────────────────────────────────────────────
 async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
-  const token = req.url!.slice('/heartbeat/'.length);
+  const token = req.url!.slice('/heartbeat/'.length).split('?')[0];
   if (!token) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'not_found' }));
@@ -373,6 +376,25 @@ async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
 
   const checkId = heartbeatTokenIndex.get(token);
   if (!checkId) {
+    // Not one of ours. The one public ping URL reaches a single box, so the
+    // check may live in the other region: ask the peer once.
+    if (heartbeatForwarder.shouldForward(token, req.headers[FORWARDED_HEADER])) {
+      let result: { status: number; body: string };
+      try {
+        const body = req.method === 'POST' ? await readBody(req) : undefined;
+        result = await heartbeatForwarder.forward(
+          token,
+          req.method === 'POST' ? 'POST' : 'GET',
+          body,
+          req.headers['content-type'],
+        );
+      } catch {
+        result = { status: 400, body: JSON.stringify({ error: 'bad_request' }) };
+      }
+      res.writeHead(result.status, { 'Content-Type': 'application/json' });
+      res.end(result.body);
+      return;
+    }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'not_found' }));
     return;
@@ -831,6 +853,11 @@ const smsMonthlyBudgetCache = new Map<string, number>();
 // lastWritten: per-check snapshot of the last committed Firestore write, used
 //   to throttle steady-state ping writes (firestore-write-reduction.md Tier 1c)
 const heartbeatTokenIndex = new Map<string, string>();
+// The other runner, for pings whose token is not in the index above.
+const heartbeatForwarder = createHeartbeatForwarder({
+  peerUrl: CONFIG.VPS_REGION_URLS[REGION === 'vps-eu-1' ? 'vps-us-1' : 'vps-eu-1'],
+  region: REGION,
+});
 const heartbeatPingState = new Map<string, { lastPingAt: number; metadata: { status?: string; duration?: number; message?: string } | null }>();
 const heartbeatPingPendingWrites = new Set<string>();
 const heartbeatLastWritten = new Map<string, { lastPingAt: number; metadataStatus: string | null }>();
@@ -1067,6 +1094,8 @@ const handleRequest = (req: IncomingMessage, res: ServerResponse) => {
       heartbeat: {
         tokensIndexed: heartbeatTokenIndex.size,
         activePings: heartbeatPingState.size,
+        // Pings for tokens this runner does not know, passed to the peer.
+        peerForward: heartbeatForwarder.stats(),
       },
       peerConfirm: {
         // Incoming requests served by *this* runner.
