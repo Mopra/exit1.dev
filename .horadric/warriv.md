@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-11-14 Woken for Webhook SSRF quest: committed 191355b, session waits on review agent, then deploy + both VPS rebuilds. Noted, left it.
 - 2026-11-14 Woken for Runner resync herd quest: code and tests written uncommitted, session waits on a review agent. Noted, left it.
 - 2026-11-14 Woken a fourth time for Runner port 3100 quest: step 1 live, code for 2 to 4 written, session waits on a review agent before deploying. Noted, left it.
 - 2026-11-14 Woken a third time for Runner port 3100 quest: EU report in, only code-caller agent left. Noted, left it.
