@@ -444,7 +444,9 @@ export const CONFIG = {
   ENABLE_SECURITY_LOOKUPS: process.env.ENABLE_SECURITY_LOOKUPS !== 'false',
 
   // VPS manual check proxy — route manual checks through the VPS static IP
-  VPS_MANUAL_CHECK_URL: process.env.VPS_MANUAL_CHECK_URL || 'http://187.77.85.132:3100',
+  // HTTPS through the box's reverse proxy (Traefik on EU, Caddy on US). The
+  // runner port itself is not reachable from outside. See Docs/runner-ingress.md.
+  VPS_MANUAL_CHECK_URL: process.env.VPS_MANUAL_CHECK_URL || 'https://vps.exit1.dev',
   VPS_MANUAL_CHECK_TIMEOUT_MS: 35_000, // Must exceed max adaptive timeout (20s) + overhead
 
   // Multi-region: per-region runner URLs. Used by Phase 2 peer-confirmation
@@ -452,8 +454,8 @@ export const CONFIG = {
   // its peer. Defaults match VPS_MANUAL_CHECK_URL for vps-eu-1 so existing
   // env config keeps working.
   VPS_REGION_URLS: {
-    'vps-eu-1': process.env.VPS_EU_URL || 'http://187.77.85.132:3100',
-    'vps-us-1': process.env.VPS_US_URL || 'http://177.7.34.19:3100',
+    'vps-eu-1': process.env.VPS_EU_URL || 'https://vps.exit1.dev',
+    'vps-us-1': process.env.VPS_US_URL || 'https://live-us.exit1.dev',
   } as Record<string, string>,
 
   // Peer confirmation (Phase 2)

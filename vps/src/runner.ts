@@ -127,6 +127,20 @@ class Semaphore {
 // request originates from the VPS static IP (allowlistable by users).
 const VPS_CHECK_SECRET = process.env.VPS_MANUAL_CHECK_SECRET;
 const HTTP_PORT = Number(process.env.VPS_HTTP_PORT) || 3100;
+// Addresses to listen on, comma separated. Unset = all interfaces (legacy).
+// US: 127.0.0.1 (Caddy is on the host). EU: 127.0.0.1,10.0.0.1 (Traefik runs
+// in Docker and reaches the host over the docker0 bridge address).
+const HTTP_HOSTS = (process.env.VPS_HTTP_HOST ?? '')
+  .split(',').map((h) => h.trim()).filter(Boolean);
+// Secret rotation without a gap. See Docs/runner-ingress.md.
+const VPS_CHECK_SECRET_ALT = process.env.VPS_MANUAL_CHECK_SECRET_ALT || undefined;
+const VPS_CHECK_SECRET_ALT_EXPIRES_MS = (() => {
+  const raw = process.env.VPS_MANUAL_CHECK_SECRET_ALT_EXPIRES;
+  if (!raw) return Number.POSITIVE_INFINITY;
+  const ms = Date.parse(raw);
+  // An unreadable expiry must not turn into "never expires".
+  return Number.isNaN(ms) ? 0 : ms;
+})();
 
 type CheckType = 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
 
@@ -185,12 +199,32 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function isAuthorized(header: string | undefined): boolean {
-  if (!VPS_CHECK_SECRET || !header) return false;
-  const expectedBuf = Buffer.from(`Bearer ${VPS_CHECK_SECRET}`);
+function bearerMatches(header: string, secret: string): boolean {
+  const expectedBuf = Buffer.from(`Bearer ${secret}`);
   const actualBuf = Buffer.from(header);
   if (actualBuf.length !== expectedBuf.length) return false;
   return timingSafeEqual(actualBuf, expectedBuf);
+}
+
+function isAuthorized(header: string | undefined): boolean {
+  if (!VPS_CHECK_SECRET || !header) return false;
+  if (bearerMatches(header, VPS_CHECK_SECRET)) return true;
+  // Rotation window: the other secret (the next one before the swap, the old
+  // one after it) is accepted inbound only, and only until its expiry.
+  if (VPS_CHECK_SECRET_ALT && Date.now() < VPS_CHECK_SECRET_ALT_EXPIRES_MS) {
+    return bearerMatches(header, VPS_CHECK_SECRET_ALT);
+  }
+  return false;
+}
+
+// /health in full is for operators. A request that came through the reverse
+// proxy (it always adds X-Forwarded-For) or from another machine gets only
+// the liveness line unless it carries the bearer secret.
+function mayReadFullHealth(req: IncomingMessage): boolean {
+  if (isAuthorized(req.headers.authorization)) return true;
+  if ('x-forwarded-for' in req.headers) return false;
+  const addr = req.socket.remoteAddress ?? '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
 async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
@@ -983,8 +1017,13 @@ let deployModeSnap: DeployModeSnap | null = null;
 let deployModeSnapAt = 0;
 
 // ── Health endpoint ────────────────────────────────────────────────────
-const server = createServer((req, res) => {
+const handleRequest = (req: IncomingMessage, res: ServerResponse) => {
   if (req.method === 'GET' && req.url === '/health') {
+    if (!mayReadFullHealth(req)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', region: REGION }));
+      return;
+    }
     const uptime = process.uptime();
     const stats = schedule.getStats();
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1114,7 +1153,8 @@ const server = createServer((req, res) => {
     res.writeHead(404);
     res.end();
   }
-});
+};
+const server = createServer(handleRequest);
 
 // Phase 3: attach the broadcast-enabled WS server. URL is scoped to `/ws`
 // inside ws-server.ts so existing HTTP endpoints are untouched. The reverse
@@ -1213,9 +1253,42 @@ attachWsServer(server, {
   getStateStoreStats: () => checkStateStore.stats() as unknown as Record<string, unknown>,
 });
 
-server.listen(HTTP_PORT, () => {
-  console.info(`VPS Manual Check API listening on port ${HTTP_PORT}`);
-});
+// A bridge address (EU: docker0) may not exist yet when the box boots, so a
+// failed bind is retried instead of taking the process down.
+const httpServers: Array<typeof server> = [];
+function listenOn(srv: typeof server, host: string | undefined) {
+  const label = host ?? '*';
+  httpServers.push(srv);
+  // The proxies keep idle upstream connections for 90 s (Traefik) to 2 min
+  // (Caddy). Node's 5 s default closes them first, and a POST that the proxy
+  // sends down a connection as it closes comes back as a 502.
+  srv.keepAliveTimeout = 130_000;
+  srv.headersTimeout = 135_000;
+  // Each listen() retry adds a cluster-internal 'listening' listener.
+  srv.setMaxListeners(0);
+  let retryMs = 5_000;
+  srv.on('error', (err: NodeJS.ErrnoException) => {
+    if (srv.listening) {
+      console.error(`[http] server error on ${label}:${HTTP_PORT}: ${err.code ?? err.message}`);
+      return;
+    }
+    console.error(`[http] listen on ${label}:${HTTP_PORT} failed (${err.code ?? err.message}), retrying in ${retryMs / 1000}s`);
+    setTimeout(() => { if (!srv.listening) srv.listen(HTTP_PORT, host); }, retryMs).unref();
+    retryMs = Math.min(retryMs * 2, 60_000);
+  });
+  srv.on('listening', () => {
+    console.info(`VPS Manual Check API listening on ${label}:${HTTP_PORT}`);
+  });
+  srv.listen(HTTP_PORT, host);
+}
+listenOn(server, HTTP_HOSTS[0]);
+for (const host of HTTP_HOSTS.slice(1)) {
+  // Same handler on each extra address. Upgrades are handed to the primary
+  // server, where the WS server is attached.
+  const extra = createServer(handleRequest);
+  extra.on('upgrade', (req, socket, head) => { server.emit('upgrade', req, socket, head); });
+  listenOn(extra, host);
+}
 
 // ── Initialize ─────────────────────────────────────────────────────────
 console.info(`VPS Worker Pool starting for region: ${REGION}`);
@@ -2056,7 +2129,7 @@ async function shutdown(signal: string) {
   // them (the now K_SERVICE-gated signal handlers used to do this).
   try { markStatusBufferShuttingDown(); } catch { /* ignore */ }
   try { markBigQueryShuttingDown(); } catch { /* ignore */ }
-  server.close();
+  for (const srv of httpServers) srv.close();
   clearInterval(resyncTimer);
   clearInterval(webhookRetryTimer);
   clearInterval(day3WebhookTimer);
