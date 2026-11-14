@@ -1,0 +1,11 @@
+[Unit]
+Description=exit1 runner egress rules: refresh the status file every 10 minutes
+Documentation=file:///opt/exit1/repo/vps/ops/README.md
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

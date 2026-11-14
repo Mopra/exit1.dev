@@ -39,6 +39,8 @@ are not affected. No other user on the box is affected.
 | --- | --- |
 | `runner-egress.nft` | `/etc/exit1/runner-egress.nft` |
 | `exit1-runner-egress.service` | `/etc/systemd/system/`, loads the rules at boot |
+| `egress-status.sh` | `/usr/local/sbin/exit1-egress-status`, writes the status file for the daily watch |
+| `exit1-egress-status.service`, `.timer` | `/etc/systemd/system/`, run it every 10 minutes |
 | `pm2-exit1run.service` | `/etc/systemd/system/`, the runner's PM2 daemon |
 | `pm2-runner` | `/usr/local/bin/pm2-runner`, pm2 for the runner |
 | `deploy.sh` | `/opt/exit1/deploy.sh` |
@@ -90,6 +92,36 @@ sudo journalctl -k | grep exit1-runner-egress
 A count that keeps rising means something got past the app-level guard. Look at
 the logged destination and fix the guard.
 
+## Daily watch
+
+Nobody has to remember to look. Each box checks itself once a day, at 08:45 UTC
+(cron job `egressWatch` in `vps/src/cron.ts`, logic in `vps/src/egress-watch.ts`),
+and mails morten@exit1.dev when:
+
+- the rules are not loaded,
+- the runner does not run as `exit1run`, so the rules do not match it,
+- the refuse counter rose since the day before,
+- the status file is missing or older than 45 minutes.
+
+It is silent when all is well. "Not loaded" mails every day until it is fixed.
+
+How it works: reading nftables needs root and the runner has none. So a root
+timer (`exit1-egress-status.timer`) writes `/run/exit1-egress/status` every 10
+minutes, and the runner only reads that file. The last count it saw is kept in
+`/var/lib/exit1/egress-watch-state.json`.
+
+The kernel counter starts at 0 after a reboot and after every `setup` (a
+reload). The status script therefore keeps its own total that only grows, in
+`/var/lib/exit1-egress/state`, and `setup` updates it right before it reloads.
+So a reload does not hide or fake a rise. Only packets refused in the last 10
+minutes before a reboot can be missed.
+
+`./runner-user.sh test` makes about 17 refused packets on purpose. It tells the
+watch so (`exit1-egress-status credit <n>`), and those do not mail.
+
+After a mail about a rise: the mail lists the destinations. Find the check or
+webhook that points there and fix `functions/src/ssrf-guard.ts`.
+
 ## Changing the rules
 
 Edit `runner-egress.nft`, keep `blocked4` in step with the list in
@@ -108,7 +140,8 @@ its own table and is loaded by `exit1-runner-egress.service`.
 
 If the rules fail to load at boot the runner still starts (the unit is `Wants`,
 not `Requires`), so monitoring keeps running on the app-level guard alone.
-`./runner-user.sh status` shows "egress rules NOT loaded" in that case.
+`./runner-user.sh status` shows "egress rules NOT loaded" in that case, and the
+daily watch mails about it.
 
 ## Setting up a new box, or going back
 

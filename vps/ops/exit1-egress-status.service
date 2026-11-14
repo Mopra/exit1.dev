@@ -1,0 +1,7 @@
+[Unit]
+Description=exit1 runner egress rules: write their status for the runner's daily watch
+Documentation=file:///opt/exit1/repo/vps/ops/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/exit1-egress-status

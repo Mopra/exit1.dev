@@ -14,6 +14,9 @@
  * the lease expires. A failed run is not retried before its next slot, same
  * as the Cloud Scheduler jobs it replaces.
  *
+ * A `perHost` job is the exception: it is about the box itself, so each VPS
+ * runs it and claims it on its own doc, `cron_runs/{job}_{owner}`.
+ *
  * Firestore cost: one transaction per job per slot per VPS (~120/day), plus
  * one read a minute on the VPS that is waiting out a live lease held by the
  * other.
@@ -30,7 +33,10 @@ type JobSpec = {
   minute: number;
   /** How long a claim holds before another VPS may take the slot over. */
   leaseMs: number;
-  run: () => Promise<unknown>;
+  /** Run on every VPS instead of on one; for jobs about the box itself. */
+  perHost?: boolean;
+  /** `owner` is this VPS's region id, e.g. `vps-eu-1`. */
+  run: (owner: string) => Promise<unknown>;
 };
 
 const every6h = [0, 6, 12, 18];
@@ -126,6 +132,13 @@ const JOBS: JobSpec[] = [
     // @ts-expect-error: functions/lib has no .d.ts
     run: async () => (await import('../../functions/lib/sla-email.js')).runSlaMonthlyEmails(),
   },
+  {
+    // Emails when this box's kernel egress rules (vps/ops) are not loaded, the
+    // runner is not the user they match, or their refuse counter rose. Each
+    // box has its own rules, so each box runs it. Reads a local file only.
+    name: 'egressWatch', hours: [8], minute: 45, leaseMs: 10 * MIN, perHost: true,
+    run: async (owner) => (await import('./egress-watch.js')).runEgressWatch(owner),
+  },
 ];
 
 /** Start of the most recent slot at or before `now`, in ms. */
@@ -170,10 +183,11 @@ export function startCronHost(firestore: Firestore, owner: string): () => void {
   const knownDone = new Map<string, number>();
   const running = new Set<string>();
   let stopped = false;
+  const docFor = (job: JobSpec) => col.doc(job.perHost ? `${job.name}_${owner}` : job.name);
 
   const claim = (job: JobSpec, slot: number): Promise<ClaimResult> =>
     firestore.runTransaction(async (tx) => {
-      const ref = col.doc(job.name);
+      const ref = docFor(job);
       const snap = await tx.get(ref);
       const now = Date.now();
       const decision = decideClaim(snap.exists ? (snap.data() as ClaimDoc) : null, slot, now);
@@ -193,7 +207,7 @@ export function startCronHost(firestore: Firestore, owner: string): () => void {
     let error: string | null = null;
     console.info(`[cron] ${job.name} starting (slot ${new Date(slot).toISOString()})`);
     try {
-      await job.run();
+      await job.run(owner);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
       console.error(`[cron] ${job.name} failed:`, err);
@@ -204,7 +218,7 @@ export function startCronHost(firestore: Firestore, owner: string): () => void {
     console.info(`[cron] ${job.name} finished in ${Math.round(durationMs / 1000)}s${error ? ' (failed)' : ''}`);
     knownDone.set(job.name, slot);
     try {
-      await col.doc(job.name).set({
+      await docFor(job).set({
         status: 'done', leaseUntil: 0, finishedAt: Date.now(), durationMs, lastError: error, owner,
       }, { merge: true });
     } catch (err) {

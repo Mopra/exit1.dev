@@ -23,6 +23,7 @@ HEALTH_URL="${HEALTH_URL:-http://localhost:3100/health}"
 SECRETS=("$REPO/vps/.env" /opt/exit1/service-account.json)
 DATA_DIRS=(/var/lib/exit1 /var/log/exit1)
 WRAPPER=/usr/local/bin/pm2-runner
+STATUS_BIN=/usr/local/sbin/exit1-egress-status
 DEPLOY_USER="$(id -un)"
 
 export PATH="$PATH:/usr/local/bin"
@@ -82,6 +83,10 @@ cmd_setup() {
   sudo -n install -m 644 "$HERE/exit1-runner-egress.service" /etc/systemd/system/exit1-runner-egress.service
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable exit1-runner-egress.service
+  # A reload sets the refuse counter back to 0. Let the daily egress watch's
+  # status script add the current count to its total first.
+  sudo -n install -m 755 "$HERE/egress-status.sh" "$STATUS_BIN"
+  sudo -n "$STATUS_BIN" || true
   # The file replaces the table in one transaction, so a reload leaves no gap.
   if systemctl is-active --quiet exit1-runner-egress.service; then
     sudo -n systemctl reload exit1-runner-egress.service
@@ -89,6 +94,17 @@ cmd_setup() {
     sudo -n systemctl start exit1-runner-egress.service
   fi
   sudo -n nft list chain inet exit1_runner output
+
+  echo "--- status file for the daily egress watch ---"
+  # Root writes /run/exit1-egress/status every 10 minutes; the runner's daily
+  # egressWatch job reads it and mails when the rules are gone or were hit.
+  sudo -n install -m 644 "$HERE/exit1-egress-status.service" /etc/systemd/system/exit1-egress-status.service
+  sudo -n install -m 644 "$HERE/exit1-egress-status.timer" /etc/systemd/system/exit1-egress-status.timer
+  sudo -n systemctl daemon-reload
+  sudo -n systemctl enable --now exit1-egress-status.timer
+  sudo -n systemctl start exit1-egress-status.service
+  as_runner cat /run/exit1-egress/status | grep -v '^log=' \
+    || { echo "!!! $RUN_USER can not read /run/exit1-egress/status" >&2; exit 1; }
 
   echo "--- PM2 daemon for $RUN_USER ---"
   install_templated "$HERE/pm2-exit1run.service" /etc/systemd/system/pm2-exit1run.service 644
@@ -154,9 +170,24 @@ check() {
   fi
 }
 
+# Tell the daily egress watch that the packets this test got refused were ours,
+# so a test does not mail. From an EXIT trap, so an interrupted test counts too.
+# A real refusal during the minute the test takes is credited as well and so
+# missed by the watch; its line is still in the kernel log.
+credit_test() {
+  local now made
+  now=$(refused 2>/dev/null || true)
+  made=$(( ${now:-$REFUSED_AT_START} - REFUSED_AT_START ))
+  if [ -x "$STATUS_BIN" ] && [ "$made" -gt 0 ]; then
+    if sudo -n "$STATUS_BIN" credit "$made"; then echo "credited $made refused packets to this test"; fi
+  fi
+}
+
 cmd_test() {
   FAILS=0
   local ip4 ip6
+  REFUSED_AT_START=$(refused)
+  trap credit_test EXIT
   ip4=$(ip -4 route get 1.1.1.1 | grep -oP 'src \K\S+')
   ip6=$(ip -6 route get 2606:4700:4700::1111 2>/dev/null | grep -oP 'src \K\S+' || true)
   echo "own addresses: $ip4 ${ip6:-none}"
@@ -313,6 +344,10 @@ cmd_status() {
   systemctl is-active exit1-runner-egress.service pm2-exit1run.service || true
   sudo -n nft list chain inet exit1_runner refuse 2>/dev/null || echo "egress rules NOT loaded"
   sudo -n journalctl -k --since "-1 day" --no-pager 2>/dev/null | grep "exit1-runner-egress" | tail -n 10 || true
+  echo "--- daily egress watch ---"
+  echo "status timer: $(systemctl is-active exit1-egress-status.timer 2>/dev/null || true)"
+  grep -v '^log=' /run/exit1-egress/status 2>/dev/null || echo "no status file: run ./runner-user.sh setup"
+  cat /var/lib/exit1/egress-watch-state.json 2>/dev/null && echo || echo "the watch has not run yet (08:45 UTC)"
 }
 
 case "${1:-}" in
