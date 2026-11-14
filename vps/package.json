@@ -9,6 +9,7 @@
     "prebuild": "node scripts/check-ws-protocol.mjs",
     "build": "tsc",
     "start": "node lib/runner.js",
+    "test": "tsx --test src/__tests__/*.test.ts",
     "dev": "tsx src/runner.ts",
     "deploy:mode:on": "node scripts/deploy-mode.mjs enable",
     "deploy:mode:off": "node scripts/deploy-mode.mjs disable",

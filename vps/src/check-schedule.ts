@@ -41,6 +41,108 @@ function binarySearchInsertIndex(schedule: ScheduleEntry[], nextCheckAt: number)
   return lo;
 }
 
+// ── Resync merge ───────────────────────────────────────────────────────────
+//
+// The runner lets the Firestore copy of a check go stale on purpose (hourly
+// deferred flush, steady-state skip up to a day). A resync that trusted the
+// doc's `nextCheckAt` therefore saw thousands of checks as overdue and fired
+// them in one herd, 2.5x the normal probe rate, and put intervals in phase so
+// the wave echoed for 20 minutes. So for a check already in memory the resync
+// keeps what the runner knows and takes only config from the doc.
+
+/**
+ * Fields the runner writes after each probe (see the status buffer hook in
+ * runner.ts). In memory they are always at least as fresh as the doc, unless
+ * another writer changed the doc.
+ */
+const RUNNER_OWNED_FIELDS = [
+  'nextCheckAt',
+  'lastChecked',
+  'status',
+  'detailedStatus',
+  'lastStatusChange',
+  'responseTime',
+  'lastStatusCode',
+  'consecutiveFailures',
+  'consecutiveSuccesses',
+  'lastFailureTime',
+  'lastDowntime',
+  'lastError',
+  'lastHistoryAt',
+  'pendingDownEmail',
+  'pendingUpEmail',
+  'pendingDownSince',
+  'pendingUpSince',
+  'pendingDownSms',
+  'pendingUpSms',
+  'pendingDownWebhooks',
+  'pendingUpWebhooks',
+] as const;
+
+/**
+ * Config that decides whether and when a check runs. A difference between
+ * memory and the doc means an edit this process never heard about.
+ */
+const SCHEDULE_CONFIG_FIELDS = ['disabled', 'checkFrequency', 'type', 'url', 'maintenanceMode', 'userId'] as const;
+
+/** More overdue checks than this in one resync is a herd, and gets spread. */
+export const RESYNC_SPREAD_THRESHOLD = 25;
+/** Longest delay the spread gives an overdue check. */
+export const RESYNC_SPREAD_MAX_MS = 5 * 60 * 1000;
+
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/**
+ * True when the doc holds something this process did not write: an edit that
+ * never reached the `check_edits` listener, or a write by another process.
+ * False when the doc is only a stale copy of the runner's own state.
+ */
+export function docWasChangedElsewhere(prev: Website, doc: Website): boolean {
+  for (const key of SCHEDULE_CONFIG_FIELDS) {
+    if ((prev[key] ?? null) !== (doc[key] ?? null)) return true;
+  }
+  const prevChecked = num(prev.lastChecked);
+  const docChecked = num(doc.lastChecked);
+  // Edits and "check now" reset lastChecked to 0 to force a fresh probe.
+  if (docChecked === 0 && prevChecked > 0) return true;
+  // The runner's doc copy only ever lags memory. A doc that is ahead was
+  // written by someone else.
+  if (docChecked > prevChecked) return true;
+  if (num(doc.nextCheckAt) > num(prev.nextCheckAt)) return true;
+  return false;
+}
+
+/**
+ * Build the in-memory record for a check read by fullResync. `prev` is the
+ * record already in memory, if any. Returns the record and whether its
+ * schedule time came from memory (`kept`) or from the doc.
+ */
+export function mergeResyncedCheck(prev: Website | undefined, doc: Website): { check: Website; kept: boolean } {
+  if (!prev || docWasChangedElsewhere(prev, doc)) return { check: doc, kept: false };
+
+  const check = { ...doc };
+  for (const key of RUNNER_OWNED_FIELDS) {
+    if (key in prev) check[key] = prev[key];
+  }
+  // The certificate and its alert state travel together, and a cron also
+  // writes them. Whichever side observed the certificate last wins.
+  if (num(prev.sslCertificate?.lastChecked) >= num(doc.sslCertificate?.lastChecked)) {
+    if ('sslCertificate' in prev) check.sslCertificate = prev.sslCertificate;
+    if ('sslAlertedState' in prev) check.sslAlertedState = prev.sslAlertedState;
+  }
+  return { check, kept: true };
+}
+
+/**
+ * Delay for one overdue check when a resync finds a herd of them: uniform
+ * over one check interval, capped at RESYNC_SPREAD_MAX_MS.
+ */
+export function resyncSpreadDelayMs(check: Website, random: () => number): number {
+  const intervalMs = num(check.checkFrequency) * 60_000;
+  const windowMs = intervalMs > 0 ? Math.min(intervalMs, RESYNC_SPREAD_MAX_MS) : RESYNC_SPREAD_MAX_MS;
+  return Math.floor(random() * windowMs);
+}
+
 // ── CheckSchedule ──────────────────────────────────────────────────────────
 
 export class CheckSchedule {
@@ -460,8 +562,13 @@ export class CheckSchedule {
    * Full re-read from Firestore. Replaces both checks Map and schedule array.
    * Called periodically (12h) and after listener resubscription as a safety
    * net for missed onSnapshot events.
+   *
+   * A check already in memory keeps its schedule time and probe state; only
+   * its config comes from the doc. The doc's values are used for checks that
+   * are new here or that another writer changed (see mergeResyncedCheck).
+   * If those leave a herd of overdue checks, it is spread with jitter.
    */
-  async fullResync(): Promise<void> {
+  async fullResync(opts: { now?: number; random?: () => number } = {}): Promise<void> {
     if (!this.firestoreRef) return;
 
     const start = Date.now();
@@ -470,17 +577,28 @@ export class CheckSchedule {
       .where('checkRegion', '==', this.region)
       .get();
 
+    // Everything below is synchronous: memory is read and swapped in one
+    // tick, so no probe result landing during the Firestore await is lost.
+    const now = opts.now ?? Date.now();
+    const random = opts.random ?? Math.random;
+
     // Build new structures first, then swap atomically.
     // Avoids a window where the Map is empty (status buffer hook
     // would silently drop updates during the Firestore await).
     const newChecks = new Map<string, Website>();
     const newSchedule: ScheduleEntry[] = [];
     const newUserIndex = new Map<string, Set<string>>();
+    // Overdue checks whose schedule time came from the doc, not from memory.
+    const overdueFromDoc: Website[] = [];
+    let kept = 0;
 
     for (const doc of snapshot.docs) {
-      const data = { ...doc.data(), id: doc.id } as Website;
+      const raw = { ...doc.data(), id: doc.id } as Website;
+      this.onCheckResynced?.(doc.id, raw as unknown as Record<string, unknown>);
+      const merged = mergeResyncedCheck(this.checks.get(doc.id), raw);
+      const data = merged.check;
+      if (merged.kept) kept++;
       newChecks.set(doc.id, data);
-      this.onCheckResynced?.(doc.id, data as unknown as Record<string, unknown>);
       if (data.userId) {
         let set = newUserIndex.get(data.userId);
         if (!set) {
@@ -490,8 +608,18 @@ export class CheckSchedule {
         set.add(doc.id);
       }
       if (!data.disabled && data.nextCheckAt != null) {
-        newSchedule.push({ id: doc.id, nextCheckAt: data.nextCheckAt });
+        if (!merged.kept && data.nextCheckAt <= now) overdueFromDoc.push(data);
+        else newSchedule.push({ id: doc.id, nextCheckAt: data.nextCheckAt });
       }
+    }
+
+    // A few overdue checks are real work (a missed edit, a new check) and run
+    // at once. A herd would spike the probe rate, so it is spread out. The
+    // jittered time lives in memory only; the next probe writes a real one.
+    const spread = overdueFromDoc.length > RESYNC_SPREAD_THRESHOLD;
+    for (const data of overdueFromDoc) {
+      if (spread) data.nextCheckAt = now + resyncSpreadDelayMs(data, random);
+      newSchedule.push({ id: data.id, nextCheckAt: data.nextCheckAt });
     }
 
     newSchedule.sort((a, b) => a.nextCheckAt - b.nextCheckAt);
@@ -504,6 +632,8 @@ export class CheckSchedule {
     const drift = Math.abs(this.checks.size - prevSize);
     console.info(
       `[CheckSchedule] Resync: ${this.checks.size} checks (${this.schedule.length} scheduled) in ${Date.now() - start}ms` +
+        ` | kept in-memory schedule for ${kept}, ${overdueFromDoc.length} overdue from Firestore` +
+        (spread ? ' (spread with jitter)' : '') +
         (drift > 0 ? ` | drift: ${drift} checks` : '')
     );
   }
