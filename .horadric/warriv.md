@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-11-14 Woken a fourth time for Runner SSRF quest: guard committed (769cb22), session still waits on count agent and EU SSH retry. Noted, left it.
 - 2026-11-14 Woken a third time for Runner SSRF quest: review passed, session waits on count agent and an EU SSH retry. Noted, left it.
 - 2026-11-14 Woken again for Runner SSRF quest: session between turns, review agent and blocked-check count running. Noted, left it.
 - 2026-11-14 Woken for Runner SSRF quest: session waits on its own test and count agents, guard written, uncommitted. Noted, left it.
