@@ -1,0 +1,14 @@
+[Unit]
+Description=exit1 runner egress rules (nftables table inet exit1_runner)
+Documentation=file:///opt/exit1/repo/vps/ops/README.md
+Before=pm2-exit1run.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/exit1/runner-egress.nft
+ExecReload=/usr/sbin/nft -f /etc/exit1/runner-egress.nft
+ExecStop=-/usr/sbin/nft delete table inet exit1_runner
+
+[Install]
+WantedBy=multi-user.target

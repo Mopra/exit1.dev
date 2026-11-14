@@ -1,0 +1,76 @@
+#!/usr/sbin/nft -f
+# Kernel backstop for the probe SSRF guard (functions/src/ssrf-guard.ts).
+#
+# The runner runs as the system user exit1run. Everything that user sends is
+# checked here, so a probe that slips past the app-level guard (a DNS rebind, a
+# new probe type that forgets the guard, a redirect bug) still can not reach
+# loopback, private ranges, cloud metadata or other services on this box.
+#
+# This is its own table. It does not touch the ufw or Docker rules, and a ufw
+# reload or Docker restart does not touch it. Load with:
+#   nft -f /etc/exit1/runner-egress.nft        (exit1-runner-egress.service)
+# Never enable nftables.service on these boxes: /etc/nftables.conf starts with
+# "flush ruleset", which would wipe the Docker and ufw rules.
+#
+# Keep blocked4 in step with the IPv4 block list in functions/src/ssrf-guard.ts.
+
+table inet exit1_runner
+delete table inet exit1_runner
+
+table inet exit1_runner {
+  set blocked4 {
+    type ipv4_addr
+    flags interval
+    elements = {
+      0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,
+      169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24,
+      192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
+      224.0.0.0/4, 240.0.0.0/4
+    }
+  }
+
+  # Priority -150: after conntrack (-200), before Docker's DNAT (-100), so the
+  # rules see the address the runner asked for, not a rewritten one.
+  chain output {
+    type filter hook output priority -150; policy accept;
+    meta skuid "exit1run" jump runner
+  }
+
+  chain runner {
+    # Replies on connections that came in to the runner (Caddy, Traefik) and
+    # packets on connections already let through below.
+    ct state established,related accept
+
+    # DNS: unbound on 127.0.0.1 (c-ares, DNS_SERVERS) and the systemd-resolved
+    # stub that getaddrinfo uses (firebase, gRPC).
+    ip daddr { 127.0.0.1, 127.0.0.53, 127.0.0.54 } meta l4proto { tcp, udp } th dport 53 accept
+
+    # The runner's own health port.
+    ip daddr 127.0.0.1 tcp dport 3100 accept
+
+    ip daddr @blocked4 jump refuse
+    # Only global unicast counts as public IPv6. This refuses ::1, link-local,
+    # unique-local and multicast.
+    ip6 daddr != 2000::/3 jump refuse
+    # Teredo and the documentation range sit inside 2000::/3 but are not real
+    # destinations. The app-level guard refuses them too.
+    ip6 daddr { 2001::/32, 2001:db8::/32 } jump refuse
+
+    # This box's own public addresses: HTTPS only. Webhooks to
+    # automation.exit1.dev land here on the EU box. That port is open to the
+    # whole internet anyway, so this gives the runner nothing a stranger lacks.
+    # Everything else on the box (Postgres, Redis, SSH, admin ports) stays out
+    # of reach.
+    fib daddr type local tcp dport 443 accept
+    fib daddr type local jump refuse
+    # Belt and braces: nothing else may leave through loopback.
+    oifname "lo" jump refuse
+  }
+
+  chain refuse {
+    counter
+    limit rate 6/minute burst 5 packets log prefix "exit1-runner-egress: "
+    meta l4proto tcp reject with tcp reset
+    reject with icmpx type admin-prohibited
+  }
+}

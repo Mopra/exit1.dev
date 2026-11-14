@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# pm2 for the exit1 runner. The runner lives in its own PM2 daemon as user
+# exit1run (see /opt/exit1/repo/vps/ops/README.md). Use this instead of plain
+# pm2 for anything about exit1-vps-runner:
+#   pm2-runner list
+#   pm2-runner logs exit1-vps-runner --lines 50
+# Deploys still go through /opt/exit1/deploy.sh, which calls this.
+# Installed by runner-user.sh, which fills in @PM2_BIN@ for the box.
+set -u
+
+# The runner reads these two files. They stay owned by the deploy user; the
+# runner gets in through the group. Re-assert on every call, since an editor
+# that rewrites .env can drop the group.
+for f in /opt/exit1/repo/vps/.env /opt/exit1/service-account.json; do
+  if [ -e "$f" ]; then
+    sudo -n chgrp exit1run "$f" 2>/dev/null && sudo -n chmod 640 "$f" 2>/dev/null || true
+  fi
+done
+
+# Never let this call spawn a PM2 daemon by itself: one started from a login
+# session misses the unit's file limits and dies with the session.
+case "${1:-}" in
+  kill|update|resurrect)
+    echo "pm2-runner: use 'sudo systemctl restart pm2-exit1run' inside deploy mode instead of '$1'." >&2
+    exit 2 ;;
+esac
+if ! systemctl is-active --quiet pm2-exit1run.service; then
+  echo "pm2-runner: pm2-exit1run.service is not running. Start it with: sudo systemctl start pm2-exit1run" >&2
+  exit 1
+fi
+
+cd /opt/exit1/repo/vps 2>/dev/null || cd /
+exec sudo -n -H -u exit1run env \
+  PM2_HOME=/var/lib/exit1run/.pm2 \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  @PM2_BIN@ "$@"

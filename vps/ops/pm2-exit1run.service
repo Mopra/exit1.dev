@@ -1,0 +1,28 @@
+# PM2 daemon for the exit1 runner, as the unprivileged user exit1run.
+# Installed by runner-user.sh, which fills in @PM2_BIN@ for the box.
+# Wants (not Requires) the egress rules: if they fail to load the runner still
+# starts, so monitoring keeps running and the app-level guard still applies.
+[Unit]
+Description=PM2 for the exit1 runner (user exit1run)
+Documentation=file:///opt/exit1/repo/vps/ops/README.md
+After=network.target exit1-runner-egress.service
+Wants=exit1-runner-egress.service
+
+[Service]
+Type=forking
+User=exit1run
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+CPUWeight=1000
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PM2_HOME=/var/lib/exit1run/.pm2
+PIDFile=/var/lib/exit1run/.pm2/pm2.pid
+Restart=on-failure
+
+ExecStart=@PM2_BIN@ resurrect
+ExecReload=@PM2_BIN@ reload all
+ExecStop=@PM2_BIN@ kill
+
+[Install]
+WantedBy=multi-user.target
