@@ -8,6 +8,7 @@
 
 import net from 'net';
 import type { RdapDomainInfo } from './rdap-client';
+import { assertPublicHost, guardedSystemLookupOption } from './ssrf-guard';
 
 // WHOIS port per RFC 3912
 const WHOIS_PORT = 43;
@@ -136,7 +137,19 @@ async function throttleForServer(server: string): Promise<void> {
 function rawWhoisQuery(server: string, query: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    const socket = net.createConnection(WHOIS_PORT, server);
+    // The server name can come from an IANA referral or a registry's reply, so
+    // it gets the same public-address guard as a probe target.
+    try {
+      assertPublicHost(server);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const socket = net.createConnection({
+      port: WHOIS_PORT,
+      host: server,
+      lookup: guardedSystemLookupOption,
+    });
 
     const timer = setTimeout(() => {
       socket.destroy();

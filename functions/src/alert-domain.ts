@@ -28,6 +28,7 @@ import {
   mapEventToPushoverPriority,
 } from './alert-pushover';
 import { sendTelegramAlert } from './alert-telegram';
+import { guardedFetch } from './guarded-fetch';
 
 // ============================================================================
 // TYPES
@@ -429,7 +430,7 @@ async function sendDomainWebhook(
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const response = await fetch(requestUrl, {
+    const response = await guardedFetch(requestUrl, {
       method: 'POST',
       headers,
       body,

@@ -21,6 +21,7 @@ import { assertTelegramChatLinked } from "./telegram-link";
 import { triggerResendEvent } from "./resend-sync";
 import { notifySettingsEdit } from "./check-helpers";
 import { resolveAccountId } from "./team-access";
+import { guardedFetch } from "./guarded-fetch";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall({
@@ -470,7 +471,7 @@ export const testWebhook = onCall({ secrets: [TELEGRAM_BOT_TOKEN] }, async (requ
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const response = await fetch(requestUrl, {
+    const response = await guardedFetch(requestUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(testPayload),

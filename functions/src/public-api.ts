@@ -67,6 +67,7 @@ import { canAccessCheck, canCreateInFolder, isKeyExpired, readStoredAccess, type
 import { handleGetSlaReport, handleListSlaReports } from "./public-api-sla";
 import { JSON_PATH_OPERATORS, parseJsonPath, type JsonPathOperator } from "./json-path";
 import { parseIncludeParam, UptimeCache, type Window24h } from "./public-api-uptime";
+import { guardedFetch } from "./guarded-fetch";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -2201,7 +2202,7 @@ async function deliverWebhookTest(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await fetch(webhook.url, {
+    const response = await guardedFetch(webhook.url, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),

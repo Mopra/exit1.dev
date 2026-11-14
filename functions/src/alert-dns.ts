@@ -19,6 +19,7 @@ import {
   mapEventToPushoverPriority,
 } from "./alert-pushover";
 import { buildTelegramText, extractTelegramChatId, getTelegramBotToken } from "./alert-telegram";
+import { guardedFetch } from "./guarded-fetch";
 
 interface DnsAlertPayload {
   event: WebhookEvent;
@@ -210,7 +211,7 @@ async function dispatchDnsWebhooks(
         if (formatted.contentType === 'application/x-www-form-urlencoded') {
           fetchHeaders['Content-Type'] = formatted.contentType;
         }
-        const response = await fetch(formatted.url, {
+        const response = await guardedFetch(formatted.url, {
           method: 'POST',
           headers: fetchHeaders,
           body,

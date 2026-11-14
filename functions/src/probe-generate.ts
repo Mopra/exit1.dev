@@ -50,6 +50,7 @@ import { createHmac, timingSafeEqual, randomUUID } from "crypto";
 import { URL } from "url";
 import { checkSSLCertificate } from "./security-utils";
 import { PROBE_HMAC_SECRET } from "./env";
+import { guardedFetch } from "./guarded-fetch";
 
 const FINDINGS_COLLECTION = "probeFindings";
 
@@ -229,11 +230,12 @@ async function probeUrl(target: string, opts: { body?: boolean } = {}): Promise<
     let current = target;
     let response: Response | null = null;
     for (let hop = 0; hop < 6; hop += 1) {
-      response = await fetch(current, {
+      response = await guardedFetch(current, {
         method: "GET",
         redirect: "manual",
         headers: { "user-agent": USER_AGENT, accept: "text/html,*/*;q=0.8" },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        maxBodyBytes: 2 * 1024 * 1024,
       });
       const location = response.headers.get("location");
       if (response.status >= 300 && response.status < 400 && location) {
