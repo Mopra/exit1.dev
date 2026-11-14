@@ -278,8 +278,16 @@ export class CheckSchedule {
   /**
    * One-time load of all checks for this region from Firestore.
    * Must be called before `getDueChecks()` or `startRealtimeSync()`.
+   *
+   * At boot there is no memory to keep, and the Firestore copy lags on
+   * purpose, so most checks read as overdue. A herd of them is spread with
+   * jitter, the same way fullResync does it.
    */
-  async init(region: CheckRegion, firestore: Firestore): Promise<void> {
+  async init(
+    region: CheckRegion,
+    firestore: Firestore,
+    opts: { now?: number; random?: () => number } = {},
+  ): Promise<void> {
     this.region = region;
     this.firestoreRef = firestore;
 
@@ -289,24 +297,38 @@ export class CheckSchedule {
       .where('checkRegion', '==', region)
       .get();
 
+    const now = opts.now ?? Date.now();
+    const random = opts.random ?? Math.random;
+
     this.checks.clear();
     this.schedule = [];
     this.userIndex.clear();
 
+    const overdue: Website[] = [];
     for (const doc of snapshot.docs) {
       const data = { ...doc.data(), id: doc.id } as Website;
       this.checks.set(doc.id, data);
       this.indexUserAdd(data.userId, doc.id);
       if (!data.disabled && data.nextCheckAt != null) {
-        this.schedule.push({ id: doc.id, nextCheckAt: data.nextCheckAt });
+        if (data.nextCheckAt <= now) overdue.push(data);
+        else this.schedule.push({ id: doc.id, nextCheckAt: data.nextCheckAt });
       }
+    }
+
+    // The jittered time lives in memory only; the next probe writes a real one.
+    const spread = overdue.length > RESYNC_SPREAD_THRESHOLD;
+    for (const data of overdue) {
+      if (spread) data.nextCheckAt = now + resyncSpreadDelayMs(data, random);
+      this.schedule.push({ id: data.id, nextCheckAt: data.nextCheckAt });
     }
 
     this.schedule.sort((a, b) => a.nextCheckAt - b.nextCheckAt);
     this.initialized = true;
 
     console.info(
-      `[CheckSchedule] Loaded ${this.checks.size} checks (${this.schedule.length} scheduled) in ${Date.now() - start}ms`
+      `[CheckSchedule] Loaded ${this.checks.size} checks (${this.schedule.length} scheduled) in ${Date.now() - start}ms` +
+        ` | ${overdue.length} overdue` +
+        (spread ? ' (spread with jitter)' : '')
     );
   }
 

@@ -250,6 +250,53 @@ test('a handful of overdue checks is not delayed', async () => {
   }
 });
 
+test('boot spreads a herd of overdue checks with jitter', async () => {
+  const restore = silence();
+  try {
+    const now = T0 + 60 * MIN;
+    const count = 400;
+    const docs = new Map<string, Doc>();
+    for (let i = 0; i < count; i++) {
+      docs.set(`n${i}`, checkDoc({ checkFrequency: i % 2 === 0 ? 2 : 60, nextCheckAt: now - 30 * MIN }));
+    }
+    docs.set('future', checkDoc({ nextCheckAt: now + 7 * MIN }));
+    docs.set('off', checkDoc({ disabled: true, nextCheckAt: now - 30 * MIN }));
+
+    let n = 0;
+    const schedule = new CheckSchedule();
+    await schedule.init('vps-eu-1' as never, fakeFirestore(docs), { now, random: () => (n++ % 100) / 100 });
+
+    const dueNow = schedule.getDueChecks(now).length;
+    assert.ok(dueNow <= count / 50, `only a sliver may be due at once, got ${dueNow}`);
+    assert.equal(schedule.getDueChecks(now + RESYNC_SPREAD_MAX_MS).length, count, 'all run within the cap');
+    for (let i = 0; i < count; i++) {
+      const check = schedule.getCheck(`n${i}`)!;
+      const windowMs = Math.min(check.checkFrequency * MIN, RESYNC_SPREAD_MAX_MS);
+      assert.ok(check.nextCheckAt >= now && check.nextCheckAt < now + windowMs);
+    }
+    assert.equal(schedule.getCheck('future')!.nextCheckAt, now + 7 * MIN, 'a check not yet due keeps its time');
+    assert.equal(schedule.getCheck('off')!.nextCheckAt, now - 30 * MIN, 'a disabled check is left alone');
+  } finally {
+    restore();
+  }
+});
+
+test('boot does not delay a handful of overdue checks', async () => {
+  const restore = silence();
+  try {
+    const now = T0 + 60 * MIN;
+    const docs = new Map<string, Doc>();
+    for (let i = 0; i < RESYNC_SPREAD_THRESHOLD; i++) docs.set(`n${i}`, checkDoc({ nextCheckAt: now - MIN }));
+
+    const schedule = new CheckSchedule();
+    await schedule.init('vps-eu-1' as never, fakeFirestore(docs), { now, random: () => 0.99 });
+
+    assert.equal(schedule.getDueChecks(now).length, RESYNC_SPREAD_THRESHOLD);
+  } finally {
+    restore();
+  }
+});
+
 test('docWasChangedElsewhere tells a stale doc from a foreign write', () => {
   const prev = checkDoc({ lastChecked: T0 + 10 * MIN, nextCheckAt: T0 + 12 * MIN });
   assert.equal(docWasChangedElsewhere(prev, checkDoc()), false, 'older doc is just stale');
