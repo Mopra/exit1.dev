@@ -18,6 +18,7 @@ import {
   docWasChangedElsewhere,
   mergeResyncedCheck,
   resyncSpreadDelayMs,
+  withFreshestDnsState,
 } from '../check-schedule.js';
 
 type Doc = Record<string, unknown>;
@@ -301,6 +302,60 @@ test('mergeResyncedCheck keeps probe state and pairs the certificate with its al
 
   assert.deepEqual(mergeResyncedCheck(undefined, stale), { check: stale, kept: false });
   assert.equal(mergeResyncedCheck(prev, checkDoc({ lastChecked: 0 })).kept, false);
+});
+
+test('a stale doc does not restore an old DNS baseline over a runner re-baseline', () => {
+  const oldBaseline = { A: { values: ['1.1.1.1'], capturedAt: T0 } };
+  const newBaseline = { A: { values: ['2.2.2.2'], capturedAt: T0 + 10 * MIN } };
+  const change = { recordType: 'A', changeType: 'changed', detectedAt: T0 + 10 * MIN };
+  const dns = (over: Doc): Doc => ({ recordTypes: ['A'], autoAccept: false, changes: [], ...over });
+
+  // Memory re-baselined at T0+10; the write is still in the status buffer.
+  const prev = checkDoc({
+    type: 'dns',
+    lastChecked: T0 + 10 * MIN,
+    nextCheckAt: T0 + 12 * MIN,
+    dnsMonitoring: dns({
+      baseline: newBaseline,
+      changes: [change],
+      autoAcceptConsecutiveCount: 0,
+      lastResult: { A: { values: ['2.2.2.2'], queriedAt: T0 + 10 * MIN } },
+    }),
+  });
+  const staleDns = dns({
+    recordTypes: ['A', 'MX'],
+    baseline: oldBaseline,
+    lastResult: { A: { values: ['1.1.1.1'], queriedAt: T0 } },
+  });
+
+  // Resync over a doc that is only stale.
+  const merged = mergeResyncedCheck(prev, checkDoc({ type: 'dns', dnsMonitoring: staleDns }));
+  assert.equal(merged.kept, true);
+  assert.deepEqual(merged.check.dnsMonitoring.baseline, newBaseline);
+  assert.deepEqual(merged.check.dnsMonitoring.changes, [change]);
+  assert.equal(merged.check.dnsMonitoring.lastResult.A.queriedAt, T0 + 10 * MIN);
+  assert.deepEqual(merged.check.dnsMonitoring.recordTypes, ['A', 'MX'], 'config still comes from the doc');
+
+  // Same when an edit reset lastChecked, so the doc wins everything else.
+  const edited = mergeResyncedCheck(prev, checkDoc({ type: 'dns', lastChecked: 0, dnsMonitoring: staleDns }));
+  assert.equal(edited.kept, false);
+  assert.equal(edited.check.lastChecked, 0);
+  assert.deepEqual(edited.check.dnsMonitoring.baseline, newBaseline);
+
+  // A baseline accepted through the API after the runner's is newer and wins.
+  const accepted = { A: { values: ['3.3.3.3'], capturedAt: T0 + 11 * MIN } };
+  const fromApi = mergeResyncedCheck(
+    prev,
+    checkDoc({ type: 'dns', dnsMonitoring: dns({ baseline: accepted, autoAcceptConsecutiveCount: 0 }) }),
+  );
+  assert.deepEqual(fromApi.check.dnsMonitoring.baseline, accepted);
+  assert.deepEqual(fromApi.check.dnsMonitoring.changes, []);
+  assert.equal(fromApi.check.dnsMonitoring.lastResult.A.queriedAt, T0 + 10 * MIN, 'only the runner writes lastResult');
+
+  // Nothing to merge: the doc is returned untouched.
+  const plain = checkDoc();
+  assert.equal(withFreshestDnsState(prev, plain), plain);
+  assert.equal(withFreshestDnsState(undefined, plain), plain);
 });
 
 test('resyncSpreadDelayMs stays inside one interval and the cap', () => {

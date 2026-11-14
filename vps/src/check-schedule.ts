@@ -112,15 +112,59 @@ export function docWasChangedElsewhere(prev: Website, doc: Website): boolean {
   return false;
 }
 
+/** Newest timestamp under `field` in a map keyed by DNS record type. */
+function newestStamp(byType: unknown, field: 'capturedAt' | 'queriedAt'): number {
+  if (!byType || typeof byType !== 'object') return 0;
+  let newest = 0;
+  for (const entry of Object.values(byType as Record<string, Record<string, unknown> | null>)) {
+    newest = Math.max(newest, num(entry?.[field]));
+  }
+  return newest;
+}
+
+/**
+ * A check read from Firestore, with the DNS drift state taken from whichever
+ * side is newer.
+ *
+ * The runner re-baselines in memory when it alerts on a DNS change, and that
+ * write can sit in the status buffer for a while. A doc read in that window
+ * (full resync, or the reload after any edit) still holds the old baseline.
+ * Trusting it made the next probe see the same drift and alert again. The
+ * accept-baseline endpoint also writes a baseline, so memory cannot simply
+ * win: the baseline with the newest `capturedAt` does, and `changes` and the
+ * auto-accept counter travel with it. Config (`recordTypes`, `autoAccept`)
+ * always comes from the doc. Returns `doc` itself when nothing is replaced.
+ */
+export function withFreshestDnsState(prev: Website | undefined, doc: Website): Website {
+  const mem = prev?.dnsMonitoring as Record<string, unknown> | undefined;
+  const stored = doc.dnsMonitoring as Record<string, unknown> | undefined;
+  if (!mem || !stored || typeof mem !== 'object' || typeof stored !== 'object') return doc;
+
+  const merged: Record<string, unknown> = { ...stored };
+  let replaced = false;
+  if (newestStamp(mem.baseline, 'capturedAt') > newestStamp(stored.baseline, 'capturedAt')) {
+    for (const key of ['baseline', 'changes', 'autoAcceptConsecutiveCount']) {
+      if (key in mem) merged[key] = mem[key];
+    }
+    replaced = true;
+  }
+  if (newestStamp(mem.lastResult, 'queriedAt') > newestStamp(stored.lastResult, 'queriedAt')) {
+    merged.lastResult = mem.lastResult;
+    replaced = true;
+  }
+  return replaced ? { ...doc, dnsMonitoring: merged } : doc;
+}
+
 /**
  * Build the in-memory record for a check read by fullResync. `prev` is the
  * record already in memory, if any. Returns the record and whether its
  * schedule time came from memory (`kept`) or from the doc.
  */
 export function mergeResyncedCheck(prev: Website | undefined, doc: Website): { check: Website; kept: boolean } {
-  if (!prev || docWasChangedElsewhere(prev, doc)) return { check: doc, kept: false };
+  if (!prev) return { check: doc, kept: false };
+  if (docWasChangedElsewhere(prev, doc)) return { check: withFreshestDnsState(prev, doc), kept: false };
 
-  const check = { ...doc };
+  const check = withFreshestDnsState(prev, { ...doc });
   for (const key of RUNNER_OWNED_FIELDS) {
     if (key in prev) check[key] = prev[key];
   }
@@ -377,7 +421,12 @@ export class CheckSchedule {
           return;
         }
 
-        const data = { ...doc.data(), id: doc.id } as Website;
+        // An edit reloads the whole doc. Keep a DNS re-baseline the status
+        // buffer has not written yet (see withFreshestDnsState).
+        const data = withFreshestDnsState(
+          this.checks.get(checkId),
+          { ...doc.data(), id: doc.id } as Website,
+        );
 
         // If the check has moved to a different region, drop our stale copy.
         // Firestore's onSnapshot delivers events from `check_edits` (a notification
