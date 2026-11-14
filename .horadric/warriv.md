@@ -9,6 +9,7 @@
 - A timed quest ("after <date>") checked off before its date with no result is not done: file a fresh one when the date comes.
 
 ## Lately
+- 2026-11-14 Woken a third time for Runner port 3100 quest: EU report in, only code-caller agent left. Noted, left it.
 - 2026-11-14 Woken a second time for Runner port 3100 quest: US report in (Caddy has live-us, only /ws; bind hardcoded), still waits on EU and code agents. Noted, left it.
 - 2026-11-14 Woken for Runner port 3100 quest: session waits on its three agents (code, EU, US). Noted, left it.
 - 2026-11-14 Woken a fourth time for Runner SSRF quest: guard committed (769cb22), session still waits on count agent and EU SSH retry. Noted, left it.
