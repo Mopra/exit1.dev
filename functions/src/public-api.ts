@@ -1719,6 +1719,10 @@ async function handleAcceptBaseline(
     consecutiveFailures: 0,
   });
 
+  // The runner holds its own copy of the check. Without this it keeps the old
+  // baseline and status until its next full reload.
+  await checksModule().notifyCheckEdit(checkId, 'modified');
+
   res.status(200).json({ message: 'Baseline accepted', baseline: newBaseline });
 }
 
