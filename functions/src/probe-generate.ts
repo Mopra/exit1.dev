@@ -222,6 +222,7 @@ interface Probe {
 
 async function probeUrl(target: string, opts: { body?: boolean } = {}): Promise<Probe> {
   const started = Date.now();
+  let headersAt = started;
   const redirects: string[] = [];
   try {
     // manual redirect handling, so the chain length is observable rather than
@@ -236,6 +237,8 @@ async function probeUrl(target: string, opts: { body?: boolean } = {}): Promise<
         headers: { "user-agent": USER_AGENT, accept: "text/html,*/*;q=0.8" },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         maxBodyBytes: 2 * 1024 * 1024,
+        // Time to first byte: the body download must not count.
+        onHeaders: () => { headersAt = Date.now(); },
       });
       const location = response.headers.get("location");
       if (response.status >= 300 && response.status < 400 && location) {
@@ -253,7 +256,7 @@ async function probeUrl(target: string, opts: { body?: boolean } = {}): Promise<
       status: response.status,
       ok: response.status >= 200 && response.status < 300,
       redirects,
-      ttfbMs: Date.now() - started,
+      ttfbMs: headersAt - started,
       error: null,
       hsts: response.headers.has("strict-transport-security"),
       body: opts.body ? (await response.text()).slice(0, 400_000) : null,

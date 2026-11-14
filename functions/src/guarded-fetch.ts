@@ -25,12 +25,17 @@ export interface GuardedFetchInit {
   signal?: AbortSignal;
   /** "follow" (default) walks redirects, each hop guarded. "manual" returns the 3xx. */
   redirect?: "follow" | "manual";
-  /** Response bodies are cut off here. Default 1 MiB. */
+  /** Response bodies are cut off here, before and after decompression. Default 1 MiB. */
   maxBodyBytes?: number;
+  /** Called each time a hop's status line and headers arrive, before its body. */
+  onHeaders?: () => void;
 }
 
 const MAX_REDIRECTS = 5;
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+// A ceiling for callers that pass no signal, and for an endpoint that trickles a body.
+const HARD_DEADLINE_MS = 60_000;
+const DEFAULT_USER_AGENT = "Exit1-Website-Monitor/1.0";
 const NULL_BODY_STATUS = new Set([204, 205, 304]);
 // Dropped when a redirect leaves the origin, as fetch does.
 const CREDENTIAL_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
@@ -55,22 +60,52 @@ function filterHeaders(
   return out;
 }
 
-function decodeBody(buffer: Buffer, encoding: string | undefined): Buffer {
+/**
+ * Undo a compressed body. No Accept-Encoding is sent, so this is for servers
+ * that compress anyway. maxOutputLength is what stops a small gzip from
+ * unpacking into gigabytes: past the cap, or on a corrupt stream, the body
+ * comes back empty instead.
+ */
+function decodeBody(buffer: Buffer, encoding: string | undefined, maxBytes: number): Buffer {
   try {
     switch ((encoding ?? "").trim().toLowerCase()) {
       case "gzip":
       case "x-gzip":
-        return zlib.gunzipSync(buffer, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+        return zlib.gunzipSync(buffer, { finishFlush: zlib.constants.Z_SYNC_FLUSH, maxOutputLength: maxBytes });
       case "deflate":
-        return zlib.inflateSync(buffer, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+        return zlib.inflateSync(buffer, { finishFlush: zlib.constants.Z_SYNC_FLUSH, maxOutputLength: maxBytes });
       case "br":
-        return zlib.brotliDecompressSync(buffer, { finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH });
+        return zlib.brotliDecompressSync(buffer, {
+          finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH,
+          maxOutputLength: maxBytes,
+        });
       default:
         return buffer;
     }
   } catch {
-    return buffer;
+    return Buffer.alloc(0);
   }
+}
+
+/** Give every failure a message a customer can read in their webhook's last error. */
+function describeFailure(err: unknown): unknown {
+  if (!(err instanceof Error)) return err;
+  if (err.name === "AbortError" || err.name === "TimeoutError") {
+    const timedOut = new Error("Request timed out before the endpoint answered");
+    timedOut.name = err.name;
+    return timedOut;
+  }
+  if (err.message) return err;
+  // Node reports "every address failed" as an AggregateError with an empty message.
+  const inner = ((err as { errors?: unknown[] }).errors ?? []).find(
+    (e): e is Error => e instanceof Error && Boolean(e.message),
+  );
+  const code = (err as NodeJS.ErrnoException).code ?? (inner as NodeJS.ErrnoException | undefined)?.code;
+  const described: NodeJS.ErrnoException = new Error(
+    inner?.message || (code ? `Connection failed (${code})` : "Connection failed"),
+  );
+  described.code = code;
+  return described;
 }
 
 function requestOnce(
@@ -80,6 +115,7 @@ function requestOnce(
   body: string | undefined,
   signal: AbortSignal | undefined,
   maxBodyBytes: number,
+  onHeaders: (() => void) | undefined,
 ): Promise<Response> {
   return new Promise<Response>((resolve, reject) => {
     // An IP literal never reaches the lookup, so it is judged here.
@@ -94,17 +130,28 @@ function requestOnce(
     const payload = body === undefined ? undefined : Buffer.from(body, "utf8");
     const sendHeaders = filterHeaders(headers, (name) => FRAMING_HEADERS.has(name));
     if (payload) sendHeaders["Content-Length"] = String(payload.length);
+    // fetch sent these by default, and some WAFs turn away a request without them.
+    const sent = new Set(Object.keys(sendHeaders).map((name) => name.toLowerCase()));
+    if (!sent.has("user-agent")) sendHeaders["User-Agent"] = DEFAULT_USER_AGENT;
+    if (!sent.has("accept")) sendHeaders["Accept"] = "*/*";
 
     let settled = false;
+    let req: http.ClientRequest | undefined;
     const fail = (err: unknown) => {
       if (settled) return;
       settled = true;
-      reject(err);
+      clearTimeout(deadline);
+      reject(describeFailure(err));
     };
+    const deadline = setTimeout(() => {
+      const err = new Error("timeout");
+      err.name = "TimeoutError";
+      fail(err);
+      req?.destroy();
+    }, HARD_DEADLINE_MS);
 
-    let req: http.ClientRequest;
     try {
-      req = (isHttps ? https : http).request(
+      const request = (isHttps ? https : http).request(
         url,
         {
           method,
@@ -116,17 +163,27 @@ function requestOnce(
         (res) => {
           const blocked = blockedPeerError(url.hostname, res.socket?.remoteAddress);
           if (blocked) {
-            req.destroy();
+            request.destroy();
             fail(blocked);
             return;
+          }
+          const status = res.statusCode ?? 0;
+          // The Response constructor only takes 200 to 599.
+          if (status < 200 || status > 599) {
+            request.destroy();
+            fail(new Error(`HTTP ${status}: not a status this client can handle`));
+            return;
+          }
+          try {
+            onHeaders?.();
+          } catch {
+            // A caller's timing hook must not fail the request.
           }
 
           const chunks: Buffer[] = [];
           let size = 0;
           const finish = () => {
             if (settled) return;
-            settled = true;
-            const status = res.statusCode ?? 0;
             const responseHeaders = new Headers();
             for (const [name, value] of Object.entries(res.headers)) {
               if (value === undefined) continue;
@@ -139,22 +196,31 @@ function requestOnce(
               }
             }
             const raw = Buffer.concat(chunks);
-            const decoded = decodeBody(raw, res.headers["content-encoding"]);
+            const decoded = decodeBody(raw, res.headers["content-encoding"], maxBodyBytes);
             if (decoded !== raw) {
               responseHeaders.delete("content-encoding");
               responseHeaders.delete("content-length");
             }
+            const responseBody = NULL_BODY_STATUS.has(status) || method === "HEAD" ? null : new Uint8Array(decoded);
+            let response: Response;
             try {
-              resolve(
-                new Response(NULL_BODY_STATUS.has(status) || method === "HEAD" ? null : new Uint8Array(decoded), {
+              try {
+                response = new Response(responseBody, {
                   status,
                   statusText: res.statusMessage ?? "",
                   headers: responseHeaders,
-                }),
-              );
+                });
+              } catch {
+                // A reason phrase the constructor refuses. The status is what matters.
+                response = new Response(responseBody, { status, headers: responseHeaders });
+              }
             } catch (err) {
-              reject(err);
+              fail(err);
+              return;
             }
+            settled = true;
+            clearTimeout(deadline);
+            resolve(response);
           };
 
           res.on("data", (chunk: Buffer) => {
@@ -165,21 +231,28 @@ function requestOnce(
             if (size >= maxBodyBytes) {
               // Enough. Stop reading and hand back what there is.
               finish();
-              req.destroy();
+              request.destroy();
             }
           });
           res.on("end", finish);
           res.on("error", fail);
-          res.on("aborted", () => fail(new Error("Response aborted before it completed")));
+          res.on("close", () => fail(new Error("Response ended before it completed")));
         },
       );
+      req = request;
+
+      request.on("error", fail);
+      // A 101 reply gives neither a response nor an error, so without these
+      // two the promise would never settle.
+      request.on("upgrade", (_res, socket) => {
+        socket.destroy();
+        fail(new Error("Endpoint tried to switch protocols instead of answering"));
+      });
+      request.on("close", () => fail(new Error("Connection closed before a response arrived")));
+      request.end(payload);
     } catch (err) {
       fail(err);
-      return;
     }
-
-    req.on("error", fail);
-    req.end(payload);
   });
 }
 
@@ -199,7 +272,7 @@ export async function guardedFetch(input: string | URL, init: GuardedFetchInit =
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new TypeError(`Unsupported URL scheme: ${url.protocol}`);
     }
-    const response = await requestOnce(url, method, headers, body, init.signal, maxBodyBytes);
+    const response = await requestOnce(url, method, headers, body, init.signal, maxBodyBytes, init.onHeaders);
 
     const location = response.headers.get("location");
     const isRedirect = [301, 302, 303, 307, 308].includes(response.status) && Boolean(location);

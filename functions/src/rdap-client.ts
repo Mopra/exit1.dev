@@ -9,6 +9,7 @@
 import { getDomain } from 'tldts';
 import { firestore } from './init';
 import { queryWhois } from './whois-client';
+import { guardedFetch } from './guarded-fetch';
 
 // RDAP Bootstrap URL from IANA
 const RDAP_BOOTSTRAP_URL = 'https://data.iana.org/rdap/dns.json';
@@ -310,7 +311,7 @@ export async function queryRdap(domain: string, retries = 3): Promise<RdapDomain
     const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
     try {
-      const response = await fetch(url, {
+      const response = await guardedFetch(url, {
         headers: { 'Accept': 'application/rdap+json, application/json' },
         signal: controller.signal,
       });

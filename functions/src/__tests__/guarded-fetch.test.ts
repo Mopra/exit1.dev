@@ -289,3 +289,88 @@ test("an abort signal ends a hanging request", async () => {
     reset();
   }
 });
+
+test("a 101 reply or an odd status fails instead of hanging", async () => {
+  allowLoopback();
+  const net = await import("net");
+  for (const [statusLine, pattern] of [
+    ["HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", /switch protocols|closed before/],
+    ["HTTP/1.1 999 Nope\r\nContent-Length: 0\r\n\r\n", /HTTP 999/],
+  ] as const) {
+    const server = net.createServer((socket) => {
+      socket.once("data", () => socket.write(statusLine));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      await assert.rejects(
+        guardedFetch(`http://127.0.0.1:${port}/`, {
+          method: "POST",
+          body: "{}",
+          signal: AbortSignal.timeout(3000),
+        }),
+        pattern,
+      );
+    } finally {
+      server.close();
+    }
+  }
+  reset();
+});
+
+test("a gzip bomb does not unpack past the cap", async () => {
+  allowLoopback();
+  const bomb = zlib.gzipSync(Buffer.alloc(20 * 1024 * 1024));
+  const server = await startServer((_req, res) => {
+    res.writeHead(200, { "content-encoding": "gzip" });
+    res.end(bomb);
+  });
+  try {
+    const response = await guardedFetch(`http://127.0.0.1:${server.port}/`, { maxBodyBytes: 100_000 });
+    assert.equal(response.status, 200);
+    assert.ok((await response.arrayBuffer()).byteLength <= 100_000);
+  } finally {
+    server.close();
+    reset();
+  }
+});
+
+test("sends a default User-Agent and Accept, and keeps the caller's", async () => {
+  allowLoopback();
+  const server = await startServer((_req, res) => res.end("ok"));
+  try {
+    await guardedFetch(`http://127.0.0.1:${server.port}/`, { method: "POST", body: "{}" });
+    await guardedFetch(`http://127.0.0.1:${server.port}/`, { headers: { "user-agent": "Custom/2" } });
+    assert.equal(server.seen[0].headers["user-agent"], "Exit1-Website-Monitor/1.0");
+    assert.equal(server.seen[0].headers.accept, "*/*");
+    assert.equal(server.seen[1].headers["user-agent"], "Custom/2");
+  } finally {
+    server.close();
+    reset();
+  }
+});
+
+test("a refused connection gives a readable error", async () => {
+  allowLoopback();
+  const server = await startServer((_req, res) => res.end("ok"));
+  const port = server.port;
+  server.close();
+  await assert.rejects(
+    guardedFetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "{}" }),
+    (err) => err instanceof Error && err.message.length > 0,
+  );
+  reset();
+});
+
+test("onHeaders fires before the body is read", async () => {
+  allowLoopback();
+  const server = await startServer((_req, res) => res.end("ok"));
+  try {
+    let calls = 0;
+    await guardedFetch(`http://127.0.0.1:${server.port}/`, { onHeaders: () => { calls += 1; } });
+    assert.equal(calls, 1);
+  } finally {
+    server.close();
+    reset();
+  }
+});
