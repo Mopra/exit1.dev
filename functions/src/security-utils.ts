@@ -2,6 +2,7 @@ import * as logger from "firebase-functions/logger";
 import * as tls from "tls";
 import { URL } from "url";
 import { CONFIG } from "./config";
+import { assertPublicHost, guardedSystemLookupOption } from "./ssrf-guard";
 
 export async function checkSSLCertificate(url: string): Promise<{
   valid: boolean;
@@ -28,10 +29,15 @@ export async function checkSSLCertificate(url: string): Promise<{
       };
     }
 
+    // SSRF guard: IP literals here, hostnames inside the guarded lookup.
+    // A refusal lands in the catch below as a failed observation.
+    assertPublicHost(hostname);
+
     return new Promise((resolve) => {
       const socket = tls.connect({
         host: hostname,
         port: parseInt(port.toString()),
+        lookup: guardedSystemLookupOption,
         servername: hostname, // SNI support
         rejectUnauthorized: false, // Don't reject on certificate errors, we'll check manually
         timeout: 10000, // 10 second timeout

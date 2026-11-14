@@ -4,7 +4,11 @@ import http from "http";
 import net from "net";
 
 import { checkRestEndpoint } from "../check-utils";
+import { setSsrfGuardExemptionForTests } from "../ssrf-guard";
 import type { Website } from "../types";
+
+// These tests probe servers on loopback, which the SSRF guard refuses in production.
+setSsrfGuardExemptionForTests((ip) => ip === "127.0.0.1" || ip === "::1");
 
 // Reported by a user: an alert email named 193.1.98.10 as the "Target IP" while
 // its own error line read "connect EHOSTUNREACH 193.1.98.9:443" — the DNS record

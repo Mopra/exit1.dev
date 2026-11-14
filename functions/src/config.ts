@@ -2,6 +2,9 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { isIP } from "net";
+import { normalizeIpLiteral, reservedAddressReason } from "./ssrf-guard";
+
 // Canonical user tier union. Kept here so config/helpers are self-contained;
 // `init.ts` re-uses the same string literal union under the `UserTier` alias.
 //
@@ -709,17 +712,11 @@ export const CONFIG = {
         return { valid: false, reason: 'Local addresses are not allowed' };
       }
       
-      // Check for IP addresses (allow only public IPs)
-      const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-      if (ipRegex.test(hostname)) {
-        const parts = hostname.split('.').map(Number);
-        const isPrivateIP = parts[0] === 10 || 
-                           (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-                           (parts[0] === 192 && parts[1] === 168);
-        
-        if (isPrivateIP) {
-          return { valid: false, reason: 'Private IP addresses are not allowed' };
-        }
+      // IP literals: allow only public addresses. Hostnames are judged at
+      // probe time by what they resolve to (see ssrf-guard.ts).
+      const literal = normalizeIpLiteral(hostname);
+      if (isIP(literal) && reservedAddressReason(literal)) {
+        return { valid: false, reason: 'Private and local IP addresses are not allowed' };
       }
       
     } catch {

@@ -25,10 +25,20 @@ import {
   withBlockerReroute,
   type LookupFn,
 } from "./probe-blockers";
+import {
+  assertPublicHost,
+  blockedPeerError,
+  guardedSystemLookupOption,
+  isBlockedAddressError,
+  resolvePublicAddress,
+  withSsrfGuard,
+} from "./ssrf-guard";
 
 // DNS lookup for HTTP probes: cached c-ares, with addresses that are known to
-// drop our probes swapped for a working one (see probe-blockers.ts).
-const probeLookup = withBlockerReroute(cachedLookup as LookupFn);
+// drop our probes swapped for a working one (see probe-blockers.ts), and
+// private or local addresses refused (see ssrf-guard.ts). The guard is the
+// outer layer so it judges the address the socket will really dial.
+const probeLookup = withSsrfGuard(withBlockerReroute(cachedLookup as LookupFn));
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   try {
@@ -273,6 +283,9 @@ export const performHttpRequest = async ({
   ignoreSslErrors?: boolean;
 }): Promise<HttpRequestResult> => {
   const urlObj = new URL(url);
+  // IP literals skip the lookup, so the SSRF guard has to judge them here.
+  // Runs for the first request and for every redirect hop.
+  assertPublicHost(urlObj.hostname);
   const transport = urlObj.protocol === "https:" ? https : http;
   const usedMethod = method.toUpperCase();
   const requestHeaders: Record<string, string> = { ...headers };
@@ -395,6 +408,13 @@ export const performHttpRequest = async ({
       });
 
       socket.once("connect", () => {
+        // Backstop for the SSRF guard: never talk to a private or local peer,
+        // however the socket got there.
+        const blockedPeer = blockedPeerError(urlObj.hostname, socket.remoteAddress);
+        if (blockedPeer) {
+          req.destroy(blockedPeer);
+          return;
+        }
         connectAt = Date.now();
         // remoteAddress is authoritative — it's the peer we're actually
         // speaking to (matters for happy-eyeballs / multi-A-record hosts).
@@ -1097,22 +1117,31 @@ export async function checkRestEndpoint(
         } catch {
           break; // Malformed URL — stop following
         }
-        // SSRF guard: only follow http/https and block private/internal IPs
+        // SSRF guard: only follow http/https, and never into a private or
+        // local address. A blocked hop is not followed: the check is judged on
+        // the redirect response itself, as if redirects stopped there.
         const parsed = new URL(nextUrl);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') break;
-        const hn = parsed.hostname.toLowerCase();
-        if (hn === 'localhost' || hn === '0.0.0.0' || hn === '[::1]') break;
-        if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hn)) {
-          const p = hn.split('.').map(Number);
-          if (p[0] === 127 || p[0] === 10 || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
-            || (p[0] === 192 && p[1] === 168) || (p[0] === 169 && p[1] === 254) || p[0] === 0) break;
+        if (parsed.hostname.toLowerCase() === 'localhost') break;
+        try {
+          assertPublicHost(parsed.hostname);
+        } catch {
+          break;
         }
         // Check wall-clock deadline before making another request
         const remaining = redirectDeadline - Date.now();
         if (remaining <= 0) break;
+        let hopResult: HttpRequestResult;
+        try {
+          hopResult = await runRequest(nextUrl, false, shouldReadBody, "GET");
+        } catch (hopError) {
+          // The hop's hostname resolved to a private or local address.
+          if (isBlockedAddressError(hopError)) break;
+          throw hopError;
+        }
         redirectChain.push(nextUrl);
         hops++;
-        currentResult = await runRequest(nextUrl, false, shouldReadBody, "GET");
+        currentResult = hopResult;
       }
       if (redirectChain.length > 0) {
         httpResult = currentResult;
@@ -1419,12 +1448,13 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
 
   try {
     const { hostname, port } = parseSocketTarget(website.url, "tcp:");
+    assertPublicHost(hostname);
     const connectStart = Date.now();
     const timeoutMs = CONFIG.getCheckTimeout(website);
 
     const socketResult = await new Promise<SocketCheckResult>((resolve) => {
       let settled = false;
-      const socket = net.createConnection({ host: hostname, port });
+      const socket = net.createConnection({ host: hostname, port, lookup: guardedSystemLookupOption });
 
       socket.once("lookup", (err, address, family) => {
         if (err || !address) return;
@@ -1455,6 +1485,18 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
 
       socket.once("connect", () => {
         clearTimeout(timeout);
+        const blockedPeer = blockedPeerError(hostname, socket.remoteAddress);
+        if (blockedPeer) {
+          finalize({
+            status: 'offline',
+            responseTime: Date.now() - startTime,
+            statusCode: 0,
+            error: blockedPeer.message,
+            detailedStatus: 'DOWN',
+            timings: { totalMs: Date.now() - startTime },
+          });
+          return;
+        }
         socket.end();
         finalize({
           status: 'online',
@@ -1554,9 +1596,15 @@ export async function checkTcpQuick(
   const timeout = CONFIG.TCP_LIGHT_CHECK_TIMEOUT_MS;
   const startTime = Date.now();
 
+  try {
+    assertPublicHost(hostname);
+  } catch {
+    return { status: 'offline', responseTime: 0 };
+  }
+
   return new Promise((resolve) => {
     let settled = false;
-    const socket = net.createConnection({ host: hostname, port });
+    const socket = net.createConnection({ host: hostname, port, lookup: guardedSystemLookupOption });
 
     const finalize = (status: 'online' | 'offline') => {
       if (settled) return;
@@ -1569,6 +1617,10 @@ export async function checkTcpQuick(
 
     socket.once('connect', () => {
       clearTimeout(timer);
+      if (blockedPeerError(hostname, socket.remoteAddress)) {
+        finalize('offline');
+        return;
+      }
       socket.end();
       finalize('online');
     });
@@ -1596,7 +1648,13 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
   try {
     const { hostname, port } = parseSocketTarget(website.url, "udp:");
     const timeoutMs = CONFIG.getCheckTimeout(website);
-    const socketType = hostname.includes(":") ? "udp6" : "udp4";
+    // Resolve through the SSRF guard first and send to that IP, so dgram
+    // cannot resolve the name again to something else. Hostnames keep
+    // resolving to IPv4, as they did when dgram did the lookup.
+    const target = await resolvePublicAddress(hostname, hostname.includes(":") ? 6 : 4);
+    observedIp = target.address;
+    observedIpFamily = target.family;
+    const socketType = target.family === 6 ? "udp6" : "udp4";
 
     const socketResult = await new Promise<SocketCheckResult>((resolve) => {
       let settled = false;
@@ -1648,9 +1706,8 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
         });
       });
 
-      socket.connect(port, hostname, () => {
-        // dgram resolves the host during connect(); remoteAddress() is the
-        // peer we're actually sending to.
+      socket.connect(port, target.address, () => {
+        // remoteAddress() is the peer we're actually sending to.
         try {
           const remote = socket.remoteAddress();
           if (remote?.address) {
@@ -1768,7 +1825,9 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
   const startTime = Date.now();
 
   try {
-    const host = parsePingTarget(website.url);
+    // Resolve through the SSRF guard and ping the IP, not the name: ping would
+    // otherwise resolve it again on its own.
+    const host = (await resolvePublicAddress(parsePingTarget(website.url))).address;
     // Number of ICMP packets: user setting (1-5), default 3 for resilience against transient loss
     const packetCount = Math.min(5, Math.max(1, website.pingPackets ?? 3));
     // Per-packet timeout = total budget / packetCount, so worst-case (all packets lost)
@@ -1912,6 +1971,7 @@ export async function checkWebSocketEndpoint(website: Website): Promise<SocketCh
 
   try {
     const { hostname, port, path, secure } = parseWebSocketTarget(website.url);
+    assertPublicHost(hostname);
     const timeoutMs = CONFIG.getCheckTimeout(website);
 
     // Generate WebSocket key per RFC 6455
@@ -1950,6 +2010,8 @@ export async function checkWebSocketEndpoint(website: Website): Promise<SocketCh
           'Host': port === 80 || port === 443 ? hostname : `${hostname}:${port}`,
         },
         timeout: timeoutMs,
+        agent: false as const,
+        lookup: guardedSystemLookupOption,
       };
 
       const handler = (res: http.IncomingMessage) => {

@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import http from "http";
 
 import { checkRestEndpoint } from "../check-utils";
+import { setSsrfGuardExemptionForTests } from "../ssrf-guard";
 import type { Website } from "../types";
 import { CF_BLOCK_BODY, CF_ORIGIN_503_BODY } from "./fixtures/cloudflare-pages";
+
+// These tests probe servers on loopback, which the SSRF guard refuses in production.
+setSsrfGuardExemptionForTests((ip) => ip === "127.0.0.1" || ip === "::1");
 
 type Seen = { method: string; range?: string; bodyBytes: number; userAgent?: string };
 

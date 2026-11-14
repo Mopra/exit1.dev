@@ -4,7 +4,11 @@ import http from "http";
 import net from "net";
 
 import { checkRestEndpoint, performHttpRequest } from "../check-utils";
+import { setSsrfGuardExemptionForTests } from "../ssrf-guard";
 import type { Website } from "../types";
+
+// These tests probe servers on loopback, which the SSRF guard refuses in production.
+setSsrfGuardExemptionForTests((ip) => ip === "127.0.0.1" || ip === "::1");
 
 test("checkRestEndpoint treats 502 responses as down", async () => {
   const server = http.createServer((req, res) => {
